@@ -535,8 +535,8 @@
       return { get, set, list, merge };
     };
 
-    const POINTS_PER_PASSED_DAY = 10;
-    const IDEAL_WEEK_BONUS = 20;
+    const POINTS_PER_PASSED_DAY = 2;
+    const IDEAL_WEEK_BONUS = 3;
     const HISTORY_DAYS = 30;
     const DAY_NAMES = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Ndz'];
     const CHILD_AVATARS = [
@@ -1463,6 +1463,9 @@
             children={activeChildren}
             streaks={streaks}
             points={points}
+            familyGoal={familyGoal}
+            evaluateDay={evaluateDay}
+            getDateString={getDateString}
             onSelectChild={selectChild}
             onParentMode={enterParentMode}
             onLogout={handleLogout}
@@ -1534,24 +1537,6 @@
                   <div className="stat-label">Najlepsza passa</div>
                   <div className="stat-value">{childStreak.best}</div>
                   <div className="stat-label">rekord</div>
-                </div>
-              </div>
-              
-              <div className="glass-card" style={{marginBottom: '1.5rem'}}>
-                <h3 style={{marginBottom: '1rem'}}>Ostatnie 14 dni</h3>
-                <div className="calendar">
-                  {last14Days.map((day, i) => {
-                    const [, month, dayOfMonth] = day.date.split('-');
-                    const formattedDate = `${dayOfMonth}.${month}`;
-                    return (
-                      <div key={i} className={`calendar-day ${day.status.toLowerCase().replace('_', '')}`} title={day.date}>
-                        <span className="calendar-day-status">
-                          {day.status === 'PASSED' ? '✓' : day.status === 'FAILED' ? '✗' : '−'}
-                        </span>
-                        <span className="calendar-day-date">{formattedDate}</span>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
               
@@ -1642,14 +1627,25 @@
                   })}
                 </>
               )}
+              
+              <div className="glass-card" style={{marginTop: '1.5rem'}}>
+                <h3 style={{marginBottom: '1rem'}}>Ostatnie 14 dni</h3>
+                <div className="calendar">
+                  {last14Days.map((day, i) => {
+                    const [, month, dayOfMonth] = day.date.split('-');
+                    const formattedDate = `${dayOfMonth}.${month}`;
+                    return (
+                      <div key={i} className={`calendar-day ${day.status.toLowerCase().replace('_', '')}`} title={day.date}>
+                        <span className="calendar-day-status">
+                          {day.status === 'PASSED' ? '✓' : day.status === 'FAILED' ? '✗' : '−'}
+                        </span>
+                        <span className="calendar-day-date">{formattedDate}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-            <FamilyGoalWidget
-              familyGoal={familyGoal}
-              children={activeChildren}
-              points={points}
-              evaluateDay={evaluateDay}
-              getDateString={getDateString}
-            />
           </div>
           {showRewardOverlay && showRewardOverlay.childId === selectedChild.id && (
             <RewardOverlay
@@ -2165,14 +2161,6 @@
                 </>
               )}
             </div>
-            
-            <FamilyGoalWidget
-              familyGoal={familyGoal}
-              children={activeChildren}
-              points={points}
-              evaluateDay={evaluateDay}
-              getDateString={getDateString}
-            />
           </div>
           
           {showModal === 'addChild' && (
@@ -2681,7 +2669,18 @@
     };
     
     // Child Selection View Component
-    const ChildSelectionView = ({ children, streaks, points, onSelectChild, onParentMode, onLogout, parentPin }) => {
+    const ChildSelectionView = ({
+      children,
+      streaks,
+      points,
+      familyGoal,
+      evaluateDay,
+      getDateString,
+      onSelectChild,
+      onParentMode,
+      onLogout,
+      parentPin,
+    }) => {
       const [showPinModal, setShowPinModal] = useState(false);
       
       return (
@@ -2715,6 +2714,13 @@
                   streaks={streaks}
                   points={points}
                   title="🏆 Ranking rodzinny"
+                />
+                <FamilyGoalWidget
+                  familyGoal={familyGoal}
+                  children={children}
+                  points={points}
+                  evaluateDay={evaluateDay}
+                  getDateString={getDateString}
                 />
               </>
             )}
