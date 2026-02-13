@@ -11,7 +11,7 @@
     
     body {
       font-family: 'Fredoka', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #4facfe 75%, #00f2fe 100%);
+      background: linear-gradient(135deg, #0EA5E9 0%, #2563EB 25%, #0D9488 50%, #22C55E 75%, #34D399 100%);
       background-size: 400% 400%;
       animation: gradientShift 15s ease infinite;
       min-height: 100vh;
@@ -54,12 +54,12 @@
     }
     
     .btn-primary {
-      background: linear-gradient(135deg, #7C3AED, #A78BFA);
+      background: linear-gradient(135deg, #0EA5E9, #14B8A6);
       color: white;
-      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4);
+      box-shadow: 0 4px 15px rgba(20, 184, 166, 0.4);
     }
     
-    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(124, 58, 237, 0.6); }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(20, 184, 166, 0.55); }
     
     .btn-success { background: linear-gradient(135deg, #12B76A, #34D399); color: white; }
     .btn-danger { background: linear-gradient(135deg, #F97066, #FDA4A0); color: white; }
@@ -147,9 +147,11 @@
     
     .calendar {
       display: grid;
-      grid-template-columns: repeat(7, 1fr);
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 0.5rem;
       margin-top: 1rem;
+      width: 100%;
+      overflow: hidden;
     }
     
     .calendar-day {
@@ -163,6 +165,7 @@
       border-radius: 0.5rem;
       font-weight: 700;
       border: 2px solid transparent;
+      min-width: 0;
     }
     
     .calendar-day-status {
@@ -296,10 +299,21 @@
     
     .top-status {
       display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: nowrap;
+      margin-bottom: 1rem;
+    }
+
+    .network-status-group {
+      display: flex;
+      align-items: center;
       justify-content: center;
       gap: 0.75rem;
       flex-wrap: wrap;
-      margin-bottom: 1rem;
+      flex: 1;
+      min-width: 0;
     }
     
     .network-badge {
@@ -361,6 +375,26 @@
     @media (max-width: 768px) {
       .glass-card { padding: 1rem; }
       .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .header {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .top-status {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .calendar {
+        gap: 0.25rem;
+      }
+      .calendar-day {
+        padding: 0.2rem;
+      }
+      .calendar-day-status {
+        font-size: 0.9rem;
+      }
+      .calendar-day-date {
+        font-size: 0.6rem;
+      }
     }
   </style>
 </head>
@@ -1407,14 +1441,17 @@
           <>
           <div className="app-container">
             <div className="top-status">
-              <div className={`network-badge ${isOnline ? '' : 'offline'}`}>
-                {isOnline ? '🟢 Online' : '🔴 Offline'}
+              <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
+              <div className="network-status-group">
+                <div className={`network-badge ${isOnline ? '' : 'offline'}`}>
+                  {isOnline ? '🟢 Online' : '🔴 Offline'}
+                </div>
+                {syncing && <div className="network-badge syncing">⏳ Synchronizacja...</div>}
               </div>
-              {syncing && <div className="network-badge syncing">⏳ Synchronizacja...</div>}
+              <button className="btn btn-danger" onClick={handleLogout}>Wyloguj</button>
             </div>
             <div className="glass-card">
               <div className="header">
-                <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
                 <h1>{selectedChild.avatar} {selectedChild.name}</h1>
                 <div style={{display: 'flex', gap: '1rem'}}>
                   <div className="badge badge-points">⚡ {childPoints} pkt</div>
@@ -1594,16 +1631,19 @@
           <>
           <div className="app-container">
             <div className="top-status">
-              <div className={`network-badge ${isOnline ? '' : 'offline'}`}>
-                {isOnline ? '🟢 Online' : '🔴 Offline'}
+              <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
+              <div className="network-status-group">
+                <div className={`network-badge ${isOnline ? '' : 'offline'}`}>
+                  {isOnline ? '🟢 Online' : '🔴 Offline'}
+                </div>
+                {syncing && <div className="network-badge syncing">⏳ Synchronizacja...</div>}
               </div>
-              {syncing && <div className="network-badge syncing">⏳ Synchronizacja...</div>}
+              <button className="btn btn-danger" onClick={handleLogout}>Wyloguj</button>
             </div>
             <div className="glass-card">
               <div className="header">
-                <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
                 <h1>🔐 Panel Rodzica</h1>
-                <button className="btn btn-danger" onClick={handleLogout}>Wyloguj</button>
+                <div />
               </div>
               
               <div className="tabs">
