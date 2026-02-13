@@ -372,7 +372,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
     
     const AUTH_TOKEN_KEY = 'fq_auth_token';
     const API_BASE_KEY = 'fq_api_base';
@@ -535,7 +535,7 @@
 
     // Main App
     const App = () => {
-      const storage = useStorage();
+      const storage = useMemo(() => useStorage(), []);
       
       const [user, setUser] = useState(null);
       const [children, setChildren] = useState([]);
