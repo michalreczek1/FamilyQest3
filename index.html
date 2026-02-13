@@ -558,9 +558,30 @@
       return null;
     };
     
-    const toDateString = (date = new Date()) => date.toISOString().split('T')[0];
+    const parseDateInput = (dateInput) => {
+      if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+        const [year, month, day] = dateInput.split('-').map(Number);
+        return new Date(year, month - 1, day);
+      }
+      return new Date(dateInput);
+    };
+    const toDateString = (dateInput = new Date()) => {
+      const date = parseDateInput(dateInput);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const getDayNumber = (dateInput) => {
+      const day = parseDateInput(dateInput).getDay();
+      return day === 0 ? 7 : day;
+    };
+    const isTaskScheduledForDate = (task, dateInput) => {
+      if (!Array.isArray(task?.daysOfWeek) || task.daysOfWeek.length === 0) return true;
+      return task.daysOfWeek.includes(getDayNumber(dateInput));
+    };
     const getWeekStart = (dateInput) => {
-      const date = new Date(dateInput);
+      const date = parseDateInput(dateInput);
       const day = date.getDay();
       const diff = day === 0 ? -6 : 1 - day;
       date.setDate(date.getDate() + diff);
@@ -812,12 +833,17 @@
         const child = children.find(c => c.id === childId);
         if (!child) return 'NOT_ACTIVE';
         
-        const dayOfWeek = new Date(date).getDay();
-        const adjustedDay = dayOfWeek === 0 ? 7 : dayOfWeek;
+        const adjustedDay = getDayNumber(date);
         
         if (!child.activeDays.includes(adjustedDay)) return 'NOT_ACTIVE';
         
-        const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && t.active !== false);
+        const minTasks = tasks.filter(
+          t =>
+            t.childId === childId &&
+            t.tier === 'MIN' &&
+            t.active !== false &&
+            isTaskScheduledForDate(t, date),
+        );
         if (minTasks.length === 0) return 'PASSED';
         
         const approvedCount = minTasks.filter(task => {
@@ -1422,6 +1448,7 @@
       if (view === 'child' && selectedChild) {
         const today = getDateString();
         const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active !== false);
+        const todayTasks = childTasks.filter(t => isTaskScheduledForDate(t, today));
         const todayCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === today);
         const childStreak = streaks[selectedChild.id] || { current: 0, best: 0 };
         const childPoints = points[selectedChild.id] || 0;
@@ -1504,7 +1531,7 @@
               <h2 style={{marginBottom: '1rem'}}>Zadania dzisiaj</h2>
               
               <h3 style={{marginTop: '1.5rem', marginBottom: '0.5rem'}}>📋 MINIMUM (wymagane)</h3>
-              {childTasks.filter(t => t.tier === 'MIN').map(task => {
+              {todayTasks.filter(t => t.tier === 'MIN').map(task => {
                 const completion = todayCompletions.find(c => c.taskId === task.id);
                 const isDone = completion?.doneByChild;
                 const isApproved = completion?.approvedByParent;
@@ -1532,7 +1559,7 @@
               })}
               
               <h3 style={{marginTop: '1.5rem', marginBottom: '0.5rem'}}>⭐ BONUS (dodatkowe punkty)</h3>
-              {childTasks.filter(t => t.tier === 'PLUS').map(task => {
+              {todayTasks.filter(t => t.tier === 'PLUS').map(task => {
                 const completion = todayCompletions.find(c => c.taskId === task.id);
                 const isDone = completion?.doneByChild;
                 const isApproved = completion?.approvedByParent;
@@ -1558,10 +1585,10 @@
                 );
               })}
               
-              {childTasks.filter(t => t.tier === 'WEEKLY').length > 0 && (
+              {todayTasks.filter(t => t.tier === 'WEEKLY').length > 0 && (
                 <>
                   <h3 style={{marginTop: '1.5rem', marginBottom: '0.5rem'}}>📅 TYGODNIOWE</h3>
-                  {childTasks.filter(t => t.tier === 'WEEKLY').map(task => {
+                  {todayTasks.filter(t => t.tier === 'WEEKLY').map(task => {
                     const completion = todayCompletions.find(c => c.taskId === task.id);
                     const isDone = completion?.doneByChild;
                     const isApproved = completion?.approvedByParent;

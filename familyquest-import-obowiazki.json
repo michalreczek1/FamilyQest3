@@ -1,0 +1,1358 @@
+{
+  "version": 1,
+  "exportedAt": "2026-02-13T21:27:50.501Z",
+  "data": {
+    "children": [
+      {
+        "id": "child-lucja",
+        "name": "Łucja",
+        "avatar": "👧",
+        "accessCode": "1111",
+        "activeDays": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "archived": false,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "child-ignacy",
+        "name": "Ignacy",
+        "avatar": "👦",
+        "accessCode": "2222",
+        "activeDays": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "archived": false,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "child-franek",
+        "name": "Franek",
+        "avatar": "🧒",
+        "accessCode": "3333",
+        "activeDays": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "archived": false,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "child-filip",
+        "name": "Filip",
+        "avatar": "👦",
+        "accessCode": "4444",
+        "activeDays": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "archived": false,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "child-jozek",
+        "name": "Józek",
+        "avatar": "👦",
+        "accessCode": "5555",
+        "activeDays": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "archived": false,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-import-1",
+        "childId": "child-lucja",
+        "title": "Zmywarka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-2",
+        "childId": "child-lucja",
+        "title": "Śmieci",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-3",
+        "childId": "child-lucja",
+        "title": "Umywalka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-4",
+        "childId": "child-lucja",
+        "title": "Łazienka dolna",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-5",
+        "childId": "child-lucja",
+        "title": "Kanapa + dywan",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-6",
+        "childId": "child-lucja",
+        "title": "Odkurzanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-7",
+        "childId": "child-lucja",
+        "title": "Pranie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-8",
+        "childId": "child-lucja",
+        "title": "Komoda",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-9",
+        "childId": "child-ignacy",
+        "title": "Pranie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-10",
+        "childId": "child-ignacy",
+        "title": "Komoda",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-11",
+        "childId": "child-ignacy",
+        "title": "Zmywarka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-12",
+        "childId": "child-ignacy",
+        "title": "Śmieci",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-13",
+        "childId": "child-ignacy",
+        "title": "Umywalka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-14",
+        "childId": "child-ignacy",
+        "title": "Kanapa + dywan",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-15",
+        "childId": "child-ignacy",
+        "title": "Odkurzanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-16",
+        "childId": "child-ignacy",
+        "title": "Schody",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-17",
+        "childId": "child-franek",
+        "title": "Odkurzanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-18",
+        "childId": "child-franek",
+        "title": "Pranie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-19",
+        "childId": "child-franek",
+        "title": "Komoda",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-20",
+        "childId": "child-franek",
+        "title": "Zmywarka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-21",
+        "childId": "child-franek",
+        "title": "Śmieci",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-22",
+        "childId": "child-franek",
+        "title": "Umywalka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-23",
+        "childId": "child-franek",
+        "title": "Kanapa + dywan",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-24",
+        "childId": "child-franek",
+        "title": "Fronty",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-25",
+        "childId": "child-filip",
+        "title": "Kanapa + dywan",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-26",
+        "childId": "child-filip",
+        "title": "Odkurzanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-27",
+        "childId": "child-filip",
+        "title": "Pranie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-28",
+        "childId": "child-filip",
+        "title": "Komoda",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-29",
+        "childId": "child-filip",
+        "title": "Zmywarka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-30",
+        "childId": "child-filip",
+        "title": "Śmieci",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-31",
+        "childId": "child-filip",
+        "title": "Umywalka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-32",
+        "childId": "child-filip",
+        "title": "Kurze",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-33",
+        "childId": "child-jozek",
+        "title": "Umywalka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-34",
+        "childId": "child-jozek",
+        "title": "Kanapa + dywan",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-35",
+        "childId": "child-jozek",
+        "title": "Odkurzanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-36",
+        "childId": "child-jozek",
+        "title": "Pranie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-37",
+        "childId": "child-jozek",
+        "title": "Komoda",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-38",
+        "childId": "child-jozek",
+        "title": "Zmywarka",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Obowiązek domowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-39",
+        "childId": "child-franek",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-40",
+        "childId": "child-filip",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-41",
+        "childId": "child-ignacy",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-42",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Poniedziałek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          1
+        ]
+      },
+      {
+        "id": "task-import-43",
+        "childId": "child-ignacy",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-44",
+        "childId": "child-franek",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-45",
+        "childId": "child-filip",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-46",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Wtorek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          2
+        ]
+      },
+      {
+        "id": "task-import-47",
+        "childId": "child-ignacy",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-48",
+        "childId": "child-filip",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-49",
+        "childId": "child-franek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-50",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Środa",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          3
+        ]
+      },
+      {
+        "id": "task-import-51",
+        "childId": "child-ignacy",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-52",
+        "childId": "child-franek",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-53",
+        "childId": "child-filip",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-54",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Czwartek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          4
+        ]
+      },
+      {
+        "id": "task-import-55",
+        "childId": "child-franek",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-56",
+        "childId": "child-filip",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-57",
+        "childId": "child-ignacy",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-58",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Piątek",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          5
+        ]
+      },
+      {
+        "id": "task-import-59",
+        "childId": "child-franek",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Sobota",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          6
+        ]
+      },
+      {
+        "id": "task-import-60",
+        "childId": "child-filip",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Sobota",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          6
+        ]
+      },
+      {
+        "id": "task-import-61",
+        "childId": "child-ignacy",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Sobota",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          6
+        ]
+      },
+      {
+        "id": "task-import-62",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Sobota",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          6
+        ]
+      },
+      {
+        "id": "task-import-63",
+        "childId": "child-ignacy",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Niedziela",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          7
+        ]
+      },
+      {
+        "id": "task-import-64",
+        "childId": "child-filip",
+        "title": "Stół: nakrywanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Niedziela",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          7
+        ]
+      },
+      {
+        "id": "task-import-65",
+        "childId": "child-franek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Niedziela",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          7
+        ]
+      },
+      {
+        "id": "task-import-66",
+        "childId": "child-jozek",
+        "title": "Stół: sprzątanie",
+        "tier": "MIN",
+        "points": 1,
+        "description": "Dyżur stołowy: Niedziela",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z",
+        "daysOfWeek": [
+          7
+        ]
+      },
+      {
+        "id": "task-import-67",
+        "childId": "child-lucja",
+        "title": "Ścielenie łóżka",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-68",
+        "childId": "child-lucja",
+        "title": "Kurtka i buty",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-69",
+        "childId": "child-lucja",
+        "title": "Poduszki na kanapie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-70",
+        "childId": "child-lucja",
+        "title": "Gaszenie światła",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-71",
+        "childId": "child-lucja",
+        "title": "Spuszczenie wody po sobie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-72",
+        "childId": "child-lucja",
+        "title": "Sprzątanie stołu po zabawie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-73",
+        "childId": "child-lucja",
+        "title": "Sprzątanie jaszczurek",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-74",
+        "childId": "child-ignacy",
+        "title": "Ścielenie łóżka",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-75",
+        "childId": "child-ignacy",
+        "title": "Kurtka i buty",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-76",
+        "childId": "child-ignacy",
+        "title": "Poduszki na kanapie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-77",
+        "childId": "child-ignacy",
+        "title": "Gaszenie światła",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-78",
+        "childId": "child-ignacy",
+        "title": "Spuszczenie wody po sobie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-79",
+        "childId": "child-ignacy",
+        "title": "Sprzątanie stołu po zabawie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-80",
+        "childId": "child-ignacy",
+        "title": "Sprzątanie jaszczurek",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-81",
+        "childId": "child-franek",
+        "title": "Ścielenie łóżka",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-82",
+        "childId": "child-franek",
+        "title": "Kurtka i buty",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-83",
+        "childId": "child-franek",
+        "title": "Poduszki na kanapie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-84",
+        "childId": "child-franek",
+        "title": "Gaszenie światła",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-85",
+        "childId": "child-franek",
+        "title": "Spuszczenie wody po sobie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-86",
+        "childId": "child-franek",
+        "title": "Sprzątanie stołu po zabawie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-87",
+        "childId": "child-franek",
+        "title": "Sprzątanie jaszczurek",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-88",
+        "childId": "child-filip",
+        "title": "Ścielenie łóżka",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-89",
+        "childId": "child-filip",
+        "title": "Kurtka i buty",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-90",
+        "childId": "child-filip",
+        "title": "Poduszki na kanapie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-91",
+        "childId": "child-filip",
+        "title": "Gaszenie światła",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-92",
+        "childId": "child-filip",
+        "title": "Spuszczenie wody po sobie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-93",
+        "childId": "child-filip",
+        "title": "Sprzątanie stołu po zabawie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-94",
+        "childId": "child-filip",
+        "title": "Sprzątanie jaszczurek",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-95",
+        "childId": "child-jozek",
+        "title": "Ścielenie łóżka",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-96",
+        "childId": "child-jozek",
+        "title": "Kurtka i buty",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-97",
+        "childId": "child-jozek",
+        "title": "Poduszki na kanapie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-98",
+        "childId": "child-jozek",
+        "title": "Gaszenie światła",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-99",
+        "childId": "child-jozek",
+        "title": "Spuszczenie wody po sobie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-100",
+        "childId": "child-jozek",
+        "title": "Sprzątanie stołu po zabawie",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      },
+      {
+        "id": "task-import-101",
+        "childId": "child-jozek",
+        "title": "Sprzątanie jaszczurek",
+        "tier": "PLUS",
+        "points": 1,
+        "description": "Zadanie specjalne (bonus).",
+        "active": true,
+        "createdAt": "2026-02-13T21:27:50.501Z"
+      }
+    ],
+    "completions": [],
+    "rewards": [],
+    "streaks": {
+      "child-lucja": {
+        "current": 0,
+        "best": 0,
+        "idealWeeksCount": 0,
+        "idealWeeksInRow": 0,
+        "lastEvaluatedDate": null
+      },
+      "child-ignacy": {
+        "current": 0,
+        "best": 0,
+        "idealWeeksCount": 0,
+        "idealWeeksInRow": 0,
+        "lastEvaluatedDate": null
+      },
+      "child-franek": {
+        "current": 0,
+        "best": 0,
+        "idealWeeksCount": 0,
+        "idealWeeksInRow": 0,
+        "lastEvaluatedDate": null
+      },
+      "child-filip": {
+        "current": 0,
+        "best": 0,
+        "idealWeeksCount": 0,
+        "idealWeeksInRow": 0,
+        "lastEvaluatedDate": null
+      },
+      "child-jozek": {
+        "current": 0,
+        "best": 0,
+        "idealWeeksCount": 0,
+        "idealWeeksInRow": 0,
+        "lastEvaluatedDate": null
+      }
+    },
+    "points": {
+      "child-lucja": 0,
+      "child-ignacy": 0,
+      "child-franek": 0,
+      "child-filip": 0,
+      "child-jozek": 0
+    },
+    "rewardUnlocks": [],
+    "familyGoal": {
+      "title": "Cel rodzinny",
+      "target": 500,
+      "mode": "points"
+    },
+    "auditLogs": [],
+    "dayPointGrants": {},
+    "weekBonusGrants": {}
+  }
+}

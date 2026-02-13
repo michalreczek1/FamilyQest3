@@ -291,6 +291,7 @@ const taskSchema = z.object({
   tier: z.enum(['MIN', 'PLUS', 'WEEKLY']),
   points: z.number().int().min(0).max(10000).default(0),
   description: z.string().trim().max(500).optional().nullable(),
+  daysOfWeek: z.array(z.number().int().min(1).max(7)).min(1).max(7).optional(),
   active: z.boolean().optional(),
 });
 
@@ -343,6 +344,7 @@ const normalizeActiveDays = (days) =>
   [...new Set((Array.isArray(days) ? days : []).map((x) => Number(x)).filter((x) => x >= 1 && x <= 7))].sort(
     (a, b) => a - b,
   );
+const normalizeTaskDaysOfWeek = (days) => normalizeActiveDays(days);
 
 const normalizeStateData = (value) => {
   const input = isObjectRecord(value) ? value : {};
@@ -1029,6 +1031,7 @@ app.post('/api/tasks', authMiddleware, requireParent, async (req, res) => {
       tier: parsed.data.tier,
       points: parsed.data.points || 0,
       description: parsed.data.description || '',
+      daysOfWeek: normalizeTaskDaysOfWeek(parsed.data.daysOfWeek),
       active: parsed.data.active !== false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1078,6 +1081,9 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
     if (typeof parsed.data.points === 'number') next.points = parsed.data.points;
     if (typeof parsed.data.description === 'string' || parsed.data.description === null) {
       next.description = parsed.data.description || '';
+    }
+    if (parsed.data.daysOfWeek !== undefined) {
+      next.daysOfWeek = normalizeTaskDaysOfWeek(parsed.data.daysOfWeek);
     }
     if (typeof parsed.data.active === 'boolean') next.active = parsed.data.active;
     next.updatedAt = new Date().toISOString();
