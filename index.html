@@ -2240,8 +2240,7 @@
       const progress = Math.max(0, Math.min(100, Math.round((currentValue / Math.max(target, 1)) * 100)));
       
       return (
-        <div className="glass-card" style={{marginTop: '1.25rem'}}>
-          <h3 style={{marginBottom: '1rem'}}>🎯 Cel rodzinny</h3>
+        <div className="glass-card">
           <div style={{fontWeight: 700, marginBottom: '0.45rem'}}>
             {familyGoal?.title || 'Cel rodzinny'}
           </div>
@@ -2718,13 +2717,16 @@
                   points={points}
                   title="🏆 Ranking rodzinny"
                 />
-                <FamilyGoalWidget
-                  familyGoal={familyGoal}
-                  children={children}
-                  points={points}
-                  evaluateDay={evaluateDay}
-                  getDateString={getDateString}
-                />
+                <div style={{marginTop: '1.25rem'}}>
+                  <h3 style={{marginBottom: '1rem'}}>🎯 Cel rodzinny</h3>
+                  <FamilyGoalWidget
+                    familyGoal={familyGoal}
+                    children={children}
+                    points={points}
+                    evaluateDay={evaluateDay}
+                    getDateString={getDateString}
+                  />
+                </div>
               </>
             )}
           </div>
