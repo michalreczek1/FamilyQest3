@@ -11,9 +11,8 @@
     
     body {
       font-family: 'Fredoka', sans-serif;
-      background: linear-gradient(135deg, #0EA5E9 0%, #2563EB 25%, #0D9488 50%, #22C55E 75%, #34D399 100%);
-      background-size: 400% 400%;
-      animation: gradientShift 15s ease infinite;
+      background: linear-gradient(135deg, #0b1f4d 0%, #1f72ba 100%);
+      background-attachment: fixed;
       min-height: 100vh;
       color: #fff;
     }
@@ -83,6 +82,16 @@
       outline: none;
       border-color: #FEC84B;
       background: rgba(255, 255, 255, 0.25);
+    }
+    .select {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: rgba(15, 23, 42, 0.2);
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .select option {
+      color: #0f172a;
+      background: #ffffff;
     }
     
     .task-item {
@@ -586,6 +595,22 @@
       const diff = day === 0 ? -6 : 1 - day;
       date.setDate(date.getDate() + diff);
       return toDateString(date);
+    };
+    const sortChildrenForLeaderboard = (children, streaks, points) =>
+      [...children].sort((a, b) => {
+        const aIdeal = streaks[a.id]?.idealWeeksInRow || 0;
+        const bIdeal = streaks[b.id]?.idealWeeksInRow || 0;
+        if (aIdeal !== bIdeal) return bIdeal - aIdeal;
+        const aStreak = streaks[a.id]?.current || 0;
+        const bStreak = streaks[b.id]?.current || 0;
+        if (aStreak !== bStreak) return bStreak - aStreak;
+        return (points[b.id] || 0) - (points[a.id] || 0);
+      });
+    const rankIcon = (index) => {
+      if (index === 0) return '🏆';
+      if (index === 1) return '🥈';
+      if (index === 2) return '🥉';
+      return `${index + 1}.`;
     };
 
     // Main App
@@ -1436,6 +1461,8 @@
         return (
           <ChildSelectionView 
             children={activeChildren}
+            streaks={streaks}
+            points={points}
             onSelectChild={selectChild}
             onParentMode={enterParentMode}
             onLogout={handleLogout}
@@ -2087,42 +2114,11 @@
                     })}
                   </div>
                   
-                  <div className="glass-card" style={{marginTop: '2rem'}}>
-                    <h3 style={{marginBottom: '1rem'}}>📊 Ranking tygodniowy</h3>
-                    {activeChildren.length === 0 ? (
-                      <div className="empty-state">Brak dzieci</div>
-                    ) : (
-                      [...activeChildren]
-                        .sort((a, b) => {
-                          const aIdeal = streaks[a.id]?.idealWeeksInRow || 0;
-                          const bIdeal = streaks[b.id]?.idealWeeksInRow || 0;
-                          if (aIdeal !== bIdeal) return bIdeal - aIdeal;
-                          const aStreak = streaks[a.id]?.current || 0;
-                          const bStreak = streaks[b.id]?.current || 0;
-                          if (aStreak !== bStreak) return bStreak - aStreak;
-                          return (points[b.id] || 0) - (points[a.id] || 0);
-                        })
-                        .map((child, index) => {
-                          const childStreak = streaks[child.id] || { current: 0, best: 0, idealWeeksInRow: 0 };
-                          const childPoints = points[child.id] || 0;
-                          
-                          return (
-                            <div key={child.id} className="task-item">
-                              <div style={{fontSize: '2rem', fontWeight: 700, width: '50px', textAlign: 'center'}}>
-                                {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}
-                              </div>
-                              <div style={{fontSize: '2rem'}}>{child.avatar}</div>
-                              <div style={{flex: 1}}>
-                                <div style={{fontWeight: 600}}>{child.name}</div>
-                                <div style={{fontSize: '0.9rem', opacity: 0.7}}>
-                                  Idealne tyg.: {childStreak.idealWeeksInRow || 0} • Passa: {childStreak.current} • {childPoints} pkt
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                    )}
-                  </div>
+                  <WeeklyLeaderboardPanel
+                    children={activeChildren}
+                    streaks={streaks}
+                    points={points}
+                  />
                 </>
               )}
               
@@ -2267,6 +2263,37 @@
           <div className="progress-bar">
             <div className="progress-fill" style={{width: `${progress}%`}} />
           </div>
+        </div>
+      );
+    };
+    
+    const WeeklyLeaderboardPanel = ({ children, streaks, points, title = '📊 Ranking tygodniowy' }) => {
+      const rankedChildren = sortChildrenForLeaderboard(children, streaks, points);
+      return (
+        <div className="glass-card" style={{marginTop: '1.25rem'}}>
+          <h3 style={{marginBottom: '1rem'}}>{title}</h3>
+          {rankedChildren.length === 0 ? (
+            <div className="empty-state">Brak dzieci</div>
+          ) : (
+            rankedChildren.map((child, index) => {
+              const childStreak = streaks[child.id] || { current: 0, idealWeeksInRow: 0 };
+              const childPoints = points[child.id] || 0;
+              return (
+                <div key={child.id} className="task-item">
+                  <div style={{fontSize: '2rem', fontWeight: 700, width: '50px', textAlign: 'center'}}>
+                    {rankIcon(index)}
+                  </div>
+                  <div style={{fontSize: '2rem'}}>{child.avatar}</div>
+                  <div style={{flex: 1}}>
+                    <div style={{fontWeight: 600}}>{child.name}</div>
+                    <div style={{fontSize: '0.9rem', opacity: 0.78}}>
+                      Idealne tyg.: {childStreak.idealWeeksInRow || 0} • Passa: {childStreak.current || 0} • {childPoints} pkt
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       );
     };
@@ -2654,7 +2681,7 @@
     };
     
     // Child Selection View Component
-    const ChildSelectionView = ({ children, onSelectChild, onParentMode, onLogout, parentPin }) => {
+    const ChildSelectionView = ({ children, streaks, points, onSelectChild, onParentMode, onLogout, parentPin }) => {
       const [showPinModal, setShowPinModal] = useState(false);
       
       return (
@@ -2674,14 +2701,22 @@
                 <p>Brak dzieci. Przejdź do panelu rodzica, aby dodać pierwsze dziecko.</p>
               </div>
             ) : (
-              <div className="grid grid-3">
-                {children.map(child => (
-                  <div key={child.id} className="glass-card child-card" onClick={() => onSelectChild(child)}>
-                    <div className="child-avatar">{child.avatar}</div>
-                    <h2 style={{textAlign: 'center'}}>{child.name}</h2>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div className="grid grid-3">
+                  {children.map(child => (
+                    <div key={child.id} className="glass-card child-card" onClick={() => onSelectChild(child)}>
+                      <div className="child-avatar">{child.avatar}</div>
+                      <h2 style={{textAlign: 'center'}}>{child.name}</h2>
+                    </div>
+                  ))}
+                </div>
+                <WeeklyLeaderboardPanel
+                  children={children}
+                  streaks={streaks}
+                  points={points}
+                  title="🏆 Ranking rodzinny"
+                />
+              </>
             )}
           </div>
           
