@@ -2240,8 +2240,11 @@
       const progress = Math.max(0, Math.min(100, Math.round((currentValue / Math.max(target, 1)) * 100)));
       
       return (
-        <div className="glass-card">
-          <h3 style={{marginBottom: '0.5rem'}}>🎯 {familyGoal?.title || 'Cel rodzinny'}</h3>
+        <div className="glass-card" style={{marginTop: '1.25rem'}}>
+          <h3 style={{marginBottom: '1rem'}}>🎯 Cel rodzinny</h3>
+          <div style={{fontWeight: 700, marginBottom: '0.45rem'}}>
+            {familyGoal?.title || 'Cel rodzinny'}
+          </div>
           <div style={{fontSize: '0.9rem', opacity: 0.8}}>
             {mode === 'passedDays' ? 'Tryb: liczba zaliczonych dni' : 'Tryb: suma punktów rodziny'}
           </div>
