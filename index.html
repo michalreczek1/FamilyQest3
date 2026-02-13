@@ -372,7 +372,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback } = React;
+    const { useState, useEffect, useCallback, useRef } = React;
     
     const AUTH_TOKEN_KEY = 'fq_auth_token';
     const API_BASE_KEY = 'fq_api_base';
@@ -475,8 +475,21 @@
           return [];
         }
       };
+
+      const merge = async (values) => {
+        try {
+          await apiRequest('/api/storage/merge', {
+            method: 'POST',
+            body: { values }
+          });
+          return true;
+        } catch (e) {
+          console.error('Storage merge error:', e);
+          return false;
+        }
+      };
       
-      return { get, set, list };
+      return { get, set, list, merge };
     };
 
     const POINTS_PER_PASSED_DAY = 10;
@@ -548,6 +561,9 @@
       const [editingChild, setEditingChild] = useState(null);
       const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
       const [approvalFilterDate, setApprovalFilterDate] = useState('');
+      const pendingSaveSnapshotRef = useRef(null);
+      const saveInFlightRef = useRef(false);
+      const saveRequestedRef = useRef(false);
       
       const resetFamilyData = () => {
         setChildren([]);
@@ -690,31 +706,53 @@
         }
       };
       
-      const saveData = async () => {
+      const flushSaveQueue = useCallback(async () => {
+        if (saveInFlightRef.current) {
+          return;
+        }
+        if (!saveRequestedRef.current || !pendingSaveSnapshotRef.current) {
+          return;
+        }
+
+        saveInFlightRef.current = true;
+        setSyncing(true);
+
         try {
-          setSyncing(true);
-          await Promise.all([
-            storage.set('children', children),
-            storage.set('tasks', tasks),
-            storage.set('completions', completions),
-            storage.set('rewards', rewards),
-            storage.set('streaks', streaks),
-            storage.set('points', points),
-            storage.set('rewardUnlocks', rewardUnlocks),
-            storage.set('familyGoal', familyGoal),
-            storage.set('auditLogs', auditLogs),
-            storage.set('dayPointGrants', dayPointGrants),
-            storage.set('weekBonusGrants', weekBonusGrants),
-          ]);
+          while (saveRequestedRef.current && pendingSaveSnapshotRef.current) {
+            saveRequestedRef.current = false;
+            const snapshot = pendingSaveSnapshotRef.current;
+            pendingSaveSnapshotRef.current = null;
+            await storage.merge(snapshot);
+          }
         } catch (e) {
           console.error('Save data error:', e);
         } finally {
+          saveInFlightRef.current = false;
           setSyncing(false);
+          if (saveRequestedRef.current && pendingSaveSnapshotRef.current) {
+            flushSaveQueue();
+          }
         }
-      };
+      }, [storage]);
       
       useEffect(() => {
-        if (!loading && user) saveData();
+        if (!loading && user) {
+          pendingSaveSnapshotRef.current = {
+            children,
+            tasks,
+            completions,
+            rewards,
+            streaks,
+            points,
+            rewardUnlocks,
+            familyGoal,
+            auditLogs,
+            dayPointGrants,
+            weekBonusGrants,
+          };
+          saveRequestedRef.current = true;
+          flushSaveQueue();
+        }
       }, [
         loading,
         user,
@@ -729,6 +767,7 @@
         auditLogs,
         dayPointGrants,
         weekBonusGrants,
+        flushSaveQueue,
       ]);
       
       // Business Logic
@@ -744,12 +783,13 @@
         
         if (!child.activeDays.includes(adjustedDay)) return 'NOT_ACTIVE';
         
-        const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && t.active);
+        const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && t.active !== false);
         if (minTasks.length === 0) return 'PASSED';
         
         const approvedCount = minTasks.filter(task => {
           return completions.some(c => 
             c.taskId === task.id && 
+            c.childId === childId &&
             c.date === date && 
             c.approvedByParent
           );
@@ -1347,7 +1387,7 @@
       // Child Dashboard View
       if (view === 'child' && selectedChild) {
         const today = getDateString();
-        const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active);
+        const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active !== false);
         const todayCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === today);
         const childStreak = streaks[selectedChild.id] || { current: 0, best: 0 };
         const childPoints = points[selectedChild.id] || 0;

@@ -1591,6 +1591,38 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/storage/merge', authMiddleware, async (req, res) => {
+  const values = req.body?.values;
+  if (!isObjectRecord(values)) {
+    res.status(400).json({ error: 'Nieprawidlowe dane merge storage' });
+    return;
+  }
+
+  const keys = Object.keys(values);
+  for (const key of keys) {
+    if (!isValidStorageKey(key)) {
+      res.status(400).json({ error: `Nieprawidlowy klucz storage: ${key}` });
+      return;
+    }
+  }
+
+  try {
+    const state = await getOrCreateState(req.auth.user.familyId);
+    const data = isObjectRecord(state.data) ? state.data : {};
+    const nextData = { ...data, ...values };
+
+    await prisma.familyState.update({
+      where: { id: state.id },
+      data: { data: nextData },
+    });
+
+    res.json({ ok: true, keys });
+  } catch (error) {
+    console.error('Storage merge error:', error);
+    res.status(500).json({ error: 'Blad zapisu storage merge' });
+  }
+});
+
 app.get('/api/storage/list', authMiddleware, async (req, res) => {
   try {
     const prefix = String(req.query.prefix || '');
