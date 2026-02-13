@@ -358,6 +358,23 @@
       padding: 0.75rem;
       margin-bottom: 0.5rem;
     }
+
+    .goal-icon {
+      display: inline-block;
+      animation: goalIconPulse 1.8s ease-in-out infinite;
+      transform-origin: center;
+    }
+
+    @keyframes goalIconPulse {
+      0%, 100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 0 rgba(254, 200, 75, 0));
+      }
+      50% {
+        transform: scale(1.14);
+        filter: drop-shadow(0 0 8px rgba(254, 200, 75, 0.7));
+      }
+    }
     
     .reward-overlay {
       position: fixed;
@@ -2241,8 +2258,11 @@
       
       return (
         <div className="glass-card">
-          <div style={{fontWeight: 700, marginBottom: '0.45rem'}}>
-            {familyGoal?.title || 'Cel rodzinny'}
+          <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.45rem'}}>
+            <span className="goal-icon" style={{fontSize: '1.2rem'}} aria-hidden="true">🏆</span>
+            <div style={{fontWeight: 700}}>
+              {familyGoal?.title || 'Cel rodzinny'}
+            </div>
           </div>
           <div style={{fontSize: '0.9rem', opacity: 0.8}}>
             {mode === 'passedDays' ? 'Tryb: liczba zaliczonych dni' : 'Tryb: suma punktów rodziny'}
