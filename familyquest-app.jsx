@@ -21,6 +21,9 @@ const STORAGE_KEYS = {
   CURRENT_CHILD: 'fq_current_child'
 };
 
+const DEMO_PARENT_EMAIL = 'demo.parent@example.com';
+const DEMO_PARENT_PASSWORD = 'Demo-Change-This-Password';
+
 // PostgreSQL Schema Reference (Prisma)
 const POSTGRES_SCHEMA = `
 -- User accounts
@@ -206,8 +209,8 @@ const initializeData = () => {
     // Users
     storage.set(STORAGE_KEYS.USERS, [{
       id: parentId,
-      email: 'rodzic@familyquest.pl',
-      password: 'haslo123', // In production: bcrypt hash
+      email: DEMO_PARENT_EMAIL,
+      password: DEMO_PARENT_PASSWORD, // In production: bcrypt hash
       role: 'PARENT',
       familyId,
       active: true,
@@ -649,8 +652,8 @@ const RewardOverlay = ({ reward, onClose }) => {
 
 // Login Screen
 const LoginScreen = ({ onLogin }) => {
-  const [email, setEmail] = useState('rodzic@familyquest.pl');
-  const [password, setPassword] = useState('haslo123');
+  const [email, setEmail] = useState(DEMO_PARENT_EMAIL);
+  const [password, setPassword] = useState(DEMO_PARENT_PASSWORD);
   const [error, setError] = useState('');
   
   const handleLogin = () => {
@@ -1505,8 +1508,8 @@ const FamilyQuestApp = () => {
     console.log('🎮 FamilyQuest uruchomiony w trybie DEMO');
     console.log('📝 Dane przechowywane lokalnie w przeglądarce');
     console.log('🔐 Domyślne dane logowania:');
-    console.log('   Email: rodzic@familyquest.pl');
-    console.log('   Hasło: haslo123');
+    console.log(`   Email: ${DEMO_PARENT_EMAIL}`);
+    console.log(`   Hasło: ${DEMO_PARENT_PASSWORD}`);
     console.log('   PIN: 1234');
   }, []);
   

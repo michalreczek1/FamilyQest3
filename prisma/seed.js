@@ -12,7 +12,7 @@ async function main() {
   }
 
   const email = (process.env.SEED_PARENT_EMAIL || 'rodzic@example.com').toLowerCase();
-  const password = process.env.SEED_PARENT_PASSWORD || 'change-me-now-123';
+  const password = process.env.SEED_PARENT_PASSWORD || 'CHANGEME_BEFORE_USE';
   const pinCode = process.env.SEED_PARENT_PIN || '1234';
 
   const existing = await prisma.user.findUnique({ where: { email } });

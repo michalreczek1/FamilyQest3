@@ -41,8 +41,8 @@ http://localhost:8000
 
 ### Krok 4: Zaloguj się
 ```
-Email: rodzic@familyquest.pl
-Hasło: haslo123
+Email: demo.parent@example.com
+Hasło: Demo-Change-This-Password
 PIN: 1234
 ```
 
@@ -352,7 +352,7 @@ certbot --nginx -d yourdomain.com
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 # Generate bcrypt hash (for default password)
-node -e "const bcrypt = require('bcrypt'); bcrypt.hash('haslo123', 10).then(h => console.log(h))"
+node -e "const bcrypt = require('bcrypt'); bcrypt.hash('Demo-Change-This-Password', 10).then(h => console.log(h))"
 ```
 
 ### Firewall (UFW)

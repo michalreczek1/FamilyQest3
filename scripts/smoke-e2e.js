@@ -38,7 +38,8 @@ const assertOk = (condition, message, payload = null) => {
 const run = async () => {
   const suffix = Date.now();
   const parentEmail = `smoke.parent.${suffix}@familyquest.local`;
-  const parentPassword = 'SmokeHaslo123!';
+  const parentPassword = process.env.SMOKE_PARENT_PASSWORD || 'SmokeTestPass123!';
+  const resetPassword = process.env.SMOKE_RESET_PASSWORD || 'SmokeTestPass999!';
   const today = new Date().toISOString().slice(0, 10);
 
   const health = await requestJson('/health');
@@ -141,7 +142,7 @@ const run = async () => {
     method: 'POST',
     body: {
       token: forgot.data.debugResetToken,
-      newPassword: 'SmokeHaslo999!',
+      newPassword: resetPassword,
     },
   });
   assertOk(reset.status === 200, 'Reset password by token failed', reset);
@@ -150,7 +151,7 @@ const run = async () => {
     method: 'POST',
     body: {
       email: parentEmail,
-      password: 'SmokeHaslo999!',
+      password: resetPassword,
     },
   });
   assertOk(loginAfterReset.status === 200, 'Login after reset failed', loginAfterReset);

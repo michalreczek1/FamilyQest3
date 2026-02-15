@@ -6,10 +6,12 @@ const { app, prisma } = require('../server');
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
 const maybeDescribe = hasDatabase ? describe : describe.skip;
+const TEST_PARENT_PASSWORD = 'TestParentPass123!';
+const TEST_RESET_PASSWORD = 'TestResetPass999!';
 
 const createParentPayload = (suffix) => ({
   email: `jest.parent.${suffix}@familyquest.local`,
-  password: 'JestHaslo123!',
+  password: TEST_PARENT_PASSWORD,
   pinCode: '2468',
   familyName: 'Jest Rodzina',
 });
@@ -138,7 +140,7 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(forgotRes.status).toBe(200);
     expect(forgotRes.body.debugResetToken).toBeTruthy();
 
-    const newPassword = 'JestNoweHaslo999!';
+    const newPassword = TEST_RESET_PASSWORD;
     const resetRes = await request(app).post('/api/auth/reset-password/token').send({
       token: forgotRes.body.debugResetToken,
       newPassword,

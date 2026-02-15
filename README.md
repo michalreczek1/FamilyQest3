@@ -48,7 +48,7 @@ npx prisma db push
 ```env
 AUTO_SEED=true
 SEED_PARENT_EMAIL=rodzic@familyquest.local
-SEED_PARENT_PASSWORD=Haslo123!
+SEED_PARENT_PASSWORD=<USTAW_SILNE_HASLO>
 SEED_PARENT_PIN=1234
 SEED_FAMILY_NAME=Rodzina Testowa
 ```
@@ -117,4 +117,3 @@ CORS_ORIGINS=https://<twoja-domena-railway>
 
 ## Uwaga dot. kodowania
 Projekt używa UTF-8 (polskie znaki i emoji w UI/danych).
-

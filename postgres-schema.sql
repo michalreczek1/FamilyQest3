@@ -257,9 +257,9 @@ CREATE TRIGGER update_family_goals_updated_at BEFORE UPDATE ON family_goals
 INSERT INTO families (id, name) VALUES 
   ('11111111-1111-1111-1111-111111111111', 'Rodzina Kowalskich');
 
--- Insert demo parent (password: haslo123, pin: 1234)
+-- Insert demo parent (password: Demo-Change-This-Password, pin: 1234)
 INSERT INTO users (id, email, password, role, family_id, active, pin_code) VALUES 
-  ('22222222-2222-2222-2222-222222222222', 'rodzic@familyquest.pl', 
+  ('22222222-2222-2222-2222-222222222222', 'demo.parent@example.com', 
    '$2b$10$YourBcryptHashHere', 'PARENT', 
    '11111111-1111-1111-1111-111111111111', TRUE, '1234');
 
