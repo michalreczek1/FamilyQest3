@@ -117,3 +117,10 @@ CORS_ORIGINS=https://<twoja-domena-railway>
 
 ## Uwaga dot. kodowania
 Projekt używa UTF-8 (polskie znaki i emoji w UI/danych).
+
+## Instalacja na Android (Chrome)
+1. Otworz aplikacje przez HTTPS (lub lokalnie na `localhost`).
+2. Zaloguj sie i poczekaj az zaladuje sie aplikacja.
+3. Kliknij przycisk `Zainstaluj aplikacje` (pokazuje sie, gdy Chrome pozwala na instalacje)
+   lub wybierz `Menu Chrome -> Dodaj do ekranu glownego`.
+4. Na ekranie glownym pojawi sie ikona aplikacji z motywem domu.

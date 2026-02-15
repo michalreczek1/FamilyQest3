@@ -1,12 +1,17 @@
 ﻿// FamilyQuest Service Worker
 // Provides offline functionality and caching.
 
-const CACHE_NAME = 'familyquest-v4';
+const CACHE_NAME = 'familyquest-v5';
 const urlsToCache = [
   '/',
+  '/?source=pwa',
   '/index.html',
   '/manifest.json',
   '/service-worker.js',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-192-maskable.png',
+  '/icons/icon-512-maskable.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -89,8 +94,8 @@ self.addEventListener('sync', (event) => {
 self.addEventListener('push', (event) => {
   const options = {
     body: event.data ? event.data.text() : 'Nowe zadanie dostępne!',
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏆</text></svg>",
-    badge: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏆</text></svg>",
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
     vibrate: [200, 100, 200],
     data: {
       dateOfArrival: Date.now(),

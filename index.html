@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0EA5E9">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <title>FamilyQuest - Pełna Wersja</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&display=swap');
@@ -397,6 +402,17 @@
       padding: 2rem;
       text-align: center;
     }
+
+    .install-btn {
+      position: fixed;
+      right: 1rem;
+      bottom: calc(1rem + env(safe-area-inset-bottom));
+      z-index: 2200;
+      display: none;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      max-width: calc(100vw - 2rem);
+    }
     
     @media (max-width: 768px) {
       .glass-card { padding: 1rem; }
@@ -421,11 +437,19 @@
       .calendar-day-date {
         font-size: 0.6rem;
       }
+      .install-btn {
+        left: 1rem;
+        right: 1rem;
+        width: auto;
+      }
     }
   </style>
 </head>
 <body>
   <div id="root"></div>
+  <button id="install-app-btn" class="btn btn-primary install-btn" type="button" aria-label="Zainstaluj aplikację">
+    Zainstaluj aplikację
+  </button>
 
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -3325,6 +3349,42 @@
 
     // Render
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+    let deferredInstallPrompt = null;
+    const installButton = document.getElementById('install-app-btn');
+
+    const hideInstallButton = () => {
+      installButton.style.display = 'none';
+      installButton.disabled = false;
+    };
+
+    const showInstallButton = () => {
+      installButton.style.display = 'block';
+    };
+
+    installButton.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      installButton.disabled = true;
+      deferredInstallPrompt.prompt();
+      const choiceResult = await deferredInstallPrompt.userChoice;
+      if (choiceResult.outcome !== 'accepted') {
+        installButton.disabled = false;
+      }
+      deferredInstallPrompt = null;
+      hideInstallButton();
+    });
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      showInstallButton();
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      hideInstallButton();
+    });
+
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js').catch(err => {
