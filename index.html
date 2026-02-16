@@ -533,7 +533,7 @@
           return result?.value ?? null;
         } catch (e) {
           console.error('Storage get error:', e);
-          return null;
+          throw e;
         }
       };
       
@@ -675,6 +675,7 @@
       const [syncing, setSyncing] = useState(false);
       const [showRewardOverlay, setShowRewardOverlay] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [hasLoadedSnapshot, setHasLoadedSnapshot] = useState(false);
       const [view, setView] = useState('login'); // login, childSelect, child, parent
       const [selectedChild, setSelectedChild] = useState(null);
       const [parentTab, setParentTab] = useState('approvals');
@@ -739,6 +740,7 @@
       
       const loadData = async () => {
         setLoading(true);
+        setHasLoadedSnapshot(false);
         
         try {
           const token = getAuthToken();
@@ -746,6 +748,7 @@
             setUser(null);
             resetFamilyData();
             setView('login');
+            setHasLoadedSnapshot(false);
             return;
           }
           
@@ -808,6 +811,7 @@
             setSelectedChild(null);
             setView('childSelect');
           }
+          setHasLoadedSnapshot(true);
           
           try {
             const parentUsersResponse = await apiRequest('/api/auth/parents');
@@ -822,6 +826,7 @@
           setUser(null);
           resetFamilyData();
           setView('login');
+          setHasLoadedSnapshot(false);
         } finally {
           setLoading(false);
         }
@@ -857,7 +862,7 @@
       }, [storage]);
       
       useEffect(() => {
-        if (!loading && user) {
+        if (!loading && user && hasLoadedSnapshot) {
           pendingSaveSnapshotRef.current = {
             children,
             tasks,
@@ -877,6 +882,7 @@
       }, [
         loading,
         user,
+        hasLoadedSnapshot,
         children,
         tasks,
         completions,
