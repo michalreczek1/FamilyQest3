@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0EA5E9">
+  <meta name="theme-color" content="#C55124">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
@@ -16,8 +16,10 @@
     
     body {
       font-family: 'Fredoka', sans-serif;
-      background: linear-gradient(135deg, #0b1f4d 0%, #1f72ba 100%);
+      background: linear-gradient(135deg, #4a1e0d 0%, #8c341d 35%, #c55124 70%, #e07a2f 100%);
+      background-size: 200% 200%;
       background-attachment: fixed;
+      animation: gradientShift 18s ease infinite;
       min-height: 100vh;
       color: #fff;
     }
