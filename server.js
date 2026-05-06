@@ -1261,6 +1261,41 @@ app.get('/api/task-templates', authMiddleware, async (req, res) => {
   res.json({ templates: TASK_TEMPLATES });
 });
 
+app.get('/api/leaderboard', authMiddleware, async (req, res) => {
+  try {
+    const { data } = await loadStateData(req.auth.user.familyId);
+    const children = data.children
+      .filter((child) => !child.archived)
+      .map((child) => ({
+        id: child.id,
+        name: child.name,
+        avatar: child.avatar,
+      }));
+    const allowedIds = new Set(children.map((child) => child.id));
+    const points = {};
+    const streaks = {};
+
+    children.forEach((child) => {
+      points[child.id] = Number(data.points[child.id] || 0);
+      streaks[child.id] = data.streaks[child.id] || {
+        current: 0,
+        best: 0,
+        idealWeeksCount: 0,
+        idealWeeksInRow: 0,
+      };
+    });
+
+    res.json({
+      children: children.filter((child) => allowedIds.has(child.id)),
+      points,
+      streaks,
+    });
+  } catch (error) {
+    console.error('Leaderboard error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać tablicy wyników' });
+  }
+});
+
 app.get('/api/children', authMiddleware, async (req, res) => {
   try {
     const includeArchived = String(req.query.includeArchived || '') === 'true';

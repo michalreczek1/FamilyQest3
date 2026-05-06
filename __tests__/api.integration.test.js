@@ -125,6 +125,14 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(childStorageAuditRes.status).toBe(200);
     expect(childStorageAuditRes.body.value).toEqual([]);
 
+    const childLeaderboardRes = await request(app)
+      .get('/api/leaderboard')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childLeaderboardRes.status).toBe(200);
+    expect(childLeaderboardRes.body.children.some((item) => item.id === child.id)).toBe(true);
+    expect(childLeaderboardRes.body.children.some((item) => item.id === sibling.id)).toBe(true);
+    expect(childLeaderboardRes.body.children.some((item) => Object.prototype.hasOwnProperty.call(item, 'accessCode'))).toBe(false);
+
     const childStorageMergeRes = await request(app)
       .post('/api/storage/merge')
       .set('Authorization', `Bearer ${childToken}`)
