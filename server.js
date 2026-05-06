@@ -22,6 +22,9 @@ const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 200);
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
+const POINTS_PER_PASSED_DAY = 2;
+const IDEAL_WEEK_BONUS = 3;
+const ALLOW_DEBUG_RESET_TOKEN = process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required in production');
@@ -43,6 +46,7 @@ const DEFAULT_FAMILY_STATE = {
   auditLogs: [],
   dayPointGrants: {},
   weekBonusGrants: {},
+  taskPointGrants: {},
 };
 
 const passwordResetTokens = new Map();
@@ -82,8 +86,20 @@ app.set('trust proxy', 1);
 
 app.use(
   helmet({
-    // Frontend uses inline scripts + CDN in index.html.
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://unpkg.com'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
     crossOriginEmbedderPolicy: false,
   }),
 );
@@ -346,6 +362,40 @@ const normalizeActiveDays = (days) =>
   );
 const normalizeTaskDaysOfWeek = (days) => normalizeActiveDays(days);
 
+const parseDateInput = (dateInput) => {
+  if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    const [year, month, day] = dateInput.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+  return new Date(dateInput);
+};
+
+const toDateString = (dateInput = new Date()) => {
+  const date = parseDateInput(dateInput);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getDayNumber = (dateInput) => {
+  const day = parseDateInput(dateInput).getDay();
+  return day === 0 ? 7 : day;
+};
+
+const isTaskScheduledForDate = (task, dateInput) => {
+  if (!Array.isArray(task?.daysOfWeek) || task.daysOfWeek.length === 0) return true;
+  return task.daysOfWeek.includes(getDayNumber(dateInput));
+};
+
+const getWeekStart = (dateInput) => {
+  const date = parseDateInput(dateInput);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return toDateString(date);
+};
+
 const normalizeStateData = (value) => {
   const input = isObjectRecord(value) ? value : {};
   return {
@@ -362,6 +412,7 @@ const normalizeStateData = (value) => {
     auditLogs: Array.isArray(input.auditLogs) ? input.auditLogs : [],
     dayPointGrants: isObjectRecord(input.dayPointGrants) ? input.dayPointGrants : {},
     weekBonusGrants: isObjectRecord(input.weekBonusGrants) ? input.weekBonusGrants : {},
+    taskPointGrants: isObjectRecord(input.taskPointGrants) ? input.taskPointGrants : {},
   };
 };
 
@@ -418,6 +469,129 @@ const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChil
 const hasChildAccess = (req, childId) =>
   req.auth.user.role === 'PARENT' || req.auth.user.childId === childId;
 
+const getTaskPointKey = (childId, taskId, date) => `${childId}:${taskId}:${date}`;
+const getDayPointKey = (childId, date) => `${childId}:${date}`;
+const getWeekPointKey = (childId, weekStart) => `${childId}:${weekStart}`;
+
+const evaluateDayForData = (data, childId, date) => {
+  const child = data.children.find((item) => item.id === childId);
+  if (!child) return 'NOT_ACTIVE';
+  const activeDays = Array.isArray(child.activeDays) ? child.activeDays : [];
+  if (!activeDays.includes(getDayNumber(date))) return 'NOT_ACTIVE';
+
+  const minTasks = data.tasks.filter(
+    (task) =>
+      task.childId === childId &&
+      task.tier === 'MIN' &&
+      task.active !== false &&
+      isTaskScheduledForDate(task, date),
+  );
+  if (minTasks.length === 0) return 'PASSED';
+
+  const approvedCount = minTasks.filter((task) =>
+    data.completions.some(
+      (completion) =>
+        completion.taskId === task.id &&
+        completion.childId === childId &&
+        completion.date === date &&
+        completion.approvedByParent,
+    ),
+  ).length;
+  return approvedCount === minTasks.length ? 'PASSED' : 'FAILED';
+};
+
+const evaluateWeekForData = (data, childId, weekStart) => {
+  let activeDays = 0;
+  let passedDays = 0;
+  for (let i = 0; i < 7; i += 1) {
+    const date = parseDateInput(weekStart);
+    date.setDate(date.getDate() + i);
+    const dateStr = toDateString(date);
+    const status = evaluateDayForData(data, childId, dateStr);
+    if (status === 'NOT_ACTIVE') continue;
+    activeDays += 1;
+    if (status === 'PASSED') passedDays += 1;
+  }
+  if (activeDays === 0) return 'NO_ACTIVE_DAYS';
+  return passedDays === activeDays ? 'IDEAL' : 'NOT_IDEAL';
+};
+
+const addPoints = (data, childId, amount) => {
+  if (!amount || amount <= 0) return;
+  data.points = {
+    ...data.points,
+    [childId]: Number(data.points[childId] || 0) + amount,
+  };
+};
+
+const unlockEligibleRewards = (data, childId, actorUserId) => {
+  const childPoints = Number(data.points[childId] || 0);
+  const childStreak = data.streaks[childId] || { current: 0, idealWeeksInRow: 0 };
+  const now = new Date().toISOString();
+
+  data.rewards.forEach((reward) => {
+    if (reward.active === false) return;
+    const already = data.rewardUnlocks.find((item) => item.childId === childId && item.rewardId === reward.id);
+    if (already) return;
+
+    const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
+    const streakOk = !reward.requiredStreak || Number(childStreak.current || 0) >= reward.requiredStreak;
+    const idealOk = !reward.requiredIdealWeeks || Number(childStreak.idealWeeksInRow || 0) >= reward.requiredIdealWeeks;
+    if (!pointsOk || !streakOk || !idealOk) return;
+
+    const unlock = {
+      id: createEntityId('unlock'),
+      childId,
+      rewardId: reward.id,
+      unlockedAt: now,
+      claimedAt: null,
+      shownAt: null,
+    };
+    data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
+    data.auditLogs = addAuditLogEntry(data, actorUserId, 'UNLOCK_REWARD', 'REWARD', reward.id, { childId });
+  });
+};
+
+const applyApprovalEffects = (data, completion, actorUserId, now = new Date().toISOString()) => {
+  if (!completion || completion.approvedByParent) {
+    return false;
+  }
+
+  const previousStatus = evaluateDayForData(data, completion.childId, completion.date);
+  completion.doneByChild = true;
+  completion.approvedByParent = true;
+  completion.approvedAt = now;
+  completion.rejectedByParent = false;
+  completion.rejectedAt = null;
+  completion.updatedAt = now;
+
+  const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
+  const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date);
+  if (task && Number(task.points || 0) > 0 && !data.taskPointGrants[taskPointKey]) {
+    data.taskPointGrants = { ...data.taskPointGrants, [taskPointKey]: true };
+    addPoints(data, completion.childId, Number(task.points || 0));
+  }
+
+  const nextStatus = evaluateDayForData(data, completion.childId, completion.date);
+  if (previousStatus !== 'PASSED' && nextStatus === 'PASSED') {
+    const dayPointKey = getDayPointKey(completion.childId, completion.date);
+    if (!data.dayPointGrants[dayPointKey]) {
+      data.dayPointGrants = { ...data.dayPointGrants, [dayPointKey]: true };
+      addPoints(data, completion.childId, POINTS_PER_PASSED_DAY);
+    }
+
+    const weekStart = getWeekStart(completion.date);
+    const weekPointKey = getWeekPointKey(completion.childId, weekStart);
+    if (!data.weekBonusGrants[weekPointKey] && evaluateWeekForData(data, completion.childId, weekStart) === 'IDEAL') {
+      data.weekBonusGrants = { ...data.weekBonusGrants, [weekPointKey]: true };
+      addPoints(data, completion.childId, IDEAL_WEEK_BONUS);
+    }
+  }
+
+  unlockEligibleRewards(data, completion.childId, actorUserId);
+  return true;
+};
+
 const pickChildMapValue = (source, childId) => {
   if (!isObjectRecord(source)) {
     return {};
@@ -452,6 +626,7 @@ const filterStorageValueForUser = (key, data, user) => {
       return [];
     case 'dayPointGrants':
     case 'weekBonusGrants':
+    case 'taskPointGrants':
       return {};
     default:
       return null;
@@ -534,9 +709,99 @@ const mergeChildRewardUnlocks = (data, incoming, childId) => {
   });
 };
 
+const getRecordTimestamp = (item) => {
+  const raw = item?.updatedAt || item?.approvedAt || item?.createdAt || item?.unlockedAt || item?.claimedAt || null;
+  const timestamp = raw ? Date.parse(raw) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const mergeArrayRecordsById = (existing, incoming) => {
+  if (!Array.isArray(incoming)) {
+    return Array.isArray(existing) ? existing : [];
+  }
+
+  const merged = new Map();
+  (Array.isArray(existing) ? existing : []).forEach((item) => {
+    if (isObjectRecord(item) && typeof item.id === 'string') {
+      merged.set(item.id, item);
+    }
+  });
+
+  incoming.forEach((item) => {
+    if (!isObjectRecord(item) || typeof item.id !== 'string') return;
+    const current = merged.get(item.id);
+    if (!current || getRecordTimestamp(item) >= getRecordTimestamp(current)) {
+      merged.set(item.id, { ...current, ...item });
+    }
+  });
+
+  return [...merged.values()];
+};
+
+const mergeNumberMapByMax = (existing, incoming) => {
+  if (!isObjectRecord(incoming)) {
+    return isObjectRecord(existing) ? existing : {};
+  }
+  const merged = { ...(isObjectRecord(existing) ? existing : {}) };
+  Object.entries(incoming).forEach(([key, value]) => {
+    const next = Number(value || 0);
+    const current = Number(merged[key] || 0);
+    merged[key] = Math.max(current, Number.isFinite(next) ? next : current);
+  });
+  return merged;
+};
+
+const mergeObjectMap = (existing, incoming) => ({
+  ...(isObjectRecord(existing) ? existing : {}),
+  ...(isObjectRecord(incoming) ? incoming : {}),
+});
+
+const mergeAuditLogs = (existing, incoming) =>
+  mergeArrayRecordsById(existing, incoming)
+    .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
+    .slice(0, 500);
+
+const mergeParentStorageValues = (data, values) => {
+  const nextData = { ...data, ...values };
+  if (Object.prototype.hasOwnProperty.call(values, 'children')) {
+    nextData.children = mergeArrayRecordsById(data.children, values.children);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'tasks')) {
+    nextData.tasks = mergeArrayRecordsById(data.tasks, values.tasks);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'completions')) {
+    nextData.completions = mergeArrayRecordsById(data.completions, values.completions);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'rewards')) {
+    nextData.rewards = mergeArrayRecordsById(data.rewards, values.rewards);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'rewardUnlocks')) {
+    nextData.rewardUnlocks = mergeArrayRecordsById(data.rewardUnlocks, values.rewardUnlocks);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'auditLogs')) {
+    nextData.auditLogs = mergeAuditLogs(data.auditLogs, values.auditLogs);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'points')) {
+    nextData.points = mergeNumberMapByMax(data.points, values.points);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'streaks')) {
+    nextData.streaks = mergeObjectMap(data.streaks, values.streaks);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'dayPointGrants')) {
+    nextData.dayPointGrants = mergeObjectMap(data.dayPointGrants, values.dayPointGrants);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'weekBonusGrants')) {
+    nextData.weekBonusGrants = mergeObjectMap(data.weekBonusGrants, values.weekBonusGrants);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'taskPointGrants')) {
+    nextData.taskPointGrants = mergeObjectMap(data.taskPointGrants, values.taskPointGrants);
+  }
+  return nextData;
+};
+
 const mergeStorageValuesForUser = (data, values, user) => {
   if (user.role !== 'CHILD') {
-    return { ...data, ...values };
+    return mergeParentStorageValues(data, values);
   }
 
   const nextData = { ...data };
@@ -562,6 +827,7 @@ const CHILD_STORAGE_KEYS = new Set([
   'auditLogs',
   'dayPointGrants',
   'weekBonusGrants',
+  'taskPointGrants',
 ]);
 
 app.get('/health', async (req, res) => {
@@ -895,7 +1161,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     res.json({
       ok: true,
       message: 'Jeśli konto istnieje, instrukcja resetu została wysłana.',
-      ...(process.env.NODE_ENV !== 'production' && debugToken ? { debugResetToken: debugToken } : {}),
+      ...(ALLOW_DEBUG_RESET_TOKEN && debugToken ? { debugResetToken: debugToken } : {}),
     });
   } catch (error) {
     console.error('Forgot password error:', error);
@@ -1410,12 +1676,7 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
     }
 
     const now = new Date().toISOString();
-    completion.doneByChild = true;
-    completion.approvedByParent = true;
-    completion.approvedAt = now;
-    completion.rejectedByParent = false;
-    completion.rejectedAt = null;
-    completion.updatedAt = now;
+    applyApprovalEffects(data, completion, req.auth.user.id, now);
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASK', 'COMPLETION', completionId, {
       childId: completion.childId,
@@ -1484,12 +1745,9 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
         return;
       }
 
-      completion.approvedByParent = true;
-      completion.approvedAt = now;
-      completion.rejectedByParent = false;
-      completion.rejectedAt = null;
-      completion.updatedAt = now;
-      approvedIds.push(completion.id);
+      if (applyApprovalEffects(data, completion, req.auth.user.id, now)) {
+        approvedIds.push(completion.id);
+      }
     });
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASKS_BULK', 'COMPLETION', 'bulk', {

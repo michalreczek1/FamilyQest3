@@ -1,4 +1,5 @@
 require('dotenv').config();
+process.env.ALLOW_DEBUG_RESET_TOKEN = 'true';
 
 const request = require('supertest');
 const { app, prisma } = require('../server');
@@ -153,6 +154,17 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(childStorageMergeRes.status).toBe(200);
 
+    const staleParentMergeRes = await request(app)
+      .post('/api/storage/merge')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        values: {
+          completions: [],
+          points: { [child.id]: 0 },
+        },
+      });
+    expect(staleParentMergeRes.status).toBe(200);
+
     const parentStorageChildrenRes = await request(app)
       .get('/api/storage/get/children')
       .set('Authorization', `Bearer ${parentToken}`);
@@ -176,6 +188,7 @@ maybeDescribe('FamilyQuest API integration', () => {
         doneByChild: true,
       });
     expect([200, 201]).toContain(markDoneRes.status);
+    const completionId = markDoneRes.body.completion.id;
 
     const pendingRes = await request(app)
       .get('/api/completions/pending')
@@ -193,6 +206,23 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(bulkApproveRes.status).toBe(200);
     expect(bulkApproveRes.body.approvedCount).toBeGreaterThanOrEqual(1);
+
+    const pointsAfterApproveRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterApproveRes.status).toBe(200);
+    const pointsAfterApprove = pointsAfterApproveRes.body.value[child.id] || 0;
+
+    const duplicateApproveRes = await request(app)
+      .post(`/api/completions/${completionId}/approve`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(duplicateApproveRes.status).toBe(200);
+
+    const pointsAfterDuplicateApproveRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterDuplicateApproveRes.status).toBe(200);
+    expect(pointsAfterDuplicateApproveRes.body.value[child.id] || 0).toBe(pointsAfterApprove);
 
     const completionsRes = await request(app)
       .get(`/api/completions?childId=${encodeURIComponent(child.id)}&date=${today}`)

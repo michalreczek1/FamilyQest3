@@ -673,6 +673,7 @@
       const [auditLogs, setAuditLogs] = useState([]);
       const [dayPointGrants, setDayPointGrants] = useState({});
       const [weekBonusGrants, setWeekBonusGrants] = useState({});
+      const [taskPointGrants, setTaskPointGrants] = useState({});
       const [parentUsers, setParentUsers] = useState([]);
       const [isOnline, setIsOnline] = useState(navigator.onLine);
       const [syncing, setSyncing] = useState(false);
@@ -704,6 +705,7 @@
         setAuditLogs([]);
         setDayPointGrants({});
         setWeekBonusGrants({});
+        setTaskPointGrants({});
         setParentUsers([]);
         setShowRewardOverlay(null);
         setSelectedChild(null);
@@ -776,6 +778,7 @@
             savedAuditLogs,
             savedDayPointGrants,
             savedWeekBonusGrants,
+            savedTaskPointGrants,
           ] = await Promise.all([
             storage.get('children'),
             storage.get('tasks'),
@@ -788,6 +791,7 @@
             storage.get('auditLogs'),
             storage.get('dayPointGrants'),
             storage.get('weekBonusGrants'),
+            storage.get('taskPointGrants'),
           ]);
 
           const rawChildren = savedChildren || [];
@@ -808,6 +812,7 @@
           setAuditLogs(savedAuditLogs || []);
           setDayPointGrants(savedDayPointGrants || {});
           setWeekBonusGrants(savedWeekBonusGrants || {});
+          setTaskPointGrants(savedTaskPointGrants || {});
 
           if (session.user?.role === 'CHILD') {
             const ownChild = loadedChildren.find(c => c.id === session.user.childId && !c.archived);
@@ -895,6 +900,7 @@
             auditLogs,
             dayPointGrants,
             weekBonusGrants,
+            taskPointGrants,
           };
           saveRequestedRef.current = true;
           flushSaveQueue();
@@ -914,6 +920,7 @@
         auditLogs,
         dayPointGrants,
         weekBonusGrants,
+        taskPointGrants,
         flushSaveQueue,
       ]);
 
@@ -1243,6 +1250,7 @@
         if (existing) {
           if (existing.approvedByParent) return;
           existing.doneByChild = !existing.doneByChild;
+          existing.updatedAt = new Date().toISOString();
           if (!existing.doneByChild) {
             existing.approvedByParent = false;
             existing.approvedAt = null;
@@ -1260,7 +1268,9 @@
             childId: selectedChild.id,
             date: today,
             doneByChild: true,
-            approvedByParent: false
+            approvedByParent: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
           };
           setCompletions([...completions, newCompletion]);
           addAuditLog('TOGGLE_TASK', 'COMPLETION', newCompletion.id, {
@@ -1272,58 +1282,45 @@
       };
       
       // Parent approve
-      const approveTask = (completion) => {
-        const previousStatus = evaluateDay(completion.childId, completion.date);
-        const comp = completions.find(c => c.id === completion.id);
-        if (comp) {
-          comp.approvedByParent = true;
-          comp.approvedAt = new Date().toISOString();
-          comp.rejectedAt = null;
-          comp.rejectedByParent = false;
-          
-          // Grant points
-          const task = tasks.find(t => t.id === comp.taskId);
-          if (task && task.points > 0) {
-            grantPoints(comp.childId, task.points);
-          }
-          
-          const nextStatus = evaluateDay(comp.childId, comp.date);
-          if (previousStatus !== 'PASSED' && nextStatus === 'PASSED') {
-            grantDayPointsIfNeeded(comp.childId, comp.date);
-            grantWeekBonusIfNeeded(comp.childId, comp.date);
-            checkRewards(comp.childId);
-          }
-          
-          setCompletions([...completions]);
-          addAuditLog('APPROVE_TASK', 'COMPLETION', comp.id, {
-            childId: comp.childId,
-            taskId: comp.taskId,
-            date: comp.date,
+      const approveTask = async (completion, { celebrate = true, reload = true } = {}) => {
+        if (!completion || completion.approvedByParent) return;
+        try {
+          await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/approve`, {
+            method: 'POST',
           });
-          
-          // Show confetti
-          showConfetti();
+          if (celebrate) showConfetti();
+          if (reload) await loadData({ preserveView: true, silent: true });
+        } catch (e) {
+          alert(e.message || 'Nie udało się zatwierdzić zadania');
         }
       };
       
-      const rejectTask = (completion) => {
-        const comp = completions.find(c => c.id === completion.id);
-        if (!comp) return;
-        comp.doneByChild = false;
-        comp.approvedByParent = false;
-        comp.rejectedByParent = true;
-        comp.rejectedAt = new Date().toISOString();
-        setCompletions([...completions]);
-        addAuditLog('REJECT_TASK', 'COMPLETION', comp.id, {
-          childId: comp.childId,
-          taskId: comp.taskId,
-          date: comp.date,
-        });
+      const rejectTask = async (completion) => {
+        if (!completion) return;
+        try {
+          await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/reject`, {
+            method: 'POST',
+          });
+          await loadData({ preserveView: true, silent: true });
+        } catch (e) {
+          alert(e.message || 'Nie udało się odrzucić zadania');
+        }
       };
       
-      const approveAllPending = (list = null) => {
+      const approveAllPending = async (list = null) => {
         const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
-        queue.forEach(item => approveTask(item));
+        if (queue.length === 0) return;
+        try {
+          for (const item of queue) {
+            await apiRequest(`/api/completions/${encodeURIComponent(item.id)}/approve`, {
+              method: 'POST',
+            });
+          }
+          showConfetti();
+          await loadData({ preserveView: true, silent: true });
+        } catch (e) {
+          alert(e.message || 'Nie udało się zatwierdzić zadań');
+        }
       };
       
       const showConfetti = () => {
@@ -1539,6 +1536,7 @@
             auditLogs,
             dayPointGrants,
             weekBonusGrants,
+            taskPointGrants,
           },
         };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1564,6 +1562,7 @@
         setAuditLogs(data.auditLogs || []);
         setDayPointGrants(data.dayPointGrants || {});
         setWeekBonusGrants(data.weekBonusGrants || {});
+        setTaskPointGrants(data.taskPointGrants || {});
         addAuditLog('IMPORT_BACKUP', 'BACKUP', 'family');
       };
       

@@ -136,25 +136,27 @@ const run = async () => {
     method: 'POST',
     body: { email: parentEmail },
   });
-  assertOk(forgot.status === 200 && forgot.data?.debugResetToken, 'Forgot password failed', forgot);
+  assertOk(forgot.status === 200, 'Forgot password failed', forgot);
 
-  const reset = await requestJson('/api/auth/reset-password/token', {
-    method: 'POST',
-    body: {
-      token: forgot.data.debugResetToken,
-      newPassword: resetPassword,
-    },
-  });
-  assertOk(reset.status === 200, 'Reset password by token failed', reset);
+  if (forgot.data?.debugResetToken) {
+    const reset = await requestJson('/api/auth/reset-password/token', {
+      method: 'POST',
+      body: {
+        token: forgot.data.debugResetToken,
+        newPassword: resetPassword,
+      },
+    });
+    assertOk(reset.status === 200, 'Reset password by token failed', reset);
 
-  const loginAfterReset = await requestJson('/api/auth/login', {
-    method: 'POST',
-    body: {
-      email: parentEmail,
-      password: resetPassword,
-    },
-  });
-  assertOk(loginAfterReset.status === 200, 'Login after reset failed', loginAfterReset);
+    const loginAfterReset = await requestJson('/api/auth/login', {
+      method: 'POST',
+      body: {
+        email: parentEmail,
+        password: resetPassword,
+      },
+    });
+    assertOk(loginAfterReset.status === 200, 'Login after reset failed', loginAfterReset);
+  }
 
   console.log(
     JSON.stringify(
