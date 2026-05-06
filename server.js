@@ -21,10 +21,17 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 200);
+const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const AUTH_RATE_LIMIT_MAX_REQUESTS = Number(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || 25);
+const CHILD_LOGIN_RATE_LIMIT_WINDOW_MS = Number(process.env.CHILD_LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS = Number(process.env.CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS || 12);
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
 const ALLOW_DEBUG_RESET_TOKEN = process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
+const ALLOW_PUBLIC_REGISTRATION =
+  process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || process.env.NODE_ENV !== 'production';
+const AUTH_COOKIE_NAME = 'familyquest_session';
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required in production');
@@ -117,6 +124,20 @@ app.use(
   }),
 );
 
+const authRateLimit = rateLimit({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: AUTH_RATE_LIMIT_MAX_REQUESTS,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const childLoginRateLimit = rateLimit({
+  windowMs: CHILD_LOGIN_RATE_LIMIT_WINDOW_MS,
+  max: CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const isObjectRecord = (value) =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -154,10 +175,48 @@ const toPublicUser = (user) => ({
   familyId: user.familyId,
 });
 
+const parseCookieHeader = (header = '') =>
+  String(header || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((acc, part) => {
+      const index = part.indexOf('=');
+      if (index === -1) return acc;
+      const key = part.slice(0, index).trim();
+      const value = part.slice(index + 1).trim();
+      if (!key) return acc;
+      try {
+        acc[key] = decodeURIComponent(value);
+      } catch {
+        acc[key] = value;
+      }
+      return acc;
+    }, {});
+
+const authCookieBaseOptions = (req) => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production' || req.secure || req.get('x-forwarded-proto') === 'https',
+  sameSite: 'lax',
+  path: '/',
+});
+
+const setAuthCookie = (req, res, token) => {
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    ...authCookieBaseOptions(req),
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+  });
+};
+
+const clearAuthCookie = (req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, authCookieBaseOptions(req));
+};
+
 const readBearerToken = (req) => {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) {
-    return null;
+    const parsedCookies = parseCookieHeader(req.headers.cookie || '');
+    return parsedCookies[AUTH_COOKIE_NAME] || null;
   }
   return header.slice('Bearer '.length);
 };
@@ -830,6 +889,12 @@ const CHILD_STORAGE_KEYS = new Set([
   'taskPointGrants',
 ]);
 
+app.use('/api/auth/login', authRateLimit);
+app.use('/api/auth/register', authRateLimit);
+app.use('/api/auth/forgot-password', authRateLimit);
+app.use('/api/auth/reset-password/token', authRateLimit);
+app.use('/api/auth/login-child', childLoginRateLimit);
+
 app.get('/health', async (req, res) => {
   let db = 'ok';
   try {
@@ -846,6 +911,11 @@ app.get('/health', async (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
+    if (!ALLOW_PUBLIC_REGISTRATION) {
+      res.status(403).json({ error: 'Publiczna rejestracja jest wyłączona' });
+      return;
+    }
+
     const parsed = registerSchema.safeParse(req.body || {});
     if (!parsed.success) {
       res.status(400).json({ error: 'Nieprawidłowe dane rejestracji' });
@@ -891,6 +961,7 @@ app.post('/api/auth/register', async (req, res) => {
     });
 
     const token = signAuthToken(created);
+    setAuthCookie(req, res, token);
     res.status(201).json({
       token,
       user: toPublicUser(created),
@@ -929,6 +1000,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = signAuthToken(user);
+    setAuthCookie(req, res, token);
     res.json({
       token,
       user: toPublicUser(user),
@@ -941,6 +1013,11 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json({ user: req.auth.user });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  clearAuthCookie(req, res);
+  res.json({ ok: true });
 });
 
 app.put('/api/auth/pin', authMiddleware, async (req, res) => {
@@ -1240,6 +1317,7 @@ app.post('/api/auth/login-child', async (req, res) => {
       childId: match.child.id,
       childName: match.child.name,
     });
+    setAuthCookie(req, res, token);
 
     res.json({
       token,

@@ -539,7 +539,7 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef, useMemo } = React;
     
-    const AUTH_TOKEN_KEY = 'fq_auth_token';
+    const LEGACY_AUTH_TOKEN_KEY = 'fq_auth_token';
     const API_BASE_KEY = 'fq_api_base';
     
     const normalizeApiBase = (value) => {
@@ -566,9 +566,7 @@
       return `${base}${path}`;
     };
     
-    const getAuthToken = () => localStorage.getItem(AUTH_TOKEN_KEY);
-    const setAuthToken = (token) => localStorage.setItem(AUTH_TOKEN_KEY, token);
-    const clearAuthToken = () => localStorage.removeItem(AUTH_TOKEN_KEY);
+    const clearLegacyAuthToken = () => localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
     
     const apiRequest = async (path, options = {}, withAuth = true) => {
       const headers = {
@@ -576,16 +574,10 @@
         ...(options.headers || {})
       };
       
-      if (withAuth) {
-        const token = getAuthToken();
-        if (token) {
-          headers.Authorization = `Bearer ${token}`;
-        }
-      }
-      
       const response = await fetch(buildApiUrl(path), {
         ...options,
         headers,
+        credentials: 'include',
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined
       });
       
@@ -824,6 +816,7 @@
       
       // Initialize data
       useEffect(() => {
+        clearLegacyAuthToken();
         loadData();
       }, []);
       
@@ -834,15 +827,6 @@
         }
         
         try {
-          const token = getAuthToken();
-          if (!token) {
-            setUser(null);
-            resetFamilyData();
-            setView('login');
-            setHasLoadedSnapshot(false);
-            return;
-          }
-          
           const session = await apiRequest('/api/auth/me');
           setUser(session.user);
           
@@ -941,7 +925,7 @@
         } catch (e) {
           console.error('Load data error:', e);
           if (silent) return;
-          clearAuthToken();
+          clearLegacyAuthToken();
           setUser(null);
           resetFamilyData();
           setView('login');
@@ -1226,7 +1210,7 @@
       // Login
       const handleLogin = async (email, password) => {
         try {
-          const result = await apiRequest(
+          await apiRequest(
             '/api/auth/login',
             {
               method: 'POST',
@@ -1235,7 +1219,6 @@
             false,
           );
           
-          setAuthToken(result.token);
           await loadData();
           return { success: true };
         } catch (e) {
@@ -1245,7 +1228,7 @@
       
       const handleRegister = async ({ email, password, pinCode, familyName }) => {
         try {
-          const result = await apiRequest(
+          await apiRequest(
             '/api/auth/register',
             {
               method: 'POST',
@@ -1254,7 +1237,6 @@
             false,
           );
           
-          setAuthToken(result.token);
           await loadData();
           return { success: true };
         } catch (e) {
@@ -1264,7 +1246,7 @@
 
       const handleChildLogin = async (accessCode) => {
         try {
-          const result = await apiRequest(
+          await apiRequest(
             '/api/auth/login-child',
             {
               method: 'POST',
@@ -1272,7 +1254,6 @@
             },
             false,
           );
-          setAuthToken(result.token);
           await loadData();
           return { success: true };
         } catch (e) {
@@ -1316,8 +1297,13 @@
         }
       };
       
-      const handleLogout = () => {
-        clearAuthToken();
+      const handleLogout = async () => {
+        try {
+          await apiRequest('/api/auth/logout', { method: 'POST' }, false);
+        } catch (e) {
+          console.warn('Logout request failed:', e.message);
+        }
+        clearLegacyAuthToken();
         setUser(null);
         resetFamilyData();
         setView('login');
