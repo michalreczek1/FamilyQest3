@@ -1771,13 +1771,6 @@
                 </div>
               </div>
 
-              <WeeklyLeaderboardPanel
-                children={familyLeaderboard.children.length > 0 ? familyLeaderboard.children : [{ id: selectedChild.id, name: selectedChild.name, avatar: selectedChild.avatar }]}
-                streaks={familyLeaderboard.streaks}
-                points={familyLeaderboard.points}
-                title="🏆 Tablica wyników rodziny"
-              />
-              
               <h2 style={{marginBottom: '1rem'}}>Zadania dzisiaj</h2>
               
               <h3 style={{marginTop: '1.5rem', marginBottom: '0.5rem'}}>📋 MINIMUM (wymagane)</h3>
@@ -1883,6 +1876,13 @@
                   })}
                 </div>
               </div>
+
+              <WeeklyLeaderboardPanel
+                children={familyLeaderboard.children.length > 0 ? familyLeaderboard.children : [{ id: selectedChild.id, name: selectedChild.name, avatar: selectedChild.avatar }]}
+                streaks={familyLeaderboard.streaks}
+                points={familyLeaderboard.points}
+                title="🏆 Tablica wyników rodziny"
+              />
             </div>
           </div>
           {showRewardOverlay && showRewardOverlay.childId === selectedChild.id && (
