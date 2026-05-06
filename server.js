@@ -418,6 +418,152 @@ const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChil
 const hasChildAccess = (req, childId) =>
   req.auth.user.role === 'PARENT' || req.auth.user.childId === childId;
 
+const pickChildMapValue = (source, childId) => {
+  if (!isObjectRecord(source)) {
+    return {};
+  }
+  return Object.prototype.hasOwnProperty.call(source, childId) ? { [childId]: source[childId] } : {};
+};
+
+const filterStorageValueForUser = (key, data, user) => {
+  if (user.role !== 'CHILD') {
+    return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null;
+  }
+
+  const childId = user.childId;
+  switch (key) {
+    case 'children':
+      return data.children.filter((child) => child.id === childId);
+    case 'tasks':
+      return data.tasks.filter((task) => task.childId === childId);
+    case 'completions':
+      return data.completions.filter((completion) => completion.childId === childId);
+    case 'streaks':
+      return pickChildMapValue(data.streaks, childId);
+    case 'points':
+      return pickChildMapValue(data.points, childId);
+    case 'rewardUnlocks':
+      return data.rewardUnlocks.filter((unlock) => unlock.childId === childId);
+    case 'rewards':
+      return data.rewards;
+    case 'familyGoal':
+      return data.familyGoal;
+    case 'auditLogs':
+      return [];
+    case 'dayPointGrants':
+    case 'weekBonusGrants':
+      return {};
+    default:
+      return null;
+  }
+};
+
+const mergeChildCompletions = (data, incoming, childId) => {
+  if (!Array.isArray(incoming)) {
+    return data.completions;
+  }
+
+  const now = new Date().toISOString();
+  const childTaskIds = new Set(
+    data.tasks
+      .filter((task) => task.childId === childId && task.active !== false)
+      .map((task) => task.id),
+  );
+  const existingOwnById = new Map(
+    data.completions
+      .filter((completion) => completion.childId === childId && typeof completion.id === 'string')
+      .map((completion) => [completion.id, completion]),
+  );
+
+  const nextOwn = incoming
+    .filter(
+      (completion) =>
+        isObjectRecord(completion) &&
+        completion.childId === childId &&
+        typeof completion.taskId === 'string' &&
+        typeof completion.date === 'string' &&
+        childTaskIds.has(completion.taskId),
+    )
+    .map((completion) => {
+      const existing = typeof completion.id === 'string' ? existingOwnById.get(completion.id) : null;
+      const wasApproved = existing?.approvedByParent === true;
+      const doneByChild = wasApproved ? true : completion.doneByChild === true;
+      return {
+        ...existing,
+        id: existing?.id || (typeof completion.id === 'string' ? completion.id : createEntityId('comp')),
+        taskId: completion.taskId,
+        childId,
+        date: completion.date,
+        doneByChild,
+        approvedByParent: wasApproved,
+        approvedAt: wasApproved ? existing.approvedAt || null : null,
+        rejectedByParent: doneByChild ? false : existing?.rejectedByParent === true,
+        rejectedAt: doneByChild ? null : existing?.rejectedAt || null,
+        doneAt: doneByChild ? completion.doneAt || existing?.doneAt || now : null,
+        createdAt: existing?.createdAt || completion.createdAt || now,
+        updatedAt: now,
+      };
+    });
+
+  return [
+    ...data.completions.filter((completion) => completion.childId !== childId),
+    ...nextOwn,
+  ];
+};
+
+const mergeChildRewardUnlocks = (data, incoming, childId) => {
+  if (!Array.isArray(incoming)) {
+    return data.rewardUnlocks;
+  }
+
+  const incomingById = new Map(
+    incoming
+      .filter((unlock) => isObjectRecord(unlock) && unlock.childId === childId && typeof unlock.id === 'string')
+      .map((unlock) => [unlock.id, unlock]),
+  );
+
+  return data.rewardUnlocks.map((unlock) => {
+    const incomingUnlock = incomingById.get(unlock.id);
+    if (!incomingUnlock || unlock.childId !== childId) {
+      return unlock;
+    }
+    return {
+      ...unlock,
+      shownAt: typeof incomingUnlock.shownAt === 'string' ? incomingUnlock.shownAt : unlock.shownAt || null,
+    };
+  });
+};
+
+const mergeStorageValuesForUser = (data, values, user) => {
+  if (user.role !== 'CHILD') {
+    return { ...data, ...values };
+  }
+
+  const nextData = { ...data };
+  const childId = user.childId;
+  if (Object.prototype.hasOwnProperty.call(values, 'completions')) {
+    nextData.completions = mergeChildCompletions(data, values.completions, childId);
+  }
+  if (Object.prototype.hasOwnProperty.call(values, 'rewardUnlocks')) {
+    nextData.rewardUnlocks = mergeChildRewardUnlocks(data, values.rewardUnlocks, childId);
+  }
+  return nextData;
+};
+
+const CHILD_STORAGE_KEYS = new Set([
+  'children',
+  'tasks',
+  'completions',
+  'rewards',
+  'streaks',
+  'points',
+  'rewardUnlocks',
+  'familyGoal',
+  'auditLogs',
+  'dayPointGrants',
+  'weekBonusGrants',
+]);
+
 app.get('/health', async (req, res) => {
   let db = 'ok';
   try {
@@ -1179,6 +1325,10 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
     const now = new Date().toISOString();
 
     if (existing) {
+      if (req.auth.user.role === 'CHILD' && existing.approvedByParent) {
+        res.json({ completion: existing });
+        return;
+      }
       existing.doneByChild = parsed.data.doneByChild;
       if (parsed.data.doneByChild) {
         existing.doneAt = now;
@@ -1561,11 +1711,10 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
   }
 
   try {
-    const state = await getOrCreateState(req.auth.user.familyId);
-    const data = isObjectRecord(state.data) ? state.data : {};
+    const { data } = await loadStateData(req.auth.user.familyId);
     res.json({
       key,
-      value: Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null,
+      value: filterStorageValueForUser(key, data, req.auth.user),
     });
   } catch (error) {
     console.error('Storage get error:', error);
@@ -1581,14 +1730,9 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
   }
 
   try {
-    const state = await getOrCreateState(req.auth.user.familyId);
-    const data = isObjectRecord(state.data) ? state.data : {};
-    const nextData = { ...data, [key]: req.body?.value ?? null };
-
-    await prisma.familyState.update({
-      where: { id: state.id },
-      data: { data: nextData },
-    });
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const nextData = mergeStorageValuesForUser(data, { [key]: req.body?.value ?? null }, req.auth.user);
+    await saveStateData(state.id, nextData);
 
     res.json({ ok: true, key });
   } catch (error) {
@@ -1613,14 +1757,9 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
   }
 
   try {
-    const state = await getOrCreateState(req.auth.user.familyId);
-    const data = isObjectRecord(state.data) ? state.data : {};
-    const nextData = { ...data, ...values };
-
-    await prisma.familyState.update({
-      where: { id: state.id },
-      data: { data: nextData },
-    });
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const nextData = mergeStorageValuesForUser(data, values, req.auth.user);
+    await saveStateData(state.id, nextData);
 
     res.json({ ok: true, keys });
   } catch (error) {
@@ -1632,10 +1771,10 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
 app.get('/api/storage/list', authMiddleware, async (req, res) => {
   try {
     const prefix = String(req.query.prefix || '');
-    const state = await getOrCreateState(req.auth.user.familyId);
-    const data = isObjectRecord(state.data) ? state.data : {};
+    const { data } = await loadStateData(req.auth.user.familyId);
 
-    const keys = Object.keys(data).filter((key) => key.startsWith(prefix));
+    const sourceKeys = req.auth.user.role === 'CHILD' ? [...CHILD_STORAGE_KEYS] : Object.keys(data);
+    const keys = sourceKeys.filter((key) => key.startsWith(prefix));
     res.json({ keys });
   } catch (error) {
     console.error('Storage list error:', error);

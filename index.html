@@ -686,9 +686,11 @@
       const [editingChild, setEditingChild] = useState(null);
       const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
       const [approvalFilterDate, setApprovalFilterDate] = useState('');
+      const [childApprovalNotice, setChildApprovalNotice] = useState('');
       const pendingSaveSnapshotRef = useRef(null);
       const saveInFlightRef = useRef(false);
       const saveRequestedRef = useRef(false);
+      const childWelcomeConfettiRef = useRef({});
       
       const resetFamilyData = () => {
         setChildren([]);
@@ -710,6 +712,8 @@
         setEditingChild(null);
         setApprovalFilterChildId('ALL');
         setApprovalFilterDate('');
+        setChildApprovalNotice('');
+        childWelcomeConfettiRef.current = {};
       };
       
       useEffect(() => {
@@ -741,9 +745,11 @@
         loadData();
       }, []);
       
-      const loadData = async () => {
-        setLoading(true);
-        setHasLoadedSnapshot(false);
+      const loadData = async ({ preserveView = false, silent = false } = {}) => {
+        if (!silent) {
+          setLoading(true);
+          setHasLoadedSnapshot(false);
+        }
         
         try {
           const token = getAuthToken();
@@ -811,27 +817,38 @@
             setSelectedChild(ownChild);
             setView('child');
           } else {
-            setSelectedChild(null);
-            setView('childSelect');
+            if (preserveView) {
+              setSelectedChild(prev => prev ? loadedChildren.find(c => c.id === prev.id) || prev : prev);
+            } else {
+              setSelectedChild(null);
+              setView('childSelect');
+            }
           }
           setHasLoadedSnapshot(true);
           
-          try {
-            const parentUsersResponse = await apiRequest('/api/auth/parents');
-            setParentUsers(parentUsersResponse.users || []);
-          } catch (parentError) {
-            console.warn('Could not load parent users:', parentError.message);
+          if (session.user?.role === 'PARENT') {
+            try {
+              const parentUsersResponse = await apiRequest('/api/auth/parents');
+              setParentUsers(parentUsersResponse.users || []);
+            } catch (parentError) {
+              console.warn('Could not load parent users:', parentError.message);
+              setParentUsers([]);
+            }
+          } else {
             setParentUsers([]);
           }
         } catch (e) {
           console.error('Load data error:', e);
+          if (silent) return;
           clearAuthToken();
           setUser(null);
           resetFamilyData();
           setView('login');
           setHasLoadedSnapshot(false);
         } finally {
-          setLoading(false);
+          if (!silent) {
+            setLoading(false);
+          }
         }
       };
       
@@ -899,6 +916,30 @@
         weekBonusGrants,
         flushSaveQueue,
       ]);
+
+      useEffect(() => {
+        if (!user || !hasLoadedSnapshot || (view !== 'parent' && view !== 'child')) {
+          return undefined;
+        }
+
+        const refreshData = () => {
+          if (document.visibilityState === 'hidden') return;
+          if (saveInFlightRef.current || saveRequestedRef.current) return;
+          loadData({ preserveView: true, silent: true });
+        };
+        const handleVisibility = () => {
+          if (document.visibilityState === 'visible') refreshData();
+        };
+
+        const interval = window.setInterval(refreshData, view === 'parent' ? 5000 : 7000);
+        window.addEventListener('focus', refreshData);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+          window.clearInterval(interval);
+          window.removeEventListener('focus', refreshData);
+          document.removeEventListener('visibilitychange', handleVisibility);
+        };
+      }, [user?.id, user?.role, hasLoadedSnapshot, view, parentTab, selectedChild?.id]);
       
       // Business Logic
       const getDateString = (date = new Date()) => toDateString(date);
@@ -1181,6 +1222,7 @@
       
       // Child selection
       const selectChild = (child) => {
+        if (user?.role === 'CHILD' && child.id !== user.childId) return;
         setSelectedChild(child);
         setView('child');
       };
@@ -1192,12 +1234,14 @@
       
       // Task completion
       const toggleTask = (taskId) => {
+        if (!selectedChild) return;
         const today = getDateString();
         const existing = completions.find(c => 
           c.taskId === taskId && c.date === today && c.childId === selectedChild.id
         );
         
         if (existing) {
+          if (existing.approvedByParent) return;
           existing.doneByChild = !existing.doneByChild;
           if (!existing.doneByChild) {
             existing.approvedByParent = false;
@@ -1295,6 +1339,46 @@
           }, i * 30);
         }
       };
+
+      useEffect(() => {
+        if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
+        if (childWelcomeConfettiRef.current[selectedChild.id]) return;
+        childWelcomeConfettiRef.current[selectedChild.id] = true;
+        showConfetti();
+      }, [view, user?.role, selectedChild?.id]);
+
+      useEffect(() => {
+        if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
+        const approved = completions.filter(
+          comp => comp.childId === selectedChild.id && comp.approvedByParent && comp.doneByChild,
+        );
+        if (approved.length === 0) return;
+
+        const storageKey = `fq_seen_approvals_${selectedChild.id}`;
+        let seen = [];
+        try {
+          seen = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        } catch (e) {
+          seen = [];
+        }
+        const seenSet = new Set(Array.isArray(seen) ? seen : []);
+        const newApprovals = approved.filter(comp => comp.id && !seenSet.has(comp.id));
+        if (newApprovals.length === 0) return;
+
+        const taskTitles = newApprovals
+          .map(comp => tasks.find(task => task.id === comp.taskId)?.title)
+          .filter(Boolean);
+        setChildApprovalNotice(
+          newApprovals.length === 1 && taskTitles[0]
+            ? `Rodzic zatwierdził: ${taskTitles[0]}`
+            : `Rodzic zatwierdził ${newApprovals.length} zadania. Brawo!`,
+        );
+        showConfetti();
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id)].slice(-200)),
+        );
+      }, [view, user?.role, selectedChild?.id, completions, tasks]);
       
       // Add child
       const addChild = async (name, avatar, activeDays) => {
@@ -1548,7 +1632,11 @@
           <>
           <div className="app-container">
             <div className="top-status">
-              <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
+              {user?.role !== 'CHILD' ? (
+                <button className="btn btn-secondary" onClick={() => setView('childSelect')}>← Powrót</button>
+              ) : (
+                <div />
+              )}
               <div className="network-status-group">
                 <div className={`network-badge ${isOnline ? '' : 'offline'}`}>
                   {isOnline ? '🟢 Online' : '🔴 Offline'}
@@ -1576,6 +1664,15 @@
                   Punkty i zaliczenie wymagają akceptacji rodzica
                 </p>
               </div>
+
+              {childApprovalNotice && (
+                <div className="glass-card" style={{marginBottom: '1rem', borderColor: 'rgba(18, 183, 106, 0.45)'}}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap'}}>
+                    <strong>🎉 {childApprovalNotice}</strong>
+                    <button className="btn btn-secondary" onClick={() => setChildApprovalNotice('')}>OK</button>
+                  </div>
+                </div>
+              )}
               
               <div className="grid grid-2" style={{marginBottom: '1.5rem'}}>
                 <div className="stat-card">
@@ -2692,12 +2789,13 @@
 
               {mode === 'child' && (
                 <input
-                  type="text"
+                  type="password"
                   className="input"
                   placeholder="Kod dziecka (4 cyfry)"
                   value={childCode}
                   onChange={e => setChildCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
                   inputMode="numeric"
+                  autoComplete="one-time-code"
                   maxLength={4}
                   required
                 />

@@ -51,6 +51,18 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(addChildRes.body.child.accessCode).toMatch(/^\d{4}$/);
 
     const child = addChildRes.body.child;
+    const siblingName = `Rodzenstwo-${suffix}`;
+    const addSiblingRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: siblingName,
+        avatar: '🐼',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addSiblingRes.status).toBe(201);
+    const sibling = addSiblingRes.body.child;
+
     let loginCode = null;
     for (let i = 0; i < 50; i += 1) {
       const candidate = String(((suffix + i) % 9000) + 1000);
@@ -97,6 +109,62 @@ maybeDescribe('FamilyQuest API integration', () => {
       .get('/api/auth/parents')
       .set('Authorization', `Bearer ${childToken}`);
     expect(childForbiddenRes.status).toBe(403);
+
+    const childStorageChildrenRes = await request(app)
+      .get('/api/storage/get/children')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childStorageChildrenRes.status).toBe(200);
+    expect(childStorageChildrenRes.body.value).toHaveLength(1);
+    expect(childStorageChildrenRes.body.value[0].id).toBe(child.id);
+    expect(childStorageChildrenRes.body.value.some((item) => item.id === sibling.id)).toBe(false);
+
+    const childStorageAuditRes = await request(app)
+      .get('/api/storage/get/auditLogs')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childStorageAuditRes.status).toBe(200);
+    expect(childStorageAuditRes.body.value).toEqual([]);
+
+    const childStorageMergeRes = await request(app)
+      .post('/api/storage/merge')
+      .set('Authorization', `Bearer ${childToken}`)
+      .send({
+        values: {
+          children: [{ id: sibling.id, name: 'Nie powinno przejsc' }],
+          auditLogs: [{ id: 'fake-audit' }],
+          completions: [
+            {
+              id: 'storage-own-completion',
+              taskId: task.id,
+              childId: child.id,
+              date: today,
+              doneByChild: true,
+              approvedByParent: false,
+            },
+            {
+              id: 'storage-sibling-completion',
+              taskId: task.id,
+              childId: sibling.id,
+              date: today,
+              doneByChild: true,
+              approvedByParent: false,
+            },
+          ],
+        },
+      });
+    expect(childStorageMergeRes.status).toBe(200);
+
+    const parentStorageChildrenRes = await request(app)
+      .get('/api/storage/get/children')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(parentStorageChildrenRes.status).toBe(200);
+    expect(parentStorageChildrenRes.body.value.find((item) => item.id === sibling.id)?.name).toBe(siblingName);
+
+    const childStorageCompletionsRes = await request(app)
+      .get('/api/storage/get/completions')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childStorageCompletionsRes.status).toBe(200);
+    expect(childStorageCompletionsRes.body.value.some((item) => item.id === 'storage-own-completion')).toBe(true);
+    expect(childStorageCompletionsRes.body.value.some((item) => item.id === 'storage-sibling-completion')).toBe(false);
 
     const markDoneRes = await request(app)
       .post('/api/completions')
