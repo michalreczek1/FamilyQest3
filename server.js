@@ -2508,7 +2508,15 @@ app.get('/api/storage/list', authMiddleware, async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(__dirname)));
+app.use(
+  express.static(path.join(__dirname), {
+    setHeaders: (res, filePath) => {
+      if (/\.(html|js|css)$/i.test(filePath) || filePath.endsWith('service-worker.js')) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+      }
+    },
+  }),
+);
 
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/') || req.path === '/health') {
