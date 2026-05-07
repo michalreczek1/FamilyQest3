@@ -551,7 +551,11 @@
   </style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div class="app-container">
+      <div class="glass-card loading">🏆 Ładowanie FamilyQuest...</div>
+    </div>
+  </div>
   <button id="install-app-btn" class="btn btn-primary install-btn" type="button" aria-label="Zainstaluj aplikację">
     Zainstaluj aplikację
   </button>
@@ -559,30 +563,6 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-    <script src="/familyquest-app.compiled.js?v=2026-05-07-3"></script>
-    <script>
-      window.addEventListener('load', () => {
-        setTimeout(() => {
-          const root = document.getElementById('root');
-          if (!root || root.childElementCount > 0) return;
-          root.innerHTML = `
-            <div class="app-container">
-              <div class="glass-card" style="max-width:560px;margin:4rem auto;text-align:center">
-                <h1>FamilyQuest</h1>
-                <p style="opacity:.85;margin:1rem 0">Aplikacja odswieza pliki startowe.</p>
-                <button class="btn btn-primary" type="button" onclick="window.location.reload()">Odswiez</button>
-              </div>
-            </div>
-          `;
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations()
-              .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
-              .then(() => caches?.keys?.())
-              .then((names) => names ? Promise.all(names.map((name) => caches.delete(name))) : null)
-              .catch(() => {});
-          }
-        }, 2500);
-      });
-    </script>
+    <script src="/familyquest-app.compiled.js?v=2026-05-07-4"></script>
 </body>
 </html>
