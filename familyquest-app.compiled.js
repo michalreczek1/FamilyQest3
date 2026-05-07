@@ -1299,7 +1299,13 @@ const App = () => {
         marginTop: '0.5rem'
       }
     }, "Punkty i zaliczenie wymagaj\u0105 akceptacji rodzica")), childApprovalNotice && React.createElement("div", {
-      className: "modal",
+      className: "modal child-approval-modal",
+      style: {
+        alignItems: 'flex-start',
+        paddingTop: 'clamp(1rem, 7vh, 4.5rem)',
+        paddingBottom: '1rem',
+        overflowY: 'auto'
+      },
       role: "dialog",
       "aria-modal": "true",
       "aria-labelledby": "child-approval-title"
@@ -1307,6 +1313,7 @@ const App = () => {
       className: "modal-content",
       style: {
         maxWidth: '520px',
+        maxHeight: 'calc(100vh - 2rem)',
         borderColor: 'rgba(18, 183, 106, 0.65)',
         boxShadow: '0 24px 80px rgba(18, 183, 106, 0.25)'
       }
