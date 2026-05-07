@@ -245,6 +245,7 @@ const App = () => {
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
   const [extraTaskTitle, setExtraTaskTitle] = useState('');
   const [childApprovalNotice, setChildApprovalNotice] = useState(null);
+  const [showChildRewards, setShowChildRewards] = useState(false);
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
   const saveRequestedRef = useRef(false);
@@ -283,6 +284,7 @@ const App = () => {
     setApprovalFilterDate('');
     setExtraTaskTitle('');
     setChildApprovalNotice(null);
+    setShowChildRewards(false);
   };
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -1307,6 +1309,14 @@ const App = () => {
       best: 0
     };
     const childPoints = points[selectedChild.id] || 0;
+    const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id);
+    const childUnlockedRewardIds = new Set(childRewardUnlocks.map(unlock => unlock.rewardId));
+    const childEarnedRewards = childRewardUnlocks.map(unlock => ({
+      unlock,
+      reward: rewards.find(reward => reward.id === unlock.rewardId)
+    })).filter(item => Boolean(item.reward)).sort((a, b) => Date.parse(b.unlock.unlockedAt || 0) - Date.parse(a.unlock.unlockedAt || 0));
+    const nextPointReward = rewards.filter(reward => reward.active !== false && !childUnlockedRewardIds.has(reward.id) && Number(reward.requiredPoints || 0) > childPoints).sort((a, b) => Number(a.requiredPoints || 0) - Number(b.requiredPoints || 0))[0] || null;
+    const pointsToNextReward = nextPointReward ? Math.max(0, Number(nextPointReward.requiredPoints || 0) - childPoints) : 0;
     const dayStatus = evaluateDay(selectedChild.id, today);
     const last14Days = [];
     for (let i = 0; i < 14; i++) {
@@ -1353,7 +1363,18 @@ const App = () => {
       className: "hero-metric-value"
     }, childPoints), React.createElement("div", {
       className: "hero-metric-label"
-    }, "punkt\xF3w"))), React.createElement("div", {
+    }, "punkt\xF3w"))), React.createElement("button", {
+      type: "button",
+      className: "hero-metric rewards",
+      onClick: () => setShowChildRewards(true),
+      title: "Poka\u017C moje nagrody"
+    }, React.createElement("div", {
+      className: "hero-metric-icon"
+    }, "\uD83C\uDF81"), React.createElement("div", null, React.createElement("div", {
+      className: "hero-metric-value"
+    }, childEarnedRewards.length), React.createElement("div", {
+      className: "hero-metric-label"
+    }, "moje nagrody"))), React.createElement("div", {
       className: "hero-metric streak"
     }, React.createElement("div", {
       className: "hero-metric-icon"
@@ -1432,7 +1453,108 @@ const App = () => {
       style: {
         width: '100%'
       }
-    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), React.createElement("div", {
+    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showChildRewards && React.createElement("div", {
+      className: "modal",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "child-rewards-title"
+    }, React.createElement("div", {
+      className: "modal-content child-rewards-modal",
+      style: {
+        maxWidth: '640px'
+      }
+    }, React.createElement("div", {
+      style: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '1rem',
+        alignItems: 'center',
+        marginBottom: '1rem'
+      }
+    }, React.createElement("h2", {
+      id: "child-rewards-title",
+      style: {
+        margin: 0
+      }
+    }, "\uD83C\uDF81 Moje nagrody"), React.createElement("button", {
+      className: "btn btn-secondary",
+      onClick: () => setShowChildRewards(false),
+      title: "Zamknij"
+    }, "\u2715")), React.createElement("div", {
+      className: "glass-card",
+      style: {
+        marginBottom: '1rem',
+        background: 'rgba(254, 200, 75, 0.16)',
+        borderColor: 'rgba(254, 200, 75, 0.42)'
+      }
+    }, nextPointReward ? React.createElement(React.Fragment, null, React.createElement("div", {
+      style: {
+        fontWeight: 800,
+        marginBottom: '0.35rem'
+      }
+    }, "Najbli\u017Csza nagroda: ", nextPointReward.title), React.createElement("div", {
+      style: {
+        opacity: 0.85
+      }
+    }, "Brakuje jeszcze ", React.createElement("strong", null, pointsToNextReward, " pkt"), " do progu ", Number(nextPointReward.requiredPoints || 0), " pkt."), nextPointReward.description && React.createElement("div", {
+      style: {
+        opacity: 0.72,
+        marginTop: '0.35rem'
+      }
+    }, nextPointReward.description)) : React.createElement("div", {
+      style: {
+        fontWeight: 700
+      }
+    }, "Nie ma teraz kolejnej nagrody punktowej do zdobycia.")), React.createElement("h3", {
+      style: {
+        marginBottom: '0.75rem'
+      }
+    }, "Zdobyte nagrody"), childEarnedRewards.length === 0 ? React.createElement("div", {
+      className: "empty-state"
+    }, "Nie masz jeszcze zdobytych nagr\xF3d.") : React.createElement("div", {
+      style: {
+        display: 'grid',
+        gap: '0.75rem'
+      }
+    }, childEarnedRewards.map(({
+      unlock,
+      reward
+    }) => React.createElement("div", {
+      key: unlock.id,
+      className: "task-item"
+    }, React.createElement("div", {
+      style: {
+        fontSize: '2rem'
+      }
+    }, "\uD83C\uDFC5"), React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, React.createElement("div", {
+      style: {
+        fontWeight: 700
+      }
+    }, reward.title), reward.description && React.createElement("div", {
+      style: {
+        fontSize: '0.88rem',
+        opacity: 0.72
+      }
+    }, reward.description), React.createElement("div", {
+      style: {
+        fontSize: '0.82rem',
+        opacity: 0.72,
+        marginTop: '0.25rem'
+      }
+    }, "Zdobyta: ", unlock.unlockedAt?.slice(0, 10) || 'dzisiaj')), React.createElement("div", {
+      className: unlock.claimedAt ? "badge badge-min" : "badge badge-pending"
+    }, unlock.claimedAt ? "Odebrana" : "Do odebrania")))), React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: () => setShowChildRewards(false),
+      style: {
+        width: '100%',
+        marginTop: '1rem'
+      }
+    }, "Zamknij"))), React.createElement("div", {
       className: "grid grid-2",
       style: {
         marginBottom: '1.5rem'
