@@ -1492,7 +1492,9 @@ const App = () => {
           marginTop: '0.35rem',
           width: 'fit-content'
         }
-      }, "Czeka na zatwierdzenie rodzica")), isApproved && React.createElement("div", {
+      }, "Czeka na zatwierdzenie rodzica")), task.points > 0 && React.createElement("div", {
+        className: "badge badge-points"
+      }, "+", task.points, " pkt"), isApproved && React.createElement("div", {
         className: "badge badge-min"
       }, "Zatwierdzone"));
     }), React.createElement("h3", {

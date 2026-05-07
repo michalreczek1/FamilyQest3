@@ -1014,6 +1014,7 @@ const ChildDashboard = ({ child, onBack }) => {
               <div className="task-title">{task.title}</div>
               {task.description && <div className="task-desc">{task.description}</div>}
             </div>
+            {task.points > 0 && <span className="task-badge points">+{task.points} pkt</span>}
             {isTaskApproved(task) && <span className="task-badge approved">✓ Zatwierdzone</span>}
           </button>
         ))}

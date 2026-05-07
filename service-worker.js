@@ -1,7 +1,7 @@
 ﻿// FamilyQuest Service Worker
 // Provides offline functionality and caching.
 
-const CACHE_NAME = 'familyquest-v5';
+const CACHE_NAME = 'familyquest-v6';
 const urlsToCache = [
   '/',
   '/?source=pwa',
