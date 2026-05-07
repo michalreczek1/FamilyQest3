@@ -23,8 +23,8 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 2000);
 const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const AUTH_RATE_LIMIT_MAX_REQUESTS = Number(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || 25);
-const CHILD_LOGIN_RATE_LIMIT_WINDOW_MS = Number(process.env.CHILD_LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
-const CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS = Number(process.env.CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS || 60);
+const CHILD_LOGIN_FAILED_WINDOW_MS = Number(process.env.CHILD_LOGIN_FAILED_WINDOW_MS || 15 * 60 * 1000);
+const CHILD_LOGIN_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_FAILED_MAX_ATTEMPTS || 80);
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
@@ -133,12 +133,46 @@ const authRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
-const childLoginRateLimit = rateLimit({
-  windowMs: CHILD_LOGIN_RATE_LIMIT_WINDOW_MS,
-  max: CHILD_LOGIN_RATE_LIMIT_MAX_REQUESTS,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+const childLoginFailures = new Map();
+
+const getRateLimitKey = (req) =>
+  req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+
+const getChildLoginFailure = (req) => {
+  const key = `child-login:${getRateLimitKey(req)}`;
+  const now = Date.now();
+
+  for (const [storedKey, value] of childLoginFailures.entries()) {
+    if (value.resetAt <= now) {
+      childLoginFailures.delete(storedKey);
+    }
+  }
+
+  const current = childLoginFailures.get(key);
+
+  if (!current || current.resetAt <= now) {
+    const fresh = { count: 0, resetAt: now + CHILD_LOGIN_FAILED_WINDOW_MS };
+    childLoginFailures.set(key, fresh);
+    return { key, current: fresh };
+  }
+
+  return { key, current };
+};
+
+const clearChildLoginFailures = (req) => {
+  childLoginFailures.delete(`child-login:${getRateLimitKey(req)}`);
+};
+
+const recordChildLoginFailure = (req) => {
+  const { current } = getChildLoginFailure(req);
+  current.count += 1;
+  return current;
+};
+
+const isChildLoginTemporarilyBlocked = (req) => {
+  const { current } = getChildLoginFailure(req);
+  return current.count >= CHILD_LOGIN_FAILED_MAX_ATTEMPTS ? current : null;
+};
 
 const isObjectRecord = (value) =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -937,7 +971,6 @@ app.use('/api/auth/login', authRateLimit);
 app.use('/api/auth/register', authRateLimit);
 app.use('/api/auth/forgot-password', authRateLimit);
 app.use('/api/auth/reset-password/token', authRateLimit);
-app.use('/api/auth/login-child', childLoginRateLimit);
 
 app.get('/health', async (req, res) => {
   let db = 'ok';
@@ -1328,6 +1361,16 @@ app.post('/api/auth/login-child', async (req, res) => {
       return;
     }
 
+    const temporaryBlock = isChildLoginTemporarilyBlocked(req);
+    if (temporaryBlock) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((temporaryBlock.resetAt - Date.now()) / 1000));
+      res.set('Retry-After', String(retryAfterSeconds));
+      res.status(429).json({
+        error: 'Zbyt wiele błędnych kodów. Spróbuj ponownie za chwilę.',
+      });
+      return;
+    }
+
     const accessCode = parsed.data.accessCode;
     const states = await prisma.familyState.findMany({
       select: { familyId: true, data: true },
@@ -1344,11 +1387,13 @@ app.post('/api/auth/login-child', async (req, res) => {
     }
 
     if (matches.length === 0) {
+      recordChildLoginFailure(req);
       res.status(401).json({ error: 'Nieprawidłowy kod dostępu dziecka' });
       return;
     }
 
     if (matches.length > 1) {
+      recordChildLoginFailure(req);
       res.status(409).json({
         error: 'Kod dostępu nie jest unikalny. Poproś rodzica o zmianę kodu dziecka.',
       });
@@ -1362,6 +1407,7 @@ app.post('/api/auth/login-child', async (req, res) => {
       childName: match.child.name,
     });
     setAuthCookie(req, res, token);
+    clearChildLoginFailures(req);
 
     res.json({
       token,

@@ -63,6 +63,27 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(addSiblingRes.status).toBe(201);
     const sibling = addSiblingRes.body.child;
+    const addThirdChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: `Trzecie-${suffix}`,
+        avatar: '🦁',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addThirdChildRes.status).toBe(201);
+    const thirdChild = addThirdChildRes.body.child;
+
+    const addFourthChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: `Czwarte-${suffix}`,
+        avatar: '🐸',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addFourthChildRes.status).toBe(201);
+    const fourthChild = addFourthChildRes.body.child;
 
     let loginCode = null;
     for (let i = 0; i < 50; i += 1) {
@@ -105,6 +126,19 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(childLoginRes.body.user.role).toBe('CHILD');
 
     const childToken = childLoginRes.body.token;
+
+    const familyChildCodes = [
+      sibling.accessCode,
+      thirdChild.accessCode,
+      fourthChild.accessCode,
+    ];
+    for (const accessCode of familyChildCodes) {
+      const sequentialChildLoginRes = await request(app).post('/api/auth/login-child').send({
+        accessCode,
+      });
+      expect(sequentialChildLoginRes.status).toBe(200);
+      expect(sequentialChildLoginRes.body.user.role).toBe('CHILD');
+    }
 
     const childForbiddenRes = await request(app)
       .get('/api/auth/parents')
