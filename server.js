@@ -237,10 +237,11 @@ const authCookieBaseOptions = (req) => ({
   path: '/',
 });
 
-const setAuthCookie = (req, res, token) => {
+const setAuthCookie = (req, res, token, options = {}) => {
+  const { persistent = true } = options;
   res.cookie(AUTH_COOKIE_NAME, token, {
     ...authCookieBaseOptions(req),
-    maxAge: 1000 * 60 * 60 * 24 * 7,
+    ...(persistent ? { maxAge: 1000 * 60 * 60 * 24 * 7 } : {}),
   });
 };
 
@@ -1406,7 +1407,7 @@ app.post('/api/auth/login-child', async (req, res) => {
       childId: match.child.id,
       childName: match.child.name,
     });
-    setAuthCookie(req, res, token);
+    setAuthCookie(req, res, token, { persistent: false });
     clearChildLoginFailures(req);
 
     res.json({

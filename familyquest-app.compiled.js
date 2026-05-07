@@ -7,6 +7,7 @@ const {
 } = React;
 const LEGACY_AUTH_TOKEN_KEY = 'fq_auth_token';
 const API_BASE_KEY = 'fq_api_base';
+const CHILD_SESSION_KEY = 'fq_child_session_active';
 const normalizeApiBase = value => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -322,6 +323,21 @@ const App = () => {
     }
     try {
       const session = await apiRequest('/api/auth/me');
+      if (session.user?.role === 'CHILD' && sessionStorage.getItem(CHILD_SESSION_KEY) !== '1') {
+        try {
+          await apiRequest('/api/auth/logout', {
+            method: 'POST'
+          }, false);
+        } catch (logoutError) {
+          console.warn('Child session cleanup failed:', logoutError.message);
+        }
+        clearLegacyAuthToken();
+        setUser(null);
+        resetFamilyData();
+        setView('login');
+        setHasLoadedSnapshot(false);
+        return;
+      }
       setUser(session.user);
       const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
       const rawChildren = savedChildren || [];
@@ -702,6 +718,7 @@ const App = () => {
           accessCode
         }
       }, false);
+      sessionStorage.setItem(CHILD_SESSION_KEY, '1');
       await loadData();
       return {
         success: true
@@ -762,6 +779,7 @@ const App = () => {
       console.warn('Logout request failed:', e.message);
     }
     clearLegacyAuthToken();
+    sessionStorage.removeItem(CHILD_SESSION_KEY);
     setUser(null);
     resetFamilyData();
     setView('login');
@@ -3908,7 +3926,17 @@ window.addEventListener('appinstalled', () => {
 });
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js').catch(err => {
+    navigator.serviceWorker.register('/service-worker.js').then(registration => {
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'activated' && navigator.serviceWorker.controller) {
+            window.location.reload();
+          }
+        });
+      });
+    }).catch(err => {
       console.warn('Service worker registration failed:', err);
     });
   });

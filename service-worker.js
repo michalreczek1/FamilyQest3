@@ -1,7 +1,7 @@
 ﻿// FamilyQuest Service Worker
 // Provides offline functionality and caching.
 
-const CACHE_NAME = 'familyquest-v8';
+const CACHE_NAME = 'familyquest-v10';
 const urlsToCache = [
   '/',
   '/?source=pwa',
@@ -50,7 +50,31 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: cache first.
+  // Scripts, styles and HTML must be network-first so app updates show up without a hard refresh.
+  if (
+    url.origin === self.location.origin &&
+    (event.request.destination === 'script' ||
+      event.request.destination === 'style' ||
+      url.pathname.endsWith('.js') ||
+      url.pathname.endsWith('.css') ||
+      url.pathname.endsWith('.html') ||
+      url.pathname === '/service-worker.js')
+  ) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200 && response.type === 'basic') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request)),
+    );
+    return;
+  }
+
+  // Other static assets: cache first.
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
@@ -80,9 +104,19 @@ self.addEventListener('activate', (event) => {
           return null;
         }),
       ),
-    ),
+    ).then(() => self.clients.claim())
+      .then(() => clients.matchAll({ type: 'window' }))
+      .then((clientList) =>
+        Promise.all(
+          clientList.map((client) => {
+            if ('navigate' in client) {
+              return client.navigate(client.url);
+            }
+            return null;
+          }),
+        ),
+      ),
   );
-  self.clients.claim();
 });
 
 self.addEventListener('sync', (event) => {
