@@ -2257,6 +2257,27 @@ app.put('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
   }
 });
 
+app.delete('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const rewardId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const reward = data.rewards.find((item) => item.id === rewardId);
+    if (!reward) {
+      res.status(404).json({ error: 'Nagroda nie istnieje' });
+      return;
+    }
+
+    reward.active = false;
+    reward.updatedAt = new Date().toISOString();
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_REWARD', 'REWARD', rewardId);
+    await saveStateData(state.id, data);
+    res.json({ reward });
+  } catch (error) {
+    console.error('Reward archive error:', error);
+    res.status(500).json({ error: 'Nie udało się zarchiwizować nagrody' });
+  }
+});
+
 app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, res) => {
   try {
     const parsed = rewardUnlockSchema.safeParse(req.body || {});

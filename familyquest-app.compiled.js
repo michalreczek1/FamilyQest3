@@ -240,6 +240,7 @@ const App = () => {
   const [parentTab, setParentTab] = useState('approvals');
   const [showModal, setShowModal] = useState(null);
   const [editingChild, setEditingChild] = useState(null);
+  const [editingReward, setEditingReward] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
   const [extraTaskTitle, setExtraTaskTitle] = useState('');
@@ -277,6 +278,7 @@ const App = () => {
     setParentTab('approvals');
     setShowModal(null);
     setEditingChild(null);
+    setEditingReward(null);
     setApprovalFilterChildId('ALL');
     setApprovalFilterDate('');
     setExtraTaskTitle('');
@@ -1095,6 +1097,19 @@ const App = () => {
     });
     setShowModal(null);
   };
+  const updateReward = (rewardId, updates) => {
+    setRewards(prev => prev.map(reward => reward.id === rewardId ? {
+      ...reward,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    } : reward));
+    addAuditLog('UPDATE_REWARD', 'REWARD', rewardId, updates);
+  };
+  const archiveReward = rewardId => {
+    updateReward(rewardId, {
+      active: false
+    });
+  };
   const updateChild = (childId, updates) => {
     setChildren(prev => prev.map(child => child.id === childId ? {
       ...child,
@@ -1653,6 +1668,7 @@ const App = () => {
   if (view === 'parent') {
     const pendingApprovals = completions.filter(c => c.doneByChild && !c.approvedByParent);
     const pendingExtraTasks = extraTasks.filter(task => task.status === 'PENDING');
+    const activeRewards = rewards.filter(reward => reward.active !== false);
     const filteredPendingApprovals = pendingApprovals.filter(comp => {
       const childOk = approvalFilterChildId === 'ALL' || comp.childId === approvalFilterChildId;
       const dateOk = !approvalFilterDate || comp.date === approvalFilterDate;
@@ -1699,7 +1715,7 @@ const App = () => {
     }, "Zadania (", tasks.length, ")"), React.createElement("button", {
       className: `tab ${parentTab === 'rewards' ? 'active' : ''}`,
       onClick: () => setParentTab('rewards')
-    }, "Nagrody (", rewards.length, ")"), React.createElement("button", {
+    }, "Nagrody (", activeRewards.length, ")"), React.createElement("button", {
       className: `tab ${parentTab === 'stats' ? 'active' : ''}`,
       onClick: () => setParentTab('stats')
     }, "Statystyki"), React.createElement("button", {
@@ -2051,13 +2067,13 @@ const App = () => {
     }, React.createElement("h2", null, "Katalog nagr\xF3d"), React.createElement("button", {
       className: "btn btn-primary",
       onClick: () => setShowModal('addReward')
-    }, "+ Dodaj nagrod\u0119")), rewards.length === 0 ? React.createElement("div", {
+    }, "+ Dodaj nagrod\u0119")), activeRewards.length === 0 ? React.createElement("div", {
       className: "empty-state"
     }, React.createElement("div", {
       style: {
         fontSize: '3rem'
       }
-    }, "\uD83C\uDF81"), React.createElement("p", null, "Brak nagr\xF3d. Dodaj pierwsz\u0105 nagrod\u0119!")) : rewards.map(reward => React.createElement("div", {
+    }, "\uD83C\uDF81"), React.createElement("p", null, "Brak nagr\xF3d. Dodaj pierwsz\u0105 nagrod\u0119!")) : activeRewards.map(reward => React.createElement("div", {
       key: reward.id,
       className: "task-item"
     }, React.createElement("div", {
@@ -2089,7 +2105,17 @@ const App = () => {
       className: "badge badge-min"
     }, reward.requiredStreak, " dni passy"), reward.requiredIdealWeeks && React.createElement("div", {
       className: "badge badge-weekly"
-    }, reward.requiredIdealWeeks, " idealnych tygodni"))))), React.createElement("div", {
+    }, reward.requiredIdealWeeks, " idealnych tygodni"))), React.createElement("button", {
+      className: "btn btn-secondary",
+      onClick: () => setEditingReward(reward)
+    }, "\u270F\uFE0F Edytuj"), React.createElement("button", {
+      className: "btn btn-danger",
+      onClick: () => {
+        if (confirm(`Zarchiwizować nagrodę "${reward.title}"? Dzieci zachowają już odblokowane nagrody.`)) {
+          archiveReward(reward.id);
+        }
+      }
+    }, "\uD83D\uDDC3\uFE0F Usu\u0144"))), React.createElement("div", {
       className: "glass-card",
       style: {
         marginTop: '1rem'
@@ -2282,6 +2308,13 @@ const App = () => {
     }), showModal === 'addReward' && React.createElement(AddRewardModal, {
       onAdd: addReward,
       onClose: () => setShowModal(null)
+    }), editingReward && React.createElement(AddRewardModal, {
+      reward: editingReward,
+      onSave: updates => {
+        updateReward(editingReward.id, updates);
+        setEditingReward(null);
+      },
+      onClose: () => setEditingReward(null)
     }));
   }
   return null;
@@ -3593,16 +3626,30 @@ const AddTaskModal = ({
 };
 const AddRewardModal = ({
   onAdd,
+  onSave,
+  reward = null,
   onClose
 }) => {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [requiredPoints, setRequiredPoints] = useState('');
-  const [requiredStreak, setRequiredStreak] = useState('');
-  const [requiredIdealWeeks, setRequiredIdealWeeks] = useState('');
+  const isEditing = Boolean(reward);
+  const [title, setTitle] = useState(reward?.title || '');
+  const [description, setDescription] = useState(reward?.description || '');
+  const [requiredPoints, setRequiredPoints] = useState(reward?.requiredPoints ? String(reward.requiredPoints) : '');
+  const [requiredStreak, setRequiredStreak] = useState(reward?.requiredStreak ? String(reward.requiredStreak) : '');
+  const [requiredIdealWeeks, setRequiredIdealWeeks] = useState(reward?.requiredIdealWeeks ? String(reward.requiredIdealWeeks) : '');
   const handleSubmit = e => {
     e.preventDefault();
-    onAdd(title, description, requiredPoints ? parseInt(requiredPoints) : null, requiredStreak ? parseInt(requiredStreak) : null, requiredIdealWeeks ? parseInt(requiredIdealWeeks) : null);
+    const payload = {
+      title: title.trim(),
+      description: description.trim(),
+      requiredPoints: requiredPoints ? parseInt(requiredPoints, 10) : null,
+      requiredStreak: requiredStreak ? parseInt(requiredStreak, 10) : null,
+      requiredIdealWeeks: requiredIdealWeeks ? parseInt(requiredIdealWeeks, 10) : null
+    };
+    if (isEditing) {
+      onSave(payload);
+    } else {
+      onAdd(payload.title, payload.description, payload.requiredPoints, payload.requiredStreak, payload.requiredIdealWeeks);
+    }
   };
   return React.createElement("div", {
     className: "modal"
@@ -3612,7 +3659,7 @@ const AddRewardModal = ({
     style: {
       marginBottom: '1.5rem'
     }
-  }, "Dodaj nagrod\u0119"), React.createElement("form", {
+  }, isEditing ? "Edytuj nagrod\u0119" : "Dodaj nagrod\u0119"), React.createElement("form", {
     onSubmit: handleSubmit
   }, React.createElement("label", {
     style: {
@@ -3696,7 +3743,7 @@ const AddRewardModal = ({
     style: {
       flex: 1
     }
-  }, "Dodaj nagrod\u0119")))));
+  }, isEditing ? "Zapisz" : "Dodaj nagrod\u0119")))));
 };
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
 let deferredInstallPrompt = null;
