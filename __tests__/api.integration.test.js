@@ -232,6 +232,43 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(pointsAfterDuplicateApproveRes.status).toBe(200);
     expect(pointsAfterDuplicateApproveRes.body.value[child.id] || 0).toBe(pointsAfterApprove);
 
+    const extraTaskRes = await request(app)
+      .post('/api/extra-tasks')
+      .set('Authorization', `Bearer ${childToken}`)
+      .send({
+        childId: child.id,
+        title: 'Pomogłem wynieść śmieci',
+        date: today,
+      });
+    expect(extraTaskRes.status).toBe(201);
+    expect(extraTaskRes.body.extraTask.status).toBe('PENDING');
+
+    const childExtraTasksRes = await request(app)
+      .get('/api/storage/get/extraTasks')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childExtraTasksRes.status).toBe(200);
+    expect(childExtraTasksRes.body.value.some((item) => item.id === extraTaskRes.body.extraTask.id)).toBe(true);
+
+    const pendingExtraTaskRes = await request(app)
+      .get('/api/extra-tasks?pending=true')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pendingExtraTaskRes.status).toBe(200);
+    expect(pendingExtraTaskRes.body.extraTasks.some((item) => item.id === extraTaskRes.body.extraTask.id)).toBe(true);
+
+    const approveExtraTaskRes = await request(app)
+      .post(`/api/extra-tasks/${extraTaskRes.body.extraTask.id}/approve`)
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ points: 7 });
+    expect(approveExtraTaskRes.status).toBe(200);
+    expect(approveExtraTaskRes.body.extraTask.status).toBe('APPROVED');
+    expect(approveExtraTaskRes.body.extraTask.points).toBe(7);
+
+    const pointsAfterExtraTaskRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterExtraTaskRes.status).toBe(200);
+    expect(pointsAfterExtraTaskRes.body.value[child.id] || 0).toBe(pointsAfterApprove + 7);
+
     const completionsRes = await request(app)
       .get(`/api/completions?childId=${encodeURIComponent(child.id)}&date=${today}`)
       .set('Authorization', `Bearer ${parentToken}`);

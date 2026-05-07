@@ -41,6 +41,7 @@ const DEFAULT_FAMILY_STATE = {
   children: [],
   tasks: [],
   completions: [],
+  extraTasks: [],
   rewards: [],
   streaks: {},
   points: {},
@@ -379,6 +380,16 @@ const completionSchema = z.object({
   doneByChild: z.boolean().default(true),
 });
 
+const extraTaskSchema = z.object({
+  childId: z.string().min(1),
+  title: z.string().trim().min(2).max(240),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const approveExtraTaskSchema = z.object({
+  points: z.number().int().min(0).max(1000),
+});
+
 const bulkApproveSchema = z.object({
   childId: z.string().min(1).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -461,6 +472,7 @@ const normalizeStateData = (value) => {
     children: Array.isArray(input.children) ? input.children : [],
     tasks: Array.isArray(input.tasks) ? input.tasks : [],
     completions: Array.isArray(input.completions) ? input.completions : [],
+    extraTasks: Array.isArray(input.extraTasks) ? input.extraTasks : [],
     rewards: Array.isArray(input.rewards) ? input.rewards : [],
     streaks: isObjectRecord(input.streaks) ? input.streaks : {},
     points: isObjectRecord(input.points) ? input.points : {},
@@ -671,6 +683,8 @@ const filterStorageValueForUser = (key, data, user) => {
       return data.tasks.filter((task) => task.childId === childId);
     case 'completions':
       return data.completions.filter((completion) => completion.childId === childId);
+    case 'extraTasks':
+      return data.extraTasks.filter((task) => task.childId === childId);
     case 'streaks':
       return pickChildMapValue(data.streaks, childId);
     case 'points':
@@ -831,6 +845,9 @@ const mergeParentStorageValues = (data, values) => {
   if (Object.prototype.hasOwnProperty.call(values, 'completions')) {
     nextData.completions = mergeArrayRecordsById(data.completions, values.completions);
   }
+  if (Object.prototype.hasOwnProperty.call(values, 'extraTasks')) {
+    nextData.extraTasks = mergeArrayRecordsById(data.extraTasks, values.extraTasks);
+  }
   if (Object.prototype.hasOwnProperty.call(values, 'rewards')) {
     nextData.rewards = mergeArrayRecordsById(data.rewards, values.rewards);
   }
@@ -878,6 +895,7 @@ const CHILD_STORAGE_KEYS = new Set([
   'children',
   'tasks',
   'completions',
+  'extraTasks',
   'rewards',
   'streaks',
   'points',
@@ -1873,6 +1891,164 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
   } catch (error) {
     console.error('Bulk approve error:', error);
     res.status(500).json({ error: 'Nie udało się zatwierdzić zadań zbiorczo' });
+  }
+});
+
+app.get('/api/extra-tasks', authMiddleware, async (req, res) => {
+  try {
+    const childId = typeof req.query.childId === 'string' ? req.query.childId : null;
+    const date = typeof req.query.date === 'string' ? req.query.date : null;
+    const pendingOnly = String(req.query.pending || '') === 'true';
+    const { data } = await loadStateData(req.auth.user.familyId);
+
+    let list = data.extraTasks;
+    if (req.auth.user.role === 'CHILD') {
+      list = list.filter((task) => task.childId === req.auth.user.childId);
+    } else if (childId) {
+      list = list.filter((task) => task.childId === childId);
+    }
+    if (date) {
+      list = list.filter((task) => task.date === date);
+    }
+    if (pendingOnly) {
+      list = list.filter((task) => task.status === 'PENDING');
+    }
+
+    res.json({ extraTasks: list });
+  } catch (error) {
+    console.error('Extra task list error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać zadań dodatkowych' });
+  }
+});
+
+app.post('/api/extra-tasks', authMiddleware, async (req, res) => {
+  try {
+    const parsed = extraTaskSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowe dane zadania dodatkowego' });
+      return;
+    }
+    if (!hasChildAccess(req, parsed.data.childId)) {
+      res.status(403).json({ error: 'Brak dostępu do profilu dziecka' });
+      return;
+    }
+
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+    if (!child) {
+      res.status(404).json({ error: 'Dziecko nie istnieje' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const extraTask = {
+      id: createEntityId('extra'),
+      childId: parsed.data.childId,
+      title: parsed.data.title.trim(),
+      date: parsed.data.date || toDateString(new Date()),
+      status: 'PENDING',
+      points: null,
+      approvedByParent: false,
+      approvedAt: null,
+      rejectedAt: null,
+      submittedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.extraTasks = [extraTask, ...data.extraTasks];
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+      childId: extraTask.childId,
+      date: extraTask.date,
+      title: extraTask.title,
+    });
+
+    await saveStateData(state.id, data);
+    res.status(201).json({ extraTask });
+  } catch (error) {
+    console.error('Extra task create error:', error);
+    res.status(500).json({ error: 'Nie udało się zgłosić zadania dodatkowego' });
+  }
+});
+
+app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const parsed = approveExtraTaskSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowa liczba punktów' });
+      return;
+    }
+
+    const extraTaskId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
+    if (!extraTask) {
+      res.status(404).json({ error: 'Zadanie dodatkowe nie istnieje' });
+      return;
+    }
+    if (extraTask.status === 'APPROVED') {
+      res.json({ extraTask });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    extraTask.status = 'APPROVED';
+    extraTask.points = parsed.data.points;
+    extraTask.approvedByParent = true;
+    extraTask.approvedAt = now;
+    extraTask.rejectedAt = null;
+    extraTask.updatedAt = now;
+
+    addPoints(data, extraTask.childId, parsed.data.points);
+    unlockEligibleRewards(data, extraTask.childId, req.auth.user.id);
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+      childId: extraTask.childId,
+      date: extraTask.date,
+      points: parsed.data.points,
+      title: extraTask.title,
+    });
+
+    await saveStateData(state.id, data);
+    res.json({ extraTask });
+  } catch (error) {
+    console.error('Approve extra task error:', error);
+    res.status(500).json({ error: 'Nie udało się zatwierdzić zadania dodatkowego' });
+  }
+});
+
+app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const extraTaskId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
+    if (!extraTask) {
+      res.status(404).json({ error: 'Zadanie dodatkowe nie istnieje' });
+      return;
+    }
+    if (extraTask.status === 'APPROVED') {
+      res.status(409).json({ error: 'Zatwierdzonego zadania dodatkowego nie można odrzucić' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    extraTask.status = 'REJECTED';
+    extraTask.points = null;
+    extraTask.approvedByParent = false;
+    extraTask.approvedAt = null;
+    extraTask.rejectedAt = now;
+    extraTask.updatedAt = now;
+
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+      childId: extraTask.childId,
+      date: extraTask.date,
+      title: extraTask.title,
+    });
+
+    await saveStateData(state.id, data);
+    res.json({ extraTask });
+  } catch (error) {
+    console.error('Reject extra task error:', error);
+    res.status(500).json({ error: 'Nie udało się odrzucić zadania dodatkowego' });
   }
 });
 

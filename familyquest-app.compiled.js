@@ -209,6 +209,7 @@ const App = () => {
   const [children, setChildren] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState([]);
+  const [extraTasks, setExtraTasks] = useState([]);
   const [rewards, setRewards] = useState([]);
   const [streaks, setStreaks] = useState({});
   const [points, setPoints] = useState({});
@@ -240,6 +241,7 @@ const App = () => {
   const [editingChild, setEditingChild] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
+  const [extraTaskTitle, setExtraTaskTitle] = useState('');
   const [childApprovalNotice, setChildApprovalNotice] = useState(null);
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
@@ -248,6 +250,7 @@ const App = () => {
     setChildren([]);
     setTasks([]);
     setCompletions([]);
+    setExtraTasks([]);
     setRewards([]);
     setStreaks({});
     setPoints({});
@@ -274,6 +277,7 @@ const App = () => {
     setEditingChild(null);
     setApprovalFilterChildId('ALL');
     setApprovalFilterDate('');
+    setExtraTaskTitle('');
     setChildApprovalNotice(null);
   };
   useEffect(() => {
@@ -313,7 +317,7 @@ const App = () => {
     try {
       const session = await apiRequest('/api/auth/me');
       setUser(session.user);
-      const [savedChildren, savedTasks, savedCompletions, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
+      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
       const rawChildren = savedChildren || [];
       const loadedChildren = rawChildren.map(child => ({
         ...child
@@ -326,6 +330,7 @@ const App = () => {
       setChildren(loadedChildren);
       setTasks(savedTasks || []);
       setCompletions(savedCompletions || []);
+      setExtraTasks(savedExtraTasks || []);
       setRewards(savedRewards || []);
       setStreaks(savedStreaks || {});
       setPoints(savedPoints || {});
@@ -431,6 +436,7 @@ const App = () => {
         children,
         tasks,
         completions,
+        extraTasks,
         rewards,
         streaks,
         points,
@@ -444,7 +450,7 @@ const App = () => {
       saveRequestedRef.current = true;
       flushSaveQueue();
     }
-  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
+  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
   useEffect(() => {
     if (!user || !hasLoadedSnapshot || view !== 'parent' && view !== 'child') {
       return undefined;
@@ -830,6 +836,68 @@ const App = () => {
       alert(e.message || 'Nie udało się odrzucić zadania');
     }
   };
+  const submitExtraTask = async title => {
+    if (!selectedChild) return;
+    const normalizedTitle = String(title || '').trim();
+    if (normalizedTitle.length < 2) {
+      alert('Wpisz, co udało Ci się zrobić.');
+      return;
+    }
+    try {
+      await apiRequest('/api/extra-tasks', {
+        method: 'POST',
+        body: {
+          childId: selectedChild.id,
+          title: normalizedTitle,
+          date: getDateString()
+        }
+      });
+      setExtraTaskTitle('');
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || 'Nie udało się zgłosić zadania dodatkowego');
+    }
+  };
+  const approveExtraTask = async (extraTask, pointsValue) => {
+    if (!extraTask || extraTask.status === 'APPROVED') return;
+    const pointsToGrant = Number.parseInt(pointsValue, 10);
+    if (!Number.isFinite(pointsToGrant) || pointsToGrant < 0) {
+      alert('Podaj poprawną liczbę punktów.');
+      return;
+    }
+    try {
+      await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/approve`, {
+        method: 'POST',
+        body: {
+          points: pointsToGrant
+        }
+      });
+      showConfetti();
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || 'Nie udało się zatwierdzić zadania dodatkowego');
+    }
+  };
+  const rejectExtraTask = async extraTask => {
+    if (!extraTask) return;
+    try {
+      await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/reject`, {
+        method: 'POST'
+      });
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
+    }
+  };
   const approveAllPending = async (list = null) => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
@@ -864,7 +932,8 @@ const App = () => {
   useEffect(() => {
     if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
     const approved = completions.filter(comp => comp.childId === selectedChild.id && comp.approvedByParent && comp.doneByChild);
-    if (approved.length === 0) return;
+    const approvedExtra = extraTasks.filter(task => task.childId === selectedChild.id && task.status === 'APPROVED');
+    if (approved.length === 0 && approvedExtra.length === 0) return;
     const storageKey = `fq_seen_approvals_${selectedChild.id}`;
     let seen = [];
     try {
@@ -874,7 +943,8 @@ const App = () => {
     }
     const seenSet = new Set(Array.isArray(seen) ? seen : []);
     const newApprovals = approved.filter(comp => comp.id && !seenSet.has(comp.id));
-    if (newApprovals.length === 0) return;
+    const newExtraApprovals = approvedExtra.filter(task => task.id && !seenSet.has(task.id));
+    if (newApprovals.length === 0 && newExtraApprovals.length === 0) return;
     const approvedTasks = newApprovals.map(comp => {
       const task = tasks.find(item => item.id === comp.taskId);
       return {
@@ -882,7 +952,11 @@ const App = () => {
         title: task?.title || 'Zadanie',
         points: task?.points || 0
       };
-    });
+    }).concat(newExtraApprovals.map(task => ({
+      id: task.id,
+      title: task.title || 'Zadanie dodatkowe',
+      points: Number(task.points || 0)
+    })));
     const taskCountLabel = approvedTasks.length === 1 ? 'zadanie' : approvedTasks.length > 1 && approvedTasks.length < 5 ? 'zadania' : 'zadań';
     setChildApprovalNotice({
       count: approvedTasks.length,
@@ -890,8 +964,8 @@ const App = () => {
       tasks: approvedTasks
     });
     showConfetti();
-    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id)].slice(-200)));
-  }, [view, user?.role, selectedChild?.id, completions, tasks]);
+    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id)].slice(-200)));
+  }, [view, user?.role, selectedChild?.id, completions, extraTasks, tasks]);
   const addChild = async (name, avatar, activeDays) => {
     const accessCode = findAvailableChildAccessCode(children);
     if (!accessCode) {
@@ -1075,6 +1149,7 @@ const App = () => {
         children,
         tasks,
         completions,
+        extraTasks,
         rewards,
         streaks,
         points,
@@ -1102,6 +1177,7 @@ const App = () => {
     setChildren(data.children || []);
     setTasks(data.tasks || []);
     setCompletions(data.completions || []);
+    setExtraTasks(data.extraTasks || []);
     setRewards(data.rewards || []);
     setStreaks(data.streaks || {});
     setPoints(data.points || {});
@@ -1152,6 +1228,7 @@ const App = () => {
     const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active !== false);
     const todayTasks = childTasks.filter(t => isTaskScheduledForDate(t, today));
     const todayCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === today);
+    const childExtraTasks = extraTasks.filter(task => task.childId === selectedChild.id).sort((a, b) => Date.parse(b.updatedAt || b.submittedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.submittedAt || a.createdAt || 0)).slice(0, 8);
     const childStreak = streaks[selectedChild.id] || {
       current: 0,
       best: 0
@@ -1413,6 +1490,67 @@ const App = () => {
       style: {
         marginBottom: '1rem'
       }
+    }, "\u2728 Zadanie dodatkowe"), React.createElement("form", {
+      onSubmit: e => {
+        e.preventDefault();
+        submitExtraTask(extraTaskTitle);
+      }
+    }, React.createElement("textarea", {
+      className: "input",
+      value: extraTaskTitle,
+      onChange: e => setExtraTaskTitle(e.target.value),
+      rows: 3,
+      maxLength: 240,
+      placeholder: "Napisz, co dodatkowego uda\u0142o Ci si\u0119 zrobi\u0107"
+    }), React.createElement("button", {
+      type: "submit",
+      className: "btn btn-primary",
+      style: {
+        width: '100%',
+        marginTop: '0.75rem'
+      }
+    }, "Zg\u0142o\u015B rodzicowi")), childExtraTasks.length > 0 && React.createElement("div", {
+      style: {
+        marginTop: '1rem',
+        display: 'grid',
+        gap: '0.65rem'
+      }
+    }, childExtraTasks.map(task => React.createElement("div", {
+      key: task.id,
+      className: "task-item"
+    }, React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, React.createElement("div", {
+      style: {
+        fontWeight: 600
+      }
+    }, task.title), React.createElement("div", {
+      style: {
+        fontSize: '0.85rem',
+        opacity: 0.72
+      }
+    }, task.date)), task.status === 'APPROVED' ? React.createElement("div", {
+      className: "badge badge-points"
+    }, "+", Number(task.points || 0), " pkt") : task.status === 'REJECTED' ? React.createElement("div", {
+      className: "badge",
+      style: {
+        background: 'rgba(249, 112, 102, 0.18)',
+        color: '#F97066',
+        border: '1px solid #F97066'
+      }
+    }, "Odrzucone") : React.createElement("div", {
+      className: "badge badge-pending"
+    }, "Czeka"))))), React.createElement("div", {
+      className: "glass-card",
+      style: {
+        marginTop: '1.5rem'
+      }
+    }, React.createElement("h3", {
+      style: {
+        marginBottom: '1rem'
+      }
     }, "Ostatnie 14 dni"), React.createElement("div", {
       className: "calendar"
     }, last14Days.map((day, i) => {
@@ -1449,11 +1587,19 @@ const App = () => {
   }
   if (view === 'parent') {
     const pendingApprovals = completions.filter(c => c.doneByChild && !c.approvedByParent);
+    const pendingExtraTasks = extraTasks.filter(task => task.status === 'PENDING');
     const filteredPendingApprovals = pendingApprovals.filter(comp => {
       const childOk = approvalFilterChildId === 'ALL' || comp.childId === approvalFilterChildId;
       const dateOk = !approvalFilterDate || comp.date === approvalFilterDate;
       return childOk && dateOk;
     });
+    const filteredPendingExtraTasks = pendingExtraTasks.filter(task => {
+      const childOk = approvalFilterChildId === 'ALL' || task.childId === approvalFilterChildId;
+      const dateOk = !approvalFilterDate || task.date === approvalFilterDate;
+      return childOk && dateOk;
+    });
+    const pendingApprovalCount = pendingApprovals.length + pendingExtraTasks.length;
+    const filteredPendingCount = filteredPendingApprovals.length + filteredPendingExtraTasks.length;
     return React.createElement(React.Fragment, null, React.createElement("div", {
       className: "app-container"
     }, React.createElement("div", {
@@ -1479,7 +1625,7 @@ const App = () => {
     }, React.createElement("button", {
       className: `tab ${parentTab === 'approvals' ? 'active' : ''}`,
       onClick: () => setParentTab('approvals')
-    }, "Do zatwierdzenia (", pendingApprovals.length, ")"), React.createElement("button", {
+    }, "Do zatwierdzenia (", pendingApprovalCount, ")"), React.createElement("button", {
       className: `tab ${parentTab === 'children' ? 'active' : ''}`,
       onClick: () => setParentTab('children')
     }, "Dzieci (", activeChildren.length, ")"), React.createElement("button", {
@@ -1546,13 +1692,13 @@ const App = () => {
         setApprovalFilterChildId('ALL');
         setApprovalFilterDate('');
       }
-    }, "Wyczy\u015B\u0107 filtry")))), filteredPendingApprovals.length === 0 ? React.createElement("div", {
+    }, "Wyczy\u015B\u0107 filtry")))), filteredPendingCount === 0 ? React.createElement("div", {
       className: "empty-state"
     }, React.createElement("div", {
       style: {
         fontSize: '3rem'
       }
-    }, "\u2705"), React.createElement("p", null, pendingApprovals.length === 0 ? 'Brak zadań do zatwierdzenia' : 'Brak zadań pasujących do filtrów')) : filteredPendingApprovals.map(comp => {
+    }, "\u2705"), React.createElement("p", null, pendingApprovalCount === 0 ? 'Brak zadań do zatwierdzenia' : 'Brak zadań pasujących do filtrów')) : React.createElement(React.Fragment, null, filteredPendingApprovals.map(comp => {
       const task = tasks.find(t => t.id === comp.taskId);
       const child = children.find(c => c.id === comp.childId);
       if (!task || !child) return null;
@@ -1589,7 +1735,17 @@ const App = () => {
         onClick: () => rejectTask(comp),
         title: "Odrzu\u0107 zadanie"
       }, "\u274C Odrzu\u0107"));
-    }), React.createElement("div", {
+    }), filteredPendingExtraTasks.length > 0 && React.createElement(React.Fragment, null, React.createElement("h3", {
+      style: {
+        margin: '1.2rem 0 0.75rem'
+      }
+    }, "\u2728 Zadania dodatkowe"), filteredPendingExtraTasks.map(extraTask => React.createElement(ExtraTaskApprovalCard, {
+      key: extraTask.id,
+      extraTask: extraTask,
+      child: children.find(c => c.id === extraTask.childId),
+      onApprove: approveExtraTask,
+      onReject: rejectExtraTask
+    })))), React.createElement("div", {
       style: {
         marginTop: '1.5rem'
       }
@@ -2195,6 +2351,54 @@ const WeeklyLeaderboardPanel = ({
       }
     }, "Idealne tyg.: ", childStreak.idealWeeksInRow || 0, " \u2022 Passa: ", childStreak.current || 0, " \u2022 ", childPoints, " pkt")));
   }));
+};
+const ExtraTaskApprovalCard = ({
+  extraTask,
+  child,
+  onApprove,
+  onReject
+}) => {
+  const [pointsValue, setPointsValue] = useState('3');
+  if (!extraTask || !child) return null;
+  return React.createElement("div", {
+    className: "task-item"
+  }, React.createElement("div", {
+    style: {
+      fontSize: '2rem'
+    }
+  }, child.avatar), React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, React.createElement("div", {
+    style: {
+      fontWeight: 700
+    }
+  }, extraTask.title), React.createElement("div", {
+    style: {
+      fontSize: '0.9rem',
+      opacity: 0.7
+    }
+  }, child.name, " \u2022 ", extraTask.date, " \u2022 zadanie dodatkowe")), React.createElement("input", {
+    className: "input",
+    type: "number",
+    min: "0",
+    max: "1000",
+    value: pointsValue,
+    onChange: e => setPointsValue(e.target.value),
+    style: {
+      width: '92px'
+    },
+    "aria-label": "Punkty za zadanie dodatkowe"
+  }), React.createElement("button", {
+    className: "btn btn-success",
+    onClick: () => onApprove(extraTask, pointsValue),
+    title: "Zatwierd\u017A zadanie dodatkowe"
+  }, "\u2705 Zatwierd\u017A"), React.createElement("button", {
+    className: "btn btn-danger",
+    onClick: () => onReject(extraTask),
+    title: "Odrzu\u0107 zadanie dodatkowe"
+  }, "\u274C Odrzu\u0107"));
 };
 const SettingsSecurityPanel = ({
   user,
