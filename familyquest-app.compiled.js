@@ -1455,13 +1455,20 @@ const App = () => {
       }
     }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showChildRewards && React.createElement("div", {
       className: "modal",
+      style: {
+        alignItems: 'flex-start',
+        paddingTop: 'clamp(1rem, 7vh, 4.5rem)',
+        paddingBottom: '1rem',
+        overflowY: 'auto'
+      },
       role: "dialog",
       "aria-modal": "true",
       "aria-labelledby": "child-rewards-title"
     }, React.createElement("div", {
       className: "modal-content child-rewards-modal",
       style: {
-        maxWidth: '640px'
+        maxWidth: '640px',
+        maxHeight: 'calc(100vh - 2rem)'
       }
     }, React.createElement("div", {
       style: {
