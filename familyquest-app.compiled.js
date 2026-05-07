@@ -210,6 +210,7 @@ const App = () => {
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState([]);
   const [extraTasks, setExtraTasks] = useState([]);
+  const [pointAdjustments, setPointAdjustments] = useState([]);
   const [rewards, setRewards] = useState([]);
   const [streaks, setStreaks] = useState({});
   const [points, setPoints] = useState({});
@@ -251,6 +252,7 @@ const App = () => {
     setTasks([]);
     setCompletions([]);
     setExtraTasks([]);
+    setPointAdjustments([]);
     setRewards([]);
     setStreaks({});
     setPoints({});
@@ -317,7 +319,7 @@ const App = () => {
     try {
       const session = await apiRequest('/api/auth/me');
       setUser(session.user);
-      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
+      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
       const rawChildren = savedChildren || [];
       const loadedChildren = rawChildren.map(child => ({
         ...child
@@ -331,6 +333,7 @@ const App = () => {
       setTasks(savedTasks || []);
       setCompletions(savedCompletions || []);
       setExtraTasks(savedExtraTasks || []);
+      setPointAdjustments(savedPointAdjustments || []);
       setRewards(savedRewards || []);
       setStreaks(savedStreaks || {});
       setPoints(savedPoints || {});
@@ -437,6 +440,7 @@ const App = () => {
         tasks,
         completions,
         extraTasks,
+        pointAdjustments,
         rewards,
         streaks,
         points,
@@ -450,7 +454,7 @@ const App = () => {
       saveRequestedRef.current = true;
       flushSaveQueue();
     }
-  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
+  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, pointAdjustments, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
   useEffect(() => {
     if (!user || !hasLoadedSnapshot || view !== 'parent' && view !== 'child') {
       return undefined;
@@ -898,6 +902,41 @@ const App = () => {
       alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
     }
   };
+  const addPointAdjustment = async (child, type) => {
+    if (!child) return;
+    const isPenalty = type === 'PENALTY';
+    const label = isPenalty ? 'karę' : 'premię';
+    const pointsValue = prompt(`Ile punktów ma mieć ${label} dla ${child.name}?`, '5');
+    if (pointsValue === null) return;
+    const pointsToApply = Number.parseInt(pointsValue, 10);
+    if (!Number.isFinite(pointsToApply) || pointsToApply <= 0) {
+      alert('Podaj dodatnią liczbę punktów.');
+      return;
+    }
+    const note = prompt('Krótka informacja dla dziecka:', isPenalty ? 'Kara punktowa' : 'Premia punktowa');
+    if (note === null) return;
+    if (isPenalty && !confirm(`Odjąć ${pointsToApply} pkt dziecku ${child.name}?`)) return;
+    try {
+      await apiRequest('/api/point-adjustments', {
+        method: 'POST',
+        body: {
+          childId: child.id,
+          type,
+          points: pointsToApply,
+          note: String(note || '').trim()
+        }
+      });
+      if (!isPenalty) {
+        showConfetti();
+      }
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || `Nie udało się zapisać ${label}`);
+    }
+  };
   const approveAllPending = async (list = null) => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
@@ -933,7 +972,8 @@ const App = () => {
     if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
     const approved = completions.filter(comp => comp.childId === selectedChild.id && comp.approvedByParent && comp.doneByChild);
     const approvedExtra = extraTasks.filter(task => task.childId === selectedChild.id && task.status === 'APPROVED');
-    if (approved.length === 0 && approvedExtra.length === 0) return;
+    const childPointAdjustments = pointAdjustments.filter(adjustment => adjustment.childId === selectedChild.id);
+    if (approved.length === 0 && approvedExtra.length === 0 && childPointAdjustments.length === 0) return;
     const storageKey = `fq_seen_approvals_${selectedChild.id}`;
     let seen = [];
     try {
@@ -944,7 +984,8 @@ const App = () => {
     const seenSet = new Set(Array.isArray(seen) ? seen : []);
     const newApprovals = approved.filter(comp => comp.id && !seenSet.has(comp.id));
     const newExtraApprovals = approvedExtra.filter(task => task.id && !seenSet.has(task.id));
-    if (newApprovals.length === 0 && newExtraApprovals.length === 0) return;
+    const newPointAdjustments = childPointAdjustments.filter(adjustment => adjustment.id && !seenSet.has(adjustment.id));
+    if (newApprovals.length === 0 && newExtraApprovals.length === 0 && newPointAdjustments.length === 0) return;
     const approvedTasks = newApprovals.map(comp => {
       const task = tasks.find(item => item.id === comp.taskId);
       return {
@@ -957,15 +998,30 @@ const App = () => {
       title: task.title || 'Zadanie dodatkowe',
       points: Number(task.points || 0)
     })));
+    const pointItems = newPointAdjustments.map(adjustment => ({
+      id: adjustment.id,
+      title: adjustment.note || (adjustment.type === 'PENALTY' ? 'Kara punktowa' : 'Premia punktowa'),
+      points: Number(adjustment.delta || 0),
+      type: adjustment.type
+    }));
+    const noticeItems = approvedTasks.concat(pointItems);
+    const hasApprovedTasks = approvedTasks.length > 0;
+    const hasBonus = pointItems.some(item => item.points > 0);
+    const hasPenalty = pointItems.some(item => item.points < 0);
     const taskCountLabel = approvedTasks.length === 1 ? 'zadanie' : approvedTasks.length > 1 && approvedTasks.length < 5 ? 'zadania' : 'zadań';
+    const adjustmentCountLabel = pointItems.length === 1 ? 'zmianę punktów' : pointItems.length > 1 && pointItems.length < 5 ? 'zmiany punktów' : 'zmian punktów';
     setChildApprovalNotice({
-      count: approvedTasks.length,
-      summary: `Rodzic zatwierdził ${approvedTasks.length} ${taskCountLabel}.`,
-      tasks: approvedTasks
+      count: noticeItems.length,
+      title: hasApprovedTasks ? '🎉 Zaliczone zadania' : hasBonus && !hasPenalty ? '🎁 Premia punktowa' : hasPenalty && !hasBonus ? '⚠️ Kara punktowa' : 'Zmiana punktów',
+      summary: hasApprovedTasks ? `Rodzic zatwierdził ${approvedTasks.length} ${taskCountLabel}.` : `Rodzic zapisał ${pointItems.length} ${adjustmentCountLabel}.`,
+      encouragement: hasPenalty && !hasApprovedTasks && !hasBonus ? '' : 'Brawo!',
+      tasks: noticeItems
     });
-    showConfetti();
-    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id)].slice(-200)));
-  }, [view, user?.role, selectedChild?.id, completions, extraTasks, tasks]);
+    if (hasApprovedTasks || hasBonus) {
+      showConfetti();
+    }
+    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id), ...newPointAdjustments.map(adjustment => adjustment.id)].slice(-200)));
+  }, [view, user?.role, selectedChild?.id, completions, extraTasks, pointAdjustments, tasks]);
   const addChild = async (name, avatar, activeDays) => {
     const accessCode = findAvailableChildAccessCode(children);
     if (!accessCode) {
@@ -1150,6 +1206,7 @@ const App = () => {
         tasks,
         completions,
         extraTasks,
+        pointAdjustments,
         rewards,
         streaks,
         points,
@@ -1178,6 +1235,7 @@ const App = () => {
     setTasks(data.tasks || []);
     setCompletions(data.completions || []);
     setExtraTasks(data.extraTasks || []);
+    setPointAdjustments(data.pointAdjustments || []);
     setRewards(data.rewards || []);
     setStreaks(data.streaks || {});
     setPoints(data.points || {});
@@ -1322,12 +1380,12 @@ const App = () => {
       style: {
         marginBottom: '0.75rem'
       }
-    }, "\uD83C\uDF89 Zaliczone zadania"), React.createElement("p", {
+    }, childApprovalNotice.title || "\uD83C\uDF89 Zaliczone zadania"), React.createElement("p", {
       style: {
         opacity: 0.88,
         marginBottom: '1rem'
       }
-    }, childApprovalNotice.summary, " Brawo!"), React.createElement("ul", {
+    }, childApprovalNotice.summary, childApprovalNotice.encouragement ? ` ${childApprovalNotice.encouragement}` : ''), React.createElement("ul", {
       style: {
         display: 'grid',
         gap: '0.75rem',
@@ -1344,22 +1402,22 @@ const App = () => {
         gap: '1rem',
         padding: '0.85rem 1rem',
         borderRadius: '1rem',
-        background: 'rgba(18, 183, 106, 0.18)',
-        border: '1px solid rgba(18, 183, 106, 0.36)'
+        background: task.points < 0 ? 'rgba(249, 112, 102, 0.18)' : 'rgba(18, 183, 106, 0.18)',
+        border: task.points < 0 ? '1px solid rgba(249, 112, 102, 0.4)' : '1px solid rgba(18, 183, 106, 0.36)'
       }
-    }, React.createElement("strong", null, task.title), task.points > 0 && React.createElement("span", {
+    }, React.createElement("strong", null, task.title), task.points !== 0 && React.createElement("span", {
       style: {
         whiteSpace: 'nowrap',
         fontWeight: 800,
-        color: '#FEC84B'
+        color: task.points < 0 ? '#FDA29B' : '#FEC84B'
       }
-    }, "+", task.points, " pkt")))), React.createElement("button", {
+    }, task.points > 0 ? '+' : '', task.points, " pkt")))), React.createElement("button", {
       className: "btn btn-primary",
       onClick: () => setChildApprovalNotice(null),
       style: {
         width: '100%'
       }
-    }, "Super!"))), React.createElement("div", {
+    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), React.createElement("div", {
       className: "grid grid-2",
       style: {
         marginBottom: '1.5rem'
@@ -1901,7 +1959,25 @@ const App = () => {
             archiveChild(child.id);
           }
         }
-      }, "\uD83D\uDDC3\uFE0F Archiwizuj")));
+      }, "\uD83D\uDDC3\uFE0F Archiwizuj")), React.createElement("div", {
+        style: {
+          display: 'flex',
+          gap: '0.5rem',
+          marginTop: '0.5rem'
+        }
+      }, React.createElement("button", {
+        className: "btn btn-success",
+        style: {
+          flex: 1
+        },
+        onClick: () => addPointAdjustment(child, 'BONUS')
+      }, "\uD83C\uDF81 Premia"), React.createElement("button", {
+        className: "btn btn-danger",
+        style: {
+          flex: 1
+        },
+        onClick: () => addPointAdjustment(child, 'PENALTY')
+      }, "\u26A0\uFE0F Kara")));
     }))), parentTab === 'tasks' && React.createElement(React.Fragment, null, React.createElement("div", {
       className: "header"
     }, React.createElement("h2", null, "Zarz\u0105dzanie zadaniami"), React.createElement("button", {

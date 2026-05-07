@@ -269,6 +269,42 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(pointsAfterExtraTaskRes.status).toBe(200);
     expect(pointsAfterExtraTaskRes.body.value[child.id] || 0).toBe(pointsAfterApprove + 7);
 
+    const bonusRes = await request(app)
+      .post('/api/point-adjustments')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        type: 'BONUS',
+        points: 5,
+        note: 'Premia za samodzielność',
+      });
+    expect(bonusRes.status).toBe(201);
+    expect(bonusRes.body.pointAdjustment.delta).toBe(5);
+
+    const penaltyRes = await request(app)
+      .post('/api/point-adjustments')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        type: 'PENALTY',
+        points: 3,
+        note: 'Kara za bałagan',
+      });
+    expect(penaltyRes.status).toBe(201);
+    expect(penaltyRes.body.pointAdjustment.delta).toBe(-3);
+
+    const childPointAdjustmentsRes = await request(app)
+      .get('/api/storage/get/pointAdjustments')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(childPointAdjustmentsRes.status).toBe(200);
+    expect(childPointAdjustmentsRes.body.value).toHaveLength(2);
+
+    const pointsAfterAdjustmentRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterAdjustmentRes.status).toBe(200);
+    expect(pointsAfterAdjustmentRes.body.value[child.id] || 0).toBe(pointsAfterApprove + 9);
+
     const completionsRes = await request(app)
       .get(`/api/completions?childId=${encodeURIComponent(child.id)}&date=${today}`)
       .set('Authorization', `Bearer ${parentToken}`);

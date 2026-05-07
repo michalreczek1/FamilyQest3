@@ -42,6 +42,7 @@ const DEFAULT_FAMILY_STATE = {
   tasks: [],
   completions: [],
   extraTasks: [],
+  pointAdjustments: [],
   rewards: [],
   streaks: {},
   points: {},
@@ -390,6 +391,13 @@ const approveExtraTaskSchema = z.object({
   points: z.number().int().min(0).max(1000),
 });
 
+const pointAdjustmentSchema = z.object({
+  childId: z.string().min(1),
+  type: z.enum(['BONUS', 'PENALTY']),
+  points: z.number().int().min(1).max(1000),
+  note: z.string().trim().max(240).optional().nullable(),
+});
+
 const bulkApproveSchema = z.object({
   childId: z.string().min(1).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -473,6 +481,7 @@ const normalizeStateData = (value) => {
     tasks: Array.isArray(input.tasks) ? input.tasks : [],
     completions: Array.isArray(input.completions) ? input.completions : [],
     extraTasks: Array.isArray(input.extraTasks) ? input.extraTasks : [],
+    pointAdjustments: Array.isArray(input.pointAdjustments) ? input.pointAdjustments : [],
     rewards: Array.isArray(input.rewards) ? input.rewards : [],
     streaks: isObjectRecord(input.streaks) ? input.streaks : {},
     points: isObjectRecord(input.points) ? input.points : {},
@@ -587,12 +596,23 @@ const evaluateWeekForData = (data, childId, weekStart) => {
   return passedDays === activeDays ? 'IDEAL' : 'NOT_IDEAL';
 };
 
-const addPoints = (data, childId, amount) => {
-  if (!amount || amount <= 0) return;
+const adjustPoints = (data, childId, amount) => {
+  const current = Number(data.points[childId] || 0);
+  const next = Math.max(0, current + amount);
   data.points = {
     ...data.points,
-    [childId]: Number(data.points[childId] || 0) + amount,
+    [childId]: next,
   };
+  return {
+    previousPoints: current,
+    newPoints: next,
+    appliedDelta: next - current,
+  };
+};
+
+const addPoints = (data, childId, amount) => {
+  if (!amount || amount <= 0) return null;
+  return adjustPoints(data, childId, amount);
 };
 
 const unlockEligibleRewards = (data, childId, actorUserId) => {
@@ -685,6 +705,8 @@ const filterStorageValueForUser = (key, data, user) => {
       return data.completions.filter((completion) => completion.childId === childId);
     case 'extraTasks':
       return data.extraTasks.filter((task) => task.childId === childId);
+    case 'pointAdjustments':
+      return data.pointAdjustments.filter((adjustment) => adjustment.childId === childId);
     case 'streaks':
       return pickChildMapValue(data.streaks, childId);
     case 'points':
@@ -848,6 +870,9 @@ const mergeParentStorageValues = (data, values) => {
   if (Object.prototype.hasOwnProperty.call(values, 'extraTasks')) {
     nextData.extraTasks = mergeArrayRecordsById(data.extraTasks, values.extraTasks);
   }
+  if (Object.prototype.hasOwnProperty.call(values, 'pointAdjustments')) {
+    nextData.pointAdjustments = mergeArrayRecordsById(data.pointAdjustments, values.pointAdjustments);
+  }
   if (Object.prototype.hasOwnProperty.call(values, 'rewards')) {
     nextData.rewards = mergeArrayRecordsById(data.rewards, values.rewards);
   }
@@ -896,6 +921,7 @@ const CHILD_STORAGE_KEYS = new Set([
   'tasks',
   'completions',
   'extraTasks',
+  'pointAdjustments',
   'rewards',
   'streaks',
   'points',
@@ -2049,6 +2075,91 @@ app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (re
   } catch (error) {
     console.error('Reject extra task error:', error);
     res.status(500).json({ error: 'Nie udało się odrzucić zadania dodatkowego' });
+  }
+});
+
+app.get('/api/point-adjustments', authMiddleware, async (req, res) => {
+  try {
+    const childId = typeof req.query.childId === 'string' ? req.query.childId : null;
+    const { data } = await loadStateData(req.auth.user.familyId);
+
+    let list = data.pointAdjustments;
+    if (req.auth.user.role === 'CHILD') {
+      list = list.filter((adjustment) => adjustment.childId === req.auth.user.childId);
+    } else if (childId) {
+      list = list.filter((adjustment) => adjustment.childId === childId);
+    }
+
+    res.json({ pointAdjustments: list });
+  } catch (error) {
+    console.error('Point adjustments list error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać premii i kar punktowych' });
+  }
+});
+
+app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const parsed = pointAdjustmentSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowe dane premii lub kary' });
+      return;
+    }
+
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+    if (!child) {
+      res.status(404).json({ error: 'Dziecko nie istnieje' });
+      return;
+    }
+
+    const requestedPoints = parsed.data.points;
+    const delta = parsed.data.type === 'BONUS' ? requestedPoints : -requestedPoints;
+    const result = adjustPoints(data, parsed.data.childId, delta);
+    if (parsed.data.type === 'PENALTY' && result.appliedDelta === 0) {
+      res.status(409).json({ error: 'Dziecko nie ma punktów do odjęcia' });
+      return;
+    }
+    if (result.appliedDelta > 0) {
+      unlockEligibleRewards(data, parsed.data.childId, req.auth.user.id);
+    }
+
+    const now = new Date().toISOString();
+    const adjustment = {
+      id: createEntityId('points'),
+      childId: parsed.data.childId,
+      type: parsed.data.type,
+      requestedPoints,
+      points: Math.abs(result.appliedDelta),
+      delta: result.appliedDelta,
+      previousPoints: result.previousPoints,
+      newPoints: result.newPoints,
+      note: parsed.data.note ? parsed.data.note.trim() : '',
+      createdBy: req.auth.user.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.pointAdjustments = [adjustment, ...data.pointAdjustments];
+    data.auditLogs = addAuditLogEntry(
+      data,
+      req.auth.user.id,
+      parsed.data.type === 'BONUS' ? 'GRANT_POINT_BONUS' : 'APPLY_POINT_PENALTY',
+      'POINT_ADJUSTMENT',
+      adjustment.id,
+      {
+        childId: adjustment.childId,
+        requestedPoints: adjustment.requestedPoints,
+        appliedPoints: adjustment.points,
+        delta: adjustment.delta,
+        note: adjustment.note,
+      },
+    );
+
+    await saveStateData(state.id, data);
+    res.status(201).json({ pointAdjustment: adjustment, points: data.points });
+  } catch (error) {
+    console.error('Point adjustment create error:', error);
+    res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
   }
 });
 
