@@ -240,11 +240,10 @@ const App = () => {
   const [editingChild, setEditingChild] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
-  const [childApprovalNotice, setChildApprovalNotice] = useState('');
+  const [childApprovalNotice, setChildApprovalNotice] = useState(null);
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
   const saveRequestedRef = useRef(false);
-  const childWelcomeConfettiRef = useRef({});
   const resetFamilyData = () => {
     setChildren([]);
     setTasks([]);
@@ -275,8 +274,7 @@ const App = () => {
     setEditingChild(null);
     setApprovalFilterChildId('ALL');
     setApprovalFilterDate('');
-    setChildApprovalNotice('');
-    childWelcomeConfettiRef.current = {};
+    setChildApprovalNotice(null);
   };
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -865,12 +863,6 @@ const App = () => {
   };
   useEffect(() => {
     if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
-    if (childWelcomeConfettiRef.current[selectedChild.id]) return;
-    childWelcomeConfettiRef.current[selectedChild.id] = true;
-    showConfetti();
-  }, [view, user?.role, selectedChild?.id]);
-  useEffect(() => {
-    if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
     const approved = completions.filter(comp => comp.childId === selectedChild.id && comp.approvedByParent && comp.doneByChild);
     if (approved.length === 0) return;
     const storageKey = `fq_seen_approvals_${selectedChild.id}`;
@@ -883,8 +875,20 @@ const App = () => {
     const seenSet = new Set(Array.isArray(seen) ? seen : []);
     const newApprovals = approved.filter(comp => comp.id && !seenSet.has(comp.id));
     if (newApprovals.length === 0) return;
-    const taskTitles = newApprovals.map(comp => tasks.find(task => task.id === comp.taskId)?.title).filter(Boolean);
-    setChildApprovalNotice(newApprovals.length === 1 && taskTitles[0] ? `Rodzic zatwierdził: ${taskTitles[0]}` : `Rodzic zatwierdził ${newApprovals.length} zadania. Brawo!`);
+    const approvedTasks = newApprovals.map(comp => {
+      const task = tasks.find(item => item.id === comp.taskId);
+      return {
+        id: comp.id,
+        title: task?.title || 'Zadanie',
+        points: task?.points || 0
+      };
+    });
+    const taskCountLabel = approvedTasks.length === 1 ? 'zadanie' : approvedTasks.length > 1 && approvedTasks.length < 5 ? 'zadania' : 'zadań';
+    setChildApprovalNotice({
+      count: approvedTasks.length,
+      summary: `Rodzic zatwierdził ${approvedTasks.length} ${taskCountLabel}.`,
+      tasks: approvedTasks
+    });
     showConfetti();
     localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id)].slice(-200)));
   }, [view, user?.role, selectedChild?.id, completions, tasks]);
@@ -1218,23 +1222,60 @@ const App = () => {
         marginTop: '0.5rem'
       }
     }, "Punkty i zaliczenie wymagaj\u0105 akceptacji rodzica")), childApprovalNotice && React.createElement("div", {
-      className: "glass-card",
-      style: {
-        marginBottom: '1rem',
-        borderColor: 'rgba(18, 183, 106, 0.45)'
-      }
+      className: "modal",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "child-approval-title"
     }, React.createElement("div", {
+      className: "modal-content",
+      style: {
+        maxWidth: '520px',
+        borderColor: 'rgba(18, 183, 106, 0.65)',
+        boxShadow: '0 24px 80px rgba(18, 183, 106, 0.25)'
+      }
+    }, React.createElement("h2", {
+      id: "child-approval-title",
+      style: {
+        marginBottom: '0.75rem'
+      }
+    }, "\uD83C\uDF89 Zaliczone zadania"), React.createElement("p", {
+      style: {
+        opacity: 0.88,
+        marginBottom: '1rem'
+      }
+    }, childApprovalNotice.summary, " Brawo!"), React.createElement("ul", {
+      style: {
+        display: 'grid',
+        gap: '0.75rem',
+        listStyle: 'none',
+        margin: '0 0 1.5rem',
+        padding: 0
+      }
+    }, childApprovalNotice.tasks.map(task => React.createElement("li", {
+      key: task.id,
       style: {
         display: 'flex',
+        alignItems: 'center',
         justifyContent: 'space-between',
         gap: '1rem',
-        alignItems: 'center',
-        flexWrap: 'wrap'
+        padding: '0.85rem 1rem',
+        borderRadius: '1rem',
+        background: 'rgba(18, 183, 106, 0.18)',
+        border: '1px solid rgba(18, 183, 106, 0.36)'
       }
-    }, React.createElement("strong", null, "\uD83C\uDF89 ", childApprovalNotice), React.createElement("button", {
-      className: "btn btn-secondary",
-      onClick: () => setChildApprovalNotice('')
-    }, "OK"))), React.createElement("div", {
+    }, React.createElement("strong", null, task.title), task.points > 0 && React.createElement("span", {
+      style: {
+        whiteSpace: 'nowrap',
+        fontWeight: 800,
+        color: '#FEC84B'
+      }
+    }, "+", task.points, " pkt")))), React.createElement("button", {
+      className: "btn btn-primary",
+      onClick: () => setChildApprovalNotice(null),
+      style: {
+        width: '100%'
+      }
+    }, "Super!"))), React.createElement("div", {
       className: "grid grid-2",
       style: {
         marginBottom: '1.5rem'
