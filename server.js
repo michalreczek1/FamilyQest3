@@ -346,7 +346,7 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   familyName: z.string().trim().max(120).optional(),
-  pinCode: z.string().regex(/^\d{4}$/),
+  pinCode: z.string().regex(/^\d{4}$/).optional(),
 });
 
 const loginSchema = z.object({
@@ -993,7 +993,7 @@ app.post('/api/auth/register', async (req, res) => {
     const email = parsed.data.email.trim().toLowerCase();
     const password = parsed.data.password;
     const familyName = (parsed.data.familyName || '').trim();
-    const pinCode = parsed.data.pinCode;
+    const pinCode = parsed.data.pinCode || null;
 
     const emailExists = await prisma.user.findUnique({ where: { email } });
     if (emailExists) {

@@ -244,6 +244,9 @@ const App = () => {
   const [editingReward, setEditingReward] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
+  const [childTaskDate, setChildTaskDate] = useState(getDateString());
+  const [parentTaskChildId, setParentTaskChildId] = useState('ALL');
+  const [parentTaskDate, setParentTaskDate] = useState(getDateString());
   const [extraTaskTitle, setExtraTaskTitle] = useState('');
   const [childApprovalNotice, setChildApprovalNotice] = useState(null);
   const [showChildRewards, setShowChildRewards] = useState(false);
@@ -688,7 +691,6 @@ const App = () => {
   const handleRegister = async ({
     email,
     password,
-    pinCode,
     familyName
   }) => {
     try {
@@ -697,7 +699,6 @@ const App = () => {
         body: {
           email,
           password,
-          pinCode,
           familyName
         }
       }, false);
@@ -795,10 +796,10 @@ const App = () => {
     if (user?.role === 'CHILD') return;
     setView('parent');
   };
-  const toggleTask = taskId => {
+  const toggleTask = (taskId, date = getDateString()) => {
     if (!selectedChild) return;
-    const today = getDateString();
-    const existing = completions.find(c => c.taskId === taskId && c.date === today && c.childId === selectedChild.id);
+    const completionDate = date || getDateString();
+    const existing = completions.find(c => c.taskId === taskId && c.date === completionDate && c.childId === selectedChild.id);
     if (existing) {
       if (existing.approvedByParent) return;
       existing.doneByChild = !existing.doneByChild;
@@ -811,6 +812,7 @@ const App = () => {
       addAuditLog('TOGGLE_TASK', 'COMPLETION', existing.id, {
         childId: selectedChild.id,
         taskId,
+        date: completionDate,
         doneByChild: existing.doneByChild
       });
     } else {
@@ -818,7 +820,7 @@ const App = () => {
         id: `comp-${Date.now()}`,
         taskId,
         childId: selectedChild.id,
-        date: today,
+        date: completionDate,
         doneByChild: true,
         approvedByParent: false,
         createdAt: new Date().toISOString(),
@@ -828,6 +830,7 @@ const App = () => {
       addAuditLog('TOGGLE_TASK', 'COMPLETION', newCompletion.id, {
         childId: selectedChild.id,
         taskId,
+        date: completionDate,
         doneByChild: true
       });
     }
@@ -862,6 +865,33 @@ const App = () => {
       });
     } catch (e) {
       alert(e.message || 'Nie udało się odrzucić zadania');
+    }
+  };
+  const completeTaskAsParent = async (task, childId, date) => {
+    if (!task || !childId || !date) return;
+    try {
+      const result = await apiRequest('/api/completions', {
+        method: 'POST',
+        body: {
+          taskId: task.id,
+          childId,
+          date,
+          doneByChild: true
+        }
+      });
+      const completionId = result?.completion?.id;
+      if (completionId) {
+        await apiRequest(`/api/completions/${encodeURIComponent(completionId)}/approve`, {
+          method: 'POST'
+        });
+      }
+      showConfetti();
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || 'Nie udało się zaliczyć zadania');
     }
   };
   const submitExtraTask = async title => {
@@ -1178,15 +1208,13 @@ const App = () => {
   };
   const addParentUser = async ({
     email,
-    password,
-    pinCode
+    password
   }) => {
     await apiRequest('/api/auth/parents', {
       method: 'POST',
       body: {
         email,
-        password,
-        pinCode
+        password
       }
     });
     await loadParentUsers();
@@ -1203,16 +1231,6 @@ const App = () => {
     addAuditLog(active ? 'ACTIVATE_USER' : 'DEACTIVATE_USER', 'USER', userId, {
       active
     });
-  };
-  const changeMyPin = async pinCode => {
-    const response = await apiRequest('/api/auth/pin', {
-      method: 'PUT',
-      body: {
-        pinCode
-      }
-    });
-    setUser(response.user);
-    addAuditLog('CHANGE_PIN', 'USER', response.user.id);
   };
   const changeMyPassword = async (currentPassword, newPassword) => {
     await apiRequest('/api/auth/password', {
@@ -1314,15 +1332,16 @@ const App = () => {
       getDateString: getDateString,
       onSelectChild: selectChild,
       onParentMode: enterParentMode,
-      onLogout: handleLogout,
-      parentPin: user?.pinCode
+      onLogout: handleLogout
     });
   }
   if (view === 'child' && selectedChild) {
     const today = getDateString();
+    const selectedTaskDate = childTaskDate || today;
+    const selectedTaskDateLabel = selectedTaskDate === today ? 'dzisiaj' : selectedTaskDate;
     const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active !== false);
-    const todayTasks = childTasks.filter(t => isTaskScheduledForDate(t, today));
-    const todayCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === today);
+    const selectedDateTasks = childTasks.filter(t => isTaskScheduledForDate(t, selectedTaskDate));
+    const selectedDateCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === selectedTaskDate);
     const childExtraTasks = extraTasks.filter(task => task.childId === selectedChild.id).sort((a, b) => Date.parse(b.updatedAt || b.submittedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.submittedAt || a.createdAt || 0)).slice(0, 8);
     const childStreak = streaks[selectedChild.id] || {
       current: 0,
@@ -1337,7 +1356,7 @@ const App = () => {
     })).filter(item => Boolean(item.reward)).sort((a, b) => Date.parse(b.unlock.unlockedAt || 0) - Date.parse(a.unlock.unlockedAt || 0));
     const nextPointReward = rewards.filter(reward => reward.active !== false && !childUnlockedRewardIds.has(reward.id) && Number(reward.requiredPoints || 0) > childPoints).sort((a, b) => Number(a.requiredPoints || 0) - Number(b.requiredPoints || 0))[0] || null;
     const pointsToNextReward = nextPointReward ? Math.max(0, Number(nextPointReward.requiredPoints || 0) - childPoints) : 0;
-    const dayStatus = evaluateDay(selectedChild.id, today);
+    const dayStatus = evaluateDay(selectedChild.id, selectedTaskDate);
     const last14Days = [];
     for (let i = 0; i < 14; i++) {
       const date = new Date();
@@ -1602,24 +1621,42 @@ const App = () => {
       className: "stat-value"
     }, childStreak.best), React.createElement("div", {
       className: "stat-label"
-    }, "rekord"))), React.createElement("h2", {
+    }, "rekord"))), React.createElement("div", {
+      className: "glass-card",
+      style: {
+        marginBottom: '1.25rem'
+      }
+    }, React.createElement("label", {
+      style: {
+        display: 'block',
+        marginBottom: '0.5rem',
+        opacity: 0.82,
+        fontWeight: 700
+      }
+    }, "Data zada\u0144"), React.createElement("input", {
+      className: "input",
+      type: "date",
+      value: selectedTaskDate,
+      max: today,
+      onChange: e => setChildTaskDate(e.target.value || today)
+    })), React.createElement("h2", {
       style: {
         marginBottom: '1rem'
       }
-    }, "Zadania dzisiaj"), React.createElement("h3", {
+    }, "Zadania ", selectedTaskDateLabel), React.createElement("h3", {
       style: {
         marginTop: '1.5rem',
         marginBottom: '0.5rem'
       }
-    }, "\uD83D\uDCCB MINIMUM (wymagane)"), todayTasks.filter(t => t.tier === 'MIN').map(task => {
-      const completion = todayCompletions.find(c => c.taskId === task.id);
+    }, "\uD83D\uDCCB MINIMUM (wymagane)"), selectedDateTasks.filter(t => t.tier === 'MIN').map(task => {
+      const completion = selectedDateCompletions.find(c => c.taskId === task.id);
       const isDone = completion?.doneByChild;
       const isApproved = completion?.approvedByParent;
       const isPendingApproval = isDone && !isApproved;
       return React.createElement("div", {
         key: task.id,
         className: `task-item ${isDone ? 'completed' : ''} ${isApproved ? 'approved' : ''}`,
-        onClick: () => toggleTask(task.id)
+        onClick: () => toggleTask(task.id, selectedTaskDate)
       }, React.createElement("div", {
         className: "checkbox"
       }, isApproved ? '✓' : isDone ? '⏳' : ''), React.createElement("div", {
@@ -1651,15 +1688,15 @@ const App = () => {
         marginTop: '1.5rem',
         marginBottom: '0.5rem'
       }
-    }, "\u2B50 BONUS (dodatkowe punkty)"), todayTasks.filter(t => t.tier === 'PLUS').map(task => {
-      const completion = todayCompletions.find(c => c.taskId === task.id);
+    }, "\u2B50 BONUS (dodatkowe punkty)"), selectedDateTasks.filter(t => t.tier === 'PLUS').map(task => {
+      const completion = selectedDateCompletions.find(c => c.taskId === task.id);
       const isDone = completion?.doneByChild;
       const isApproved = completion?.approvedByParent;
       const isPendingApproval = isDone && !isApproved;
       return React.createElement("div", {
         key: task.id,
         className: `task-item ${isDone ? 'completed' : ''} ${isApproved ? 'approved' : ''}`,
-        onClick: () => toggleTask(task.id)
+        onClick: () => toggleTask(task.id, selectedTaskDate)
       }, React.createElement("div", {
         className: "checkbox"
       }, isApproved ? '✓' : isDone ? '⏳' : ''), React.createElement("div", {
@@ -1679,20 +1716,20 @@ const App = () => {
       }, "Czeka na zatwierdzenie rodzica")), task.points > 0 && React.createElement("div", {
         className: "badge badge-points"
       }, "+", task.points, " pkt"));
-    }), todayTasks.filter(t => t.tier === 'WEEKLY').length > 0 && React.createElement(React.Fragment, null, React.createElement("h3", {
+    }), selectedDateTasks.filter(t => t.tier === 'WEEKLY').length > 0 && React.createElement(React.Fragment, null, React.createElement("h3", {
       style: {
         marginTop: '1.5rem',
         marginBottom: '0.5rem'
       }
-    }, "\uD83D\uDCC5 TYGODNIOWE"), todayTasks.filter(t => t.tier === 'WEEKLY').map(task => {
-      const completion = todayCompletions.find(c => c.taskId === task.id);
+    }, "\uD83D\uDCC5 TYGODNIOWE"), selectedDateTasks.filter(t => t.tier === 'WEEKLY').map(task => {
+      const completion = selectedDateCompletions.find(c => c.taskId === task.id);
       const isDone = completion?.doneByChild;
       const isApproved = completion?.approvedByParent;
       const isPendingApproval = isDone && !isApproved;
       return React.createElement("div", {
         key: task.id,
         className: `task-item ${isDone ? 'completed' : ''} ${isApproved ? 'approved' : ''}`,
-        onClick: () => toggleTask(task.id)
+        onClick: () => toggleTask(task.id, selectedTaskDate)
       }, React.createElement("div", {
         className: "checkbox"
       }, isApproved ? '✓' : isDone ? '⏳' : ''), React.createElement("div", {
@@ -1832,6 +1869,9 @@ const App = () => {
     });
     const pendingApprovalCount = pendingApprovals.length + pendingExtraTasks.length;
     const filteredPendingCount = filteredPendingApprovals.length + filteredPendingExtraTasks.length;
+    const today = getDateString();
+    const parentTaskDateValue = parentTaskDate || today;
+    const parentTaskChildren = activeChildren.filter(child => parentTaskChildId === 'ALL' || child.id === parentTaskChildId);
     return React.createElement(React.Fragment, null, React.createElement("div", {
       className: "app-container"
     }, React.createElement("div", {
@@ -1978,6 +2018,94 @@ const App = () => {
       onApprove: approveExtraTask,
       onReject: rejectExtraTask
     })))), React.createElement("div", {
+      className: "glass-card",
+      style: {
+        marginTop: '1.5rem'
+      }
+    }, React.createElement("h3", {
+      style: {
+        marginBottom: '0.75rem'
+      }
+    }, "\u2705 Zalicz zadania dziecku"), React.createElement("div", {
+      className: "grid grid-2",
+      style: {
+        marginBottom: '1rem'
+      }
+    }, React.createElement("div", null, React.createElement("label", {
+      style: {
+        display: 'block',
+        marginBottom: '0.4rem',
+        opacity: 0.8
+      }
+    }, "Dziecko"), React.createElement("select", {
+      className: "select",
+      value: parentTaskChildId,
+      onChange: e => setParentTaskChildId(e.target.value)
+    }, React.createElement("option", {
+      value: "ALL"
+    }, "Wszystkie"), activeChildren.map(child => React.createElement("option", {
+      key: child.id,
+      value: child.id
+    }, child.avatar, " ", child.name)))), React.createElement("div", null, React.createElement("label", {
+      style: {
+        display: 'block',
+        marginBottom: '0.4rem',
+        opacity: 0.8
+      }
+    }, "Data"), React.createElement("input", {
+      className: "input",
+      type: "date",
+      value: parentTaskDateValue,
+      max: today,
+      onChange: e => setParentTaskDate(e.target.value || today)
+    }))), parentTaskChildren.length === 0 ? React.createElement("div", {
+      className: "empty-state"
+    }, "Brak dzieci dla wybranego filtra") : parentTaskChildren.map(child => {
+      const dayTasks = tasks.filter(task => task.childId === child.id && task.active !== false && isTaskScheduledForDate(task, parentTaskDateValue));
+      return React.createElement("div", {
+        key: child.id,
+        style: {
+          marginTop: '1rem'
+        }
+      }, React.createElement("h4", {
+        style: {
+          marginBottom: '0.75rem'
+        }
+      }, child.avatar, " ", child.name), dayTasks.length === 0 ? React.createElement("div", {
+        className: "empty-state"
+      }, "Brak zada\u0144 w tym dniu") : dayTasks.map(task => {
+        const completion = completions.find(item => item.childId === child.id && item.taskId === task.id && item.date === parentTaskDateValue);
+        const isDone = completion?.doneByChild;
+        const isApproved = completion?.approvedByParent;
+        return React.createElement("div", {
+          key: task.id,
+          className: `task-item ${isDone ? 'completed' : ''} ${isApproved ? 'approved' : ''}`
+        }, React.createElement("div", {
+          className: "checkbox"
+        }, isApproved ? '✓' : isDone ? '⏳' : ''), React.createElement("div", {
+          style: {
+            flex: 1
+          }
+        }, React.createElement("div", {
+          style: {
+            fontWeight: 700
+          }
+        }, task.title), task.description && React.createElement("div", {
+          style: {
+            fontSize: '0.86rem',
+            opacity: 0.72
+          }
+        }, task.description)), React.createElement("div", {
+          className: `badge badge-${String(task.tier || 'min').toLowerCase()}`
+        }, task.tier || 'MIN'), task.points > 0 && React.createElement("div", {
+          className: "badge badge-points"
+        }, "+", task.points, " pkt"), React.createElement("button", {
+          className: isApproved ? 'btn btn-secondary' : 'btn btn-success',
+          disabled: isApproved,
+          onClick: () => completeTaskAsParent(task, child.id, parentTaskDateValue)
+        }, isApproved ? 'Zaliczone' : isDone ? 'Zatwierd\u017A' : 'Zalicz'));
+      }));
+    })), React.createElement("div", {
       style: {
         marginTop: '1.5rem'
       }
@@ -2404,7 +2532,6 @@ const App = () => {
       onRefreshParents: loadParentUsers,
       onAddParent: addParentUser,
       onToggleParent: setParentUserActive,
-      onChangePin: changeMyPin,
       onChangePassword: changeMyPassword,
       onResetPassword: resetParentPassword
     }), React.createElement(SettingsBackupPanel, {
@@ -2823,14 +2950,11 @@ const SettingsSecurityPanel = ({
   onRefreshParents,
   onAddParent,
   onToggleParent,
-  onChangePin,
   onChangePassword,
   onResetPassword
 }) => {
   const [newParentEmail, setNewParentEmail] = useState('');
   const [newParentPassword, setNewParentPassword] = useState('');
-  const [newParentPin, setNewParentPin] = useState('');
-  const [pinCode, setPinCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [resetPasswordValue, setResetPasswordValue] = useState('');
@@ -2862,11 +2986,6 @@ const SettingsSecurityPanel = ({
     type: "password",
     value: newParentPassword,
     onChange: e => setNewParentPassword(e.target.value)
-  }), React.createElement("input", {
-    className: "input",
-    placeholder: "PIN (4 cyfry, opcjonalnie)",
-    value: newParentPin,
-    onChange: e => setNewParentPin(e.target.value.replace(/\D/g, '').slice(0, 4))
   }), React.createElement("button", {
     className: "btn btn-primary",
     style: {
@@ -2877,13 +2996,11 @@ const SettingsSecurityPanel = ({
       try {
         await onAddParent({
           email: newParentEmail,
-          password: newParentPassword,
-          pinCode: newParentPin || undefined
+          password: newParentPassword
         });
         setMessage('Dodano konto rodzica. Czeka na aktywację.');
         setNewParentEmail('');
         setNewParentPassword('');
-        setNewParentPin('');
       } catch (e) {
         setMessage(e.message);
       }
@@ -2915,31 +3032,6 @@ const SettingsSecurityPanel = ({
     className: parent.active ? 'btn btn-danger' : 'btn btn-success',
     onClick: () => onToggleParent(parent.id, !parent.active)
   }, parent.active ? 'Dezaktywuj' : 'Aktywuj')))), React.createElement("h4", {
-    style: {
-      marginBottom: '0.5rem',
-      marginTop: '1rem'
-    }
-  }, "Zmie\u0144 PIN"), React.createElement("input", {
-    className: "input",
-    placeholder: "Nowy PIN (4 cyfry)",
-    value: pinCode,
-    onChange: e => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 4))
-  }), React.createElement("button", {
-    className: "btn btn-secondary",
-    style: {
-      width: '100%',
-      marginBottom: '1rem'
-    },
-    onClick: async () => {
-      try {
-        await onChangePin(pinCode);
-        setPinCode('');
-        setMessage('PIN został zmieniony.');
-      } catch (e) {
-        setMessage(e.message);
-      }
-    }
-  }, "Zapisz PIN"), React.createElement("h4", {
     style: {
       marginBottom: '0.5rem'
     }
@@ -3115,7 +3207,6 @@ const LoginView = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [familyName, setFamilyName] = useState('');
-  const [pinCode, setPinCode] = useState('');
   const [childCode, setChildCode] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [success, setSuccess] = useState('');
@@ -3152,7 +3243,6 @@ const LoginView = ({
       result = await onRegister({
         email,
         password,
-        pinCode,
         familyName
       });
     } else if (mode === 'child') {
@@ -3245,15 +3335,6 @@ const LoginView = ({
     placeholder: "Nazwa rodziny (np. Rodzina Kowalskich)",
     value: familyName,
     onChange: e => setFamilyName(e.target.value)
-  }), React.createElement("input", {
-    type: "text",
-    className: "input",
-    placeholder: "PIN rodzica (4 cyfry)",
-    value: pinCode,
-    onChange: e => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 4)),
-    inputMode: "numeric",
-    maxLength: 4,
-    required: true
   })), mode === 'child' && React.createElement("input", {
     type: "password",
     className: "input",
@@ -3289,10 +3370,8 @@ const ChildSelectionView = ({
   getDateString,
   onSelectChild,
   onParentMode,
-  onLogout,
-  parentPin
+  onLogout
 }) => {
-  const [showPinModal, setShowPinModal] = useState(false);
   return React.createElement("div", {
     className: "app-container"
   }, React.createElement("div", {
@@ -3304,7 +3383,7 @@ const ChildSelectionView = ({
     onClick: onLogout
   }, "Wyloguj"), React.createElement("h1", null, "Wybierz profil"), React.createElement("button", {
     className: "btn btn-secondary",
-    onClick: () => setShowPinModal(true)
+    onClick: onParentMode
   }, "\uD83D\uDD10 Panel rodzica")), children.length === 0 ? React.createElement("div", {
     className: "empty-state"
   }, React.createElement("div", {
@@ -3342,96 +3421,7 @@ const ChildSelectionView = ({
     points: points,
     evaluateDay: evaluateDay,
     getDateString: getDateString
-  })))), showPinModal && React.createElement(PinModal, {
-    parentPin: parentPin,
-    onSuccess: onParentMode,
-    onClose: () => setShowPinModal(false)
-  }));
-};
-const PinModal = ({
-  parentPin,
-  onSuccess,
-  onClose
-}) => {
-  const [pin, setPin] = useState('');
-  const [error, setError] = useState('');
-  const handlePinClick = digit => {
-    const newPin = pin + digit;
-    setPin(newPin);
-    if (newPin.length === 4) {
-      if (newPin === parentPin) {
-        onSuccess();
-      } else {
-        setError('Nieprawidłowy PIN');
-        setPin('');
-      }
-    }
-  };
-  return React.createElement("div", {
-    className: "modal"
-  }, React.createElement("div", {
-    className: "modal-content",
-    style: {
-      maxWidth: '400px',
-      textAlign: 'center'
-    }
-  }, React.createElement("h2", {
-    style: {
-      marginBottom: '1.5rem'
-    }
-  }, "\uD83D\uDD12 Wprowad\u017A PIN rodzica"), React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'center',
-      gap: '1rem',
-      marginBottom: '1.5rem'
-    }
-  }, [0, 1, 2, 3].map(i => React.createElement("div", {
-    key: i,
-    style: {
-      width: '20px',
-      height: '20px',
-      borderRadius: '50%',
-      background: i < pin.length ? '#FEC84B' : 'rgba(255, 255, 255, 0.3)',
-      border: '2px solid rgba(255, 255, 255, 0.5)'
-    }
-  }))), error && React.createElement("div", {
-    className: "error"
-  }, error), React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3, 1fr)',
-      gap: '1rem',
-      marginBottom: '1rem'
-    }
-  }, [1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => React.createElement("button", {
-    key: num,
-    className: "btn btn-secondary",
-    onClick: () => handlePinClick(num.toString()),
-    style: {
-      fontSize: '1.5rem',
-      padding: '1.5rem'
-    }
-  }, num)), React.createElement("button", {
-    className: "btn btn-danger",
-    onClick: onClose
-  }, "\u2715"), React.createElement("button", {
-    className: "btn btn-secondary",
-    onClick: () => handlePinClick('0'),
-    style: {
-      fontSize: '1.5rem',
-      padding: '1.5rem'
-    }
-  }, "0"), React.createElement("button", {
-    className: "btn btn-secondary",
-    onClick: () => setPin(pin.slice(0, -1))
-  }, "\u232B")), !parentPin && React.createElement("div", {
-    style: {
-      fontSize: '0.85rem',
-      opacity: 0.7,
-      marginTop: '1rem'
-    }
-  }, "PIN rodzica nie jest ustawiony. Zaloguj si\u0119 ponownie.")));
+  })))));
 };
 const AddChildModal = ({
   onAdd,
