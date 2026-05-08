@@ -871,19 +871,6 @@ const mergeArrayRecordsById = (existing, incoming) => {
   return [...merged.values()];
 };
 
-const mergeNumberMapByMax = (existing, incoming) => {
-  if (!isObjectRecord(incoming)) {
-    return isObjectRecord(existing) ? existing : {};
-  }
-  const merged = { ...(isObjectRecord(existing) ? existing : {}) };
-  Object.entries(incoming).forEach(([key, value]) => {
-    const next = Number(value || 0);
-    const current = Number(merged[key] || 0);
-    merged[key] = Math.max(current, Number.isFinite(next) ? next : current);
-  });
-  return merged;
-};
-
 const mergeObjectMap = (existing, incoming) => ({
   ...(isObjectRecord(existing) ? existing : {}),
   ...(isObjectRecord(incoming) ? incoming : {}),
@@ -920,9 +907,10 @@ const mergeParentStorageValues = (data, values) => {
   if (Object.prototype.hasOwnProperty.call(values, 'auditLogs')) {
     nextData.auditLogs = mergeAuditLogs(data.auditLogs, values.auditLogs);
   }
-  if (Object.prototype.hasOwnProperty.call(values, 'points')) {
-    nextData.points = mergeNumberMapByMax(data.points, values.points);
-  }
+  // Points are server-authoritative. They are changed by approvals, extra tasks,
+  // bonuses and penalties, not by client storage snapshots. Accepting snapshot
+  // points can resurrect stale values after a penalty.
+  nextData.points = data.points;
   if (Object.prototype.hasOwnProperty.call(values, 'streaks')) {
     nextData.streaks = mergeObjectMap(data.streaks, values.streaks);
   }

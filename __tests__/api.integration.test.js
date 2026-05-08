@@ -339,6 +339,22 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(pointsAfterAdjustmentRes.status).toBe(200);
     expect(pointsAfterAdjustmentRes.body.value[child.id] || 0).toBe(pointsAfterApprove + 9);
 
+    const stalePointsAfterPenaltyRes = await request(app)
+      .post('/api/storage/merge')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        values: {
+          points: { [child.id]: pointsAfterApprove + 12 },
+        },
+      });
+    expect(stalePointsAfterPenaltyRes.status).toBe(200);
+
+    const pointsAfterStaleMergeRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterStaleMergeRes.status).toBe(200);
+    expect(pointsAfterStaleMergeRes.body.value[child.id] || 0).toBe(pointsAfterApprove + 9);
+
     const completionsRes = await request(app)
       .get(`/api/completions?childId=${encodeURIComponent(child.id)}&date=${today}`)
       .set('Authorization', `Bearer ${parentToken}`);
