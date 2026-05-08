@@ -244,9 +244,9 @@ const App = () => {
   const [editingReward, setEditingReward] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
-  const [childTaskDate, setChildTaskDate] = useState(getDateString());
+  const [childTaskDate, setChildTaskDate] = useState(() => toDateString(new Date()));
   const [parentTaskChildId, setParentTaskChildId] = useState('ALL');
-  const [parentTaskDate, setParentTaskDate] = useState(getDateString());
+  const [parentTaskDate, setParentTaskDate] = useState(() => toDateString(new Date()));
   const [extraTaskTitle, setExtraTaskTitle] = useState('');
   const [childApprovalNotice, setChildApprovalNotice] = useState(null);
   const [showChildRewards, setShowChildRewards] = useState(false);
