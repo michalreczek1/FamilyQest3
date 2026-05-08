@@ -10,6 +10,7 @@ pnpm-debug.log*
 coverage/
 .cache/
 dist/
+tmp/
 .server_pid
 .server*.log
 .tmp-*.js

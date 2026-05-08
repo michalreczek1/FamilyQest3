@@ -58,6 +58,8 @@
       transition: all 0.3s;
       font-family: inherit;
       font-size: 1rem;
+      min-width: 0;
+      white-space: nowrap;
     }
     
     .btn-primary {
@@ -111,8 +113,28 @@
       display: flex;
       align-items: center;
       gap: 1rem;
+      flex-wrap: wrap;
+      min-width: 0;
       cursor: pointer;
       transition: all 0.3s;
+    }
+
+    .task-item > * {
+      min-width: 0;
+    }
+
+    .task-item > div[style*="flex: 1"] {
+      flex: 1 1 220px !important;
+    }
+
+    .task-item .btn {
+      flex: 0 0 auto;
+    }
+
+    .task-item .input[type="number"] {
+      width: 6rem !important;
+      flex: 0 1 7rem;
+      margin-bottom: 0;
     }
     
     .task-item:hover { transform: translateX(5px); border-color: #FEC84B; }
@@ -140,6 +162,12 @@
       border-radius: 0.5rem;
       font-size: 0.85rem;
       font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      max-width: 100%;
+      white-space: nowrap;
+      text-align: center;
     }
     
     .badge-min { background: #7C3AED; color: white; }
@@ -507,9 +535,68 @@
     @media (max-width: 768px) {
       .glass-card { padding: 1rem; }
       .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .app-container {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+      }
       .header {
         flex-wrap: wrap;
         gap: 0.75rem;
+        align-items: stretch;
+      }
+      .header > .btn,
+      .header > div > .btn {
+        flex: 1 1 auto;
+      }
+      .tabs {
+        gap: 0.4rem;
+      }
+      .tab {
+        flex: 1 1 calc(50% - 0.4rem);
+        padding: 0.65rem 0.55rem;
+        font-size: 0.9rem;
+      }
+      .task-item {
+        align-items: flex-start;
+        gap: 0.65rem;
+        padding: 0.85rem;
+        overflow: hidden;
+      }
+      .task-item:hover {
+        transform: none;
+      }
+      .task-item > div[style*="flex: 1"] {
+        flex-basis: calc(100% - 52px) !important;
+      }
+      .task-item .badge {
+        flex: 1 1 auto;
+        white-space: normal;
+        line-height: 1.15;
+        padding: 0.35rem 0.55rem;
+      }
+      .task-item .btn {
+        flex: 1 1 calc(50% - 0.4rem);
+        padding: 0.7rem 0.55rem;
+        font-size: 0.92rem;
+        white-space: normal;
+        line-height: 1.15;
+      }
+      .task-item .input[type="number"] {
+        flex: 1 1 100%;
+        width: 100% !important;
+        max-width: none;
+      }
+      .task-item div[style*="display: flex"] {
+        flex-wrap: wrap;
+      }
+      .modal {
+        padding: 0.75rem;
+        align-items: flex-start;
+        overflow-y: auto;
+      }
+      .modal-content {
+        padding: 1rem;
+        max-height: none;
       }
       .hero-metrics {
         width: 100%;
@@ -546,6 +633,19 @@
         left: 1rem;
         right: 1rem;
         width: auto;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .task-item .btn {
+        flex-basis: 100%;
+      }
+      .tab {
+        flex-basis: 100%;
+      }
+      .btn {
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
       }
     }
   </style>
