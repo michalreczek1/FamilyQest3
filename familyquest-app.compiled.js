@@ -1112,21 +1112,31 @@ const App = () => {
     setShowModal(null);
   };
   const addTask = async (childId, title, tier, points, description) => {
-    const newTask = {
-      id: `task-${Date.now()}`,
-      childId,
+    const targetChildren = childId === 'ALL' ? activeChildren : activeChildren.filter(child => child.id === childId);
+    if (targetChildren.length === 0) {
+      alert('Wybierz dziecko albo dodaj najpierw profil dziecka.');
+      return;
+    }
+    const now = new Date().toISOString();
+    const baseId = Date.now();
+    const newTasks = targetChildren.map((child, index) => ({
+      id: `task-${baseId}-${index}`,
+      childId: child.id,
       title,
       tier,
       points: points || 0,
       description,
       active: true,
-      createdAt: new Date().toISOString()
-    };
-    setTasks([...tasks, newTask]);
-    addAuditLog('ADD_TASK', 'TASK', newTask.id, {
-      childId,
-      tier,
-      points: newTask.points
+      createdAt: now
+    }));
+    setTasks(prev => [...prev, ...newTasks]);
+    newTasks.forEach(task => {
+      addAuditLog('ADD_TASK', 'TASK', task.id, {
+        childId: task.childId,
+        tier,
+        points: task.points,
+        bulk: childId === 'ALL'
+      });
     });
     setShowModal(null);
   };
@@ -3771,7 +3781,7 @@ const AddTaskModal = ({
   onAdd,
   onClose
 }) => {
-  const [childId, setChildId] = useState(children[0]?.id || '');
+  const [childId, setChildId] = useState(children.length > 1 ? 'ALL' : children[0]?.id || '');
   const [title, setTitle] = useState('');
   const [tier, setTier] = useState('MIN');
   const [points, setPoints] = useState(0);
@@ -3789,6 +3799,7 @@ const AddTaskModal = ({
   };
   const handleSubmit = e => {
     e.preventDefault();
+    if (!childId) return;
     onAdd(childId, title, tier, points, description);
   };
   return React.createElement("div", {
@@ -3812,7 +3823,9 @@ const AddTaskModal = ({
     value: childId,
     onChange: e => setChildId(e.target.value),
     required: true
-  }, children.map(child => React.createElement("option", {
+  }, children.length > 1 && React.createElement("option", {
+    value: "ALL"
+  }, "Wszystkie dzieci"), children.map(child => React.createElement("option", {
     key: child.id,
     value: child.id
   }, child.avatar, " ", child.name))), React.createElement("label", {
