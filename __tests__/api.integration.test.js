@@ -255,6 +255,13 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(pointsAfterApproveRes.status).toBe(200);
     const pointsAfterApprove = pointsAfterApproveRes.body.value[child.id] || 0;
 
+    const streaksAfterApproveRes = await request(app)
+      .get('/api/storage/get/streaks')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(streaksAfterApproveRes.status).toBe(200);
+    expect(streaksAfterApproveRes.body.value[child.id].current).toBeGreaterThanOrEqual(1);
+    expect(streaksAfterApproveRes.body.value[child.id].best).toBeGreaterThanOrEqual(1);
+
     const duplicateApproveRes = await request(app)
       .post(`/api/completions/${completionId}/approve`)
       .set('Authorization', `Bearer ${parentToken}`);
@@ -382,5 +389,88 @@ maybeDescribe('FamilyQuest API integration', () => {
     });
     expect(loginAfterResetRes.status).toBe(200);
     expect(loginAfterResetRes.body.token).toBeTruthy();
+  });
+
+  test('streak and passed-day points require all MIN tasks approved for the day', async () => {
+    const suffix = `all-min-${Date.now()}`;
+    const today = getToday();
+    const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));
+    expect(registerRes.status).toBe(201);
+    const parentToken = registerRes.body.token;
+
+    const addChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: `Miny-${suffix}`,
+        avatar: '⭐',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addChildRes.status).toBe(201);
+    const child = addChildRes.body.child;
+
+    const createMinTask = async (title) => {
+      const response = await request(app)
+        .post('/api/tasks')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          childId: child.id,
+          title,
+          tier: 'MIN',
+          points: 0,
+        });
+      expect(response.status).toBe(201);
+      return response.body.task;
+    };
+
+    const firstTask = await createMinTask('Pierwsze minimum');
+    const secondTask = await createMinTask('Drugie minimum');
+
+    const completeAndApprove = async (task) => {
+      const completionRes = await request(app)
+        .post('/api/completions')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          taskId: task.id,
+          childId: child.id,
+          date: today,
+          doneByChild: true,
+        });
+      expect(completionRes.status).toBe(201);
+
+      const approveRes = await request(app)
+        .post(`/api/completions/${completionRes.body.completion.id}/approve`)
+        .set('Authorization', `Bearer ${parentToken}`);
+      expect(approveRes.status).toBe(200);
+    };
+
+    await completeAndApprove(firstTask);
+
+    const partialPointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(partialPointsRes.status).toBe(200);
+    expect(partialPointsRes.body.value[child.id] || 0).toBe(0);
+
+    const partialStreaksRes = await request(app)
+      .get('/api/storage/get/streaks')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(partialStreaksRes.status).toBe(200);
+    expect(partialStreaksRes.body.value[child.id].current).toBe(0);
+
+    await completeAndApprove(secondTask);
+
+    const completePointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(completePointsRes.status).toBe(200);
+    expect(completePointsRes.body.value[child.id] || 0).toBe(2);
+
+    const completeStreaksRes = await request(app)
+      .get('/api/storage/get/streaks')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(completeStreaksRes.status).toBe(200);
+    expect(completeStreaksRes.body.value[child.id].current).toBe(1);
+    expect(completeStreaksRes.body.value[child.id].best).toBe(1);
   });
 });

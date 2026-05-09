@@ -28,6 +28,7 @@ const CHILD_LOGIN_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_FAILED_MA
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
+const STREAK_HISTORY_DAYS = 3650;
 const ALLOW_DEBUG_RESET_TOKEN = process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
 const ALLOW_PUBLIC_REGISTRATION =
   process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || process.env.NODE_ENV !== 'production';
@@ -486,12 +487,25 @@ const parseDateInput = (dateInput) => {
   return new Date(dateInput);
 };
 
+const isValidDateString = (dateInput) =>
+  typeof dateInput === 'string' &&
+  /^\d{4}-\d{2}-\d{2}$/.test(dateInput) &&
+  toDateString(parseDateInput(dateInput)) === dateInput;
+
 const toDateString = (dateInput = new Date()) => {
   const date = parseDateInput(dateInput);
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const isFutureDateString = (dateInput, todayInput = new Date()) => dateInput > toDateString(todayInput);
+
+const getEntityCreatedDate = (entity) => {
+  if (!entity?.createdAt) return null;
+  const created = toDateString(entity.createdAt);
+  return isValidDateString(created) ? created : null;
 };
 
 const getDayNumber = (dateInput) => {
@@ -587,7 +601,12 @@ const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChil
 const hasChildAccess = (req, childId) =>
   req.auth.user.role === 'PARENT' || req.auth.user.childId === childId;
 
-const getTaskPointKey = (childId, taskId, date) => `${childId}:${taskId}:${date}`;
+const getTaskPointKey = (childId, taskId, date, task = null) => {
+  if (task?.tier === 'WEEKLY') {
+    return `${childId}:${taskId}:week:${getWeekStart(date)}`;
+  }
+  return `${childId}:${taskId}:${date}`;
+};
 const getDayPointKey = (childId, date) => `${childId}:${date}`;
 const getWeekPointKey = (childId, weekStart) => `${childId}:${weekStart}`;
 
@@ -604,7 +623,7 @@ const evaluateDayForData = (data, childId, date) => {
       task.active !== false &&
       isTaskScheduledForDate(task, date),
   );
-  if (minTasks.length === 0) return 'PASSED';
+  if (minTasks.length === 0) return 'NO_REQUIRED_TASKS';
 
   const approvedCount = minTasks.filter((task) =>
     data.completions.some(
@@ -626,12 +645,225 @@ const evaluateWeekForData = (data, childId, weekStart) => {
     date.setDate(date.getDate() + i);
     const dateStr = toDateString(date);
     const status = evaluateDayForData(data, childId, dateStr);
-    if (status === 'NOT_ACTIVE') continue;
+    if (status === 'NOT_ACTIVE' || status === 'NO_REQUIRED_TASKS') continue;
     activeDays += 1;
     if (status === 'PASSED') passedDays += 1;
   }
   if (activeDays === 0) return 'NO_ACTIVE_DAYS';
   return passedDays === activeDays ? 'IDEAL' : 'NOT_IDEAL';
+};
+
+const calculateStreakForChildData = (data, childId, todayInput = new Date()) => {
+  const child = data.children.find((item) => item.id === childId && !item.archived);
+  if (!child) {
+    return {
+      current: 0,
+      best: 0,
+      lastEvaluatedDate: null,
+      idealWeeksCount: 0,
+      idealWeeksInRow: 0,
+    };
+  }
+
+  const today = parseDateInput(toDateString(todayInput));
+  const minStart = parseDateInput(today);
+  minStart.setDate(today.getDate() - STREAK_HISTORY_DAYS);
+
+  const createdDate = child.createdAt ? parseDateInput(toDateString(child.createdAt)) : minStart;
+  const startDate = createdDate > minStart ? createdDate : minStart;
+  const cursor = parseDateInput(startDate);
+  const weekMap = {};
+  let current = 0;
+  let best = 0;
+  let lastEvaluatedDate = null;
+
+  while (cursor <= today) {
+    const dateStr = toDateString(cursor);
+    const status = evaluateDayForData(data, childId, dateStr);
+
+    if (status === 'PASSED') {
+      current += 1;
+      best = Math.max(best, current);
+      lastEvaluatedDate = dateStr;
+    } else if (status === 'FAILED') {
+      current = 0;
+      lastEvaluatedDate = dateStr;
+    }
+
+    const weekStart = getWeekStart(dateStr);
+    if (!weekMap[weekStart]) {
+      weekMap[weekStart] = evaluateWeekForData(data, childId, weekStart);
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let idealWeeksCount = 0;
+  let idealWeeksInRow = 0;
+  let rollingIdealRow = 0;
+  Object.keys(weekMap)
+    .sort()
+    .forEach((weekStart) => {
+      const status = weekMap[weekStart];
+      if (status === 'NO_ACTIVE_DAYS') return;
+      if (status === 'IDEAL') {
+        idealWeeksCount += 1;
+        rollingIdealRow += 1;
+      } else {
+        rollingIdealRow = 0;
+      }
+      idealWeeksInRow = rollingIdealRow;
+    });
+
+  return {
+    current,
+    best,
+    lastEvaluatedDate,
+    idealWeeksCount,
+    idealWeeksInRow,
+  };
+};
+
+const refreshChildStreak = (data, childId, todayInput = new Date()) => {
+  data.streaks = {
+    ...data.streaks,
+    [childId]: calculateStreakForChildData(data, childId, todayInput),
+  };
+  return data.streaks[childId];
+};
+
+const refreshAllStreaks = (data, todayInput = new Date()) => {
+  const nextStreaks = {};
+  data.children
+    .filter((child) => !child.archived)
+    .forEach((child) => {
+      nextStreaks[child.id] = calculateStreakForChildData(data, child.id, todayInput);
+    });
+  data.streaks = nextStreaks;
+  return data.streaks;
+};
+
+const compareChildrenForLeaderboard = (points, streaks) => (a, b) => {
+  const pointDiff = Number(points[b.id] || 0) - Number(points[a.id] || 0);
+  if (pointDiff !== 0) return pointDiff;
+
+  const streakDiff = Number(streaks[b.id]?.current || 0) - Number(streaks[a.id]?.current || 0);
+  if (streakDiff !== 0) return streakDiff;
+
+  const idealDiff = Number(streaks[b.id]?.idealWeeksInRow || 0) - Number(streaks[a.id]?.idealWeeksInRow || 0);
+  if (idealDiff !== 0) return idealDiff;
+
+  return String(a.name || '').localeCompare(String(b.name || ''), 'pl');
+};
+
+const validateChildDate = (child, date, { allowFuture = false } = {}) => {
+  if (!isValidDateString(date)) {
+    return 'Nieprawidłowa data';
+  }
+  if (!allowFuture && isFutureDateString(date)) {
+    return 'Nie można zapisywać zadań z przyszłości';
+  }
+  const createdDate = getEntityCreatedDate(child);
+  if (createdDate && date < createdDate) {
+    return 'Data nie może być wcześniejsza niż utworzenie profilu dziecka';
+  }
+  return null;
+};
+
+const validateTaskCompletionDate = (child, task, date) => {
+  const dateError = validateChildDate(child, date);
+  if (dateError) return dateError;
+  if (!Array.isArray(child.activeDays) || !child.activeDays.includes(getDayNumber(date))) {
+    return 'Dziecko nie ma aktywnego dnia w tej dacie';
+  }
+  if (!isTaskScheduledForDate(task, date)) {
+    return 'Zadanie nie jest zaplanowane na ten dzień';
+  }
+  return null;
+};
+
+const getCompletionTimestamp = (completion) =>
+  Date.parse(completion?.approvedAt || completion?.updatedAt || completion?.createdAt || 0) || 0;
+
+const getAdjustmentTimestamp = (adjustment) => Date.parse(adjustment?.createdAt || 0) || 0;
+
+const recomputePointsAndGrants = (data) => {
+  const nextPoints = {};
+  const taskPointGrants = {};
+  const dayPointGrants = {};
+  const weekBonusGrants = {};
+  const relevantDayKeys = new Set();
+  const relevantWeekKeys = new Set();
+  const childrenById = new Map(data.children.filter((child) => !child.archived).map((child) => [child.id, child]));
+  const tasksById = new Map(data.tasks.map((task) => [task.id, task]));
+
+  childrenById.forEach((child) => {
+    nextPoints[child.id] = 0;
+  });
+
+  const add = (childId, amount) => {
+    if (!childrenById.has(childId) || !Number.isFinite(amount) || amount <= 0) return;
+    nextPoints[childId] = Number(nextPoints[childId] || 0) + amount;
+  };
+
+  data.completions
+    .filter((completion) => completion.approvedByParent)
+    .sort((a, b) => getCompletionTimestamp(a) - getCompletionTimestamp(b))
+    .forEach((completion) => {
+      const child = childrenById.get(completion.childId);
+      const task = tasksById.get(completion.taskId);
+      if (!child || !task || task.active === false || validateTaskCompletionDate(child, task, completion.date)) return;
+
+      const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
+      if (Number(task.points || 0) > 0 && !taskPointGrants[taskPointKey]) {
+        taskPointGrants[taskPointKey] = true;
+        add(completion.childId, Number(task.points || 0));
+      }
+
+      relevantDayKeys.add(getDayPointKey(completion.childId, completion.date));
+      relevantWeekKeys.add(getWeekPointKey(completion.childId, getWeekStart(completion.date)));
+    });
+
+  [...relevantDayKeys].sort().forEach((dayKey) => {
+    const [childId, date] = dayKey.split(':');
+    if (evaluateDayForData(data, childId, date) !== 'PASSED') return;
+    dayPointGrants[dayKey] = true;
+    add(childId, POINTS_PER_PASSED_DAY);
+  });
+
+  [...relevantWeekKeys].sort().forEach((weekKey) => {
+    const [childId, weekStart] = weekKey.split(':');
+    if (evaluateWeekForData(data, childId, weekStart) !== 'IDEAL') return;
+    weekBonusGrants[weekKey] = true;
+    add(childId, IDEAL_WEEK_BONUS);
+  });
+
+  data.extraTasks
+    .filter((task) => task.status === 'APPROVED')
+    .sort((a, b) => Date.parse(a.approvedAt || a.updatedAt || a.createdAt || 0) - Date.parse(b.approvedAt || b.updatedAt || b.createdAt || 0))
+    .forEach((task) => add(task.childId, Number(task.points || 0)));
+
+  data.pointAdjustments
+    .slice()
+    .sort((a, b) => getAdjustmentTimestamp(a) - getAdjustmentTimestamp(b))
+    .forEach((adjustment) => {
+      if (!childrenById.has(adjustment.childId)) return;
+      const delta =
+        typeof adjustment.delta === 'number'
+          ? adjustment.delta
+          : adjustment.type === 'PENALTY'
+            ? -Number(adjustment.points || 0)
+            : Number(adjustment.points || 0);
+      if (!Number.isFinite(delta) || delta === 0) return;
+      nextPoints[adjustment.childId] = Math.max(0, Number(nextPoints[adjustment.childId] || 0) + delta);
+    });
+
+  data.points = nextPoints;
+  data.taskPointGrants = taskPointGrants;
+  data.dayPointGrants = dayPointGrants;
+  data.weekBonusGrants = weekBonusGrants;
+  refreshAllStreaks(data);
+  return data;
 };
 
 const adjustPoints = (data, childId, amount) => {
@@ -695,7 +927,7 @@ const applyApprovalEffects = (data, completion, actorUserId, now = new Date().to
   completion.updatedAt = now;
 
   const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
-  const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date);
+  const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
   if (task && Number(task.points || 0) > 0 && !data.taskPointGrants[taskPointKey]) {
     data.taskPointGrants = { ...data.taskPointGrants, [taskPointKey]: true };
     addPoints(data, completion.childId, Number(task.points || 0));
@@ -717,6 +949,7 @@ const applyApprovalEffects = (data, completion, actorUserId, now = new Date().to
     }
   }
 
+  refreshChildStreak(data, completion.childId, now);
   unlockEligibleRewards(data, completion.childId, actorUserId);
   return true;
 };
@@ -922,6 +1155,14 @@ const mergeParentStorageValues = (data, values) => {
   }
   if (Object.prototype.hasOwnProperty.call(values, 'taskPointGrants')) {
     nextData.taskPointGrants = mergeObjectMap(data.taskPointGrants, values.taskPointGrants);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(values, 'children') ||
+    Object.prototype.hasOwnProperty.call(values, 'tasks') ||
+    Object.prototype.hasOwnProperty.call(values, 'completions') ||
+    Object.prototype.hasOwnProperty.call(values, 'streaks')
+  ) {
+    refreshAllStreaks(nextData);
   }
   return nextData;
 };
@@ -1423,7 +1664,9 @@ app.get('/api/task-templates', authMiddleware, async (req, res) => {
 
 app.get('/api/leaderboard', authMiddleware, async (req, res) => {
   try {
-    const { data } = await loadStateData(req.auth.user.familyId);
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    recomputePointsAndGrants(data);
+    await saveStateData(state.id, data);
     const children = data.children
       .filter((child) => !child.archived)
       .map((child) => ({
@@ -1437,16 +1680,12 @@ app.get('/api/leaderboard', authMiddleware, async (req, res) => {
 
     children.forEach((child) => {
       points[child.id] = Number(data.points[child.id] || 0);
-      streaks[child.id] = data.streaks[child.id] || {
-        current: 0,
-        best: 0,
-        idealWeeksCount: 0,
-        idealWeeksInRow: 0,
-      };
+      streaks[child.id] = calculateStreakForChildData(data, child.id);
     });
+    const rankedChildren = children.sort(compareChildrenForLeaderboard(points, streaks));
 
     res.json({
-      children: children.filter((child) => allowedIds.has(child.id)),
+      children: rankedChildren.filter((child) => allowedIds.has(child.id)),
       points,
       streaks,
     });
@@ -1776,6 +2015,11 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
       res.status(404).json({ error: 'Zadanie nie istnieje lub jest nieaktywne' });
       return;
     }
+    const completionDateError = validateTaskCompletionDate(child, task, parsed.data.date);
+    if (completionDateError) {
+      res.status(400).json({ error: completionDateError });
+      return;
+    }
 
     const existing = data.completions.find(
       (item) =>
@@ -1786,7 +2030,13 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
     const now = new Date().toISOString();
 
     if (existing) {
-      if (req.auth.user.role === 'CHILD' && existing.approvedByParent) {
+      if (existing.approvedByParent) {
+        if (parsed.data.doneByChild !== true) {
+          res.status(409).json({
+            error: 'Zatwierdzonego zadania nie można cofnąć bez jawnej korekty punktów',
+          });
+          return;
+        }
         res.json({ completion: existing });
         return;
       }
@@ -1869,6 +2119,12 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
       res.status(404).json({ error: 'Wykonanie nie istnieje' });
       return;
     }
+    if (completion.approvedByParent) {
+      res.status(409).json({
+        error: 'Zatwierdzonego zadania nie można odrzucić bez jawnej korekty punktów',
+      });
+      return;
+    }
 
     const now = new Date().toISOString();
     applyApprovalEffects(data, completion, req.auth.user.id, now);
@@ -1895,6 +2151,17 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
       res.status(404).json({ error: 'Wykonanie nie istnieje' });
       return;
     }
+    const child = data.children.find((item) => item.id === completion.childId && !item.archived);
+    const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
+    if (!child || !task || task.active === false) {
+      res.status(404).json({ error: 'Zadanie lub dziecko nie istnieje' });
+      return;
+    }
+    const completionDateError = validateTaskCompletionDate(child, task, completion.date);
+    if (completionDateError) {
+      res.status(400).json({ error: completionDateError });
+      return;
+    }
 
     const now = new Date().toISOString();
     completion.doneByChild = false;
@@ -1903,6 +2170,7 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
     completion.rejectedByParent = true;
     completion.rejectedAt = now;
     completion.updatedAt = now;
+    refreshChildStreak(data, completion.childId, now);
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASK', 'COMPLETION', completionId, {
       childId: completion.childId,
@@ -2003,13 +2271,19 @@ app.post('/api/extra-tasks', authMiddleware, async (req, res) => {
       res.status(404).json({ error: 'Dziecko nie istnieje' });
       return;
     }
+    const extraTaskDate = parsed.data.date || toDateString(new Date());
+    const extraTaskDateError = validateChildDate(child, extraTaskDate);
+    if (extraTaskDateError) {
+      res.status(400).json({ error: extraTaskDateError });
+      return;
+    }
 
     const now = new Date().toISOString();
     const extraTask = {
       id: createEntityId('extra'),
       childId: parsed.data.childId,
       title: parsed.data.title.trim(),
-      date: parsed.data.date || toDateString(new Date()),
+      date: extraTaskDate,
       status: 'PENDING',
       points: null,
       approvedByParent: false,
@@ -2428,7 +2702,11 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
   }
 
   try {
-    const { data } = await loadStateData(req.auth.user.familyId);
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    if (['points', 'streaks', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
+      recomputePointsAndGrants(data);
+      await saveStateData(state.id, data);
+    }
     res.json({
       key,
       value: filterStorageValueForUser(key, data, req.auth.user),

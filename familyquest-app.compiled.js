@@ -110,7 +110,7 @@ const useStorage = () => {
 };
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
-const HISTORY_DAYS = 30;
+const HISTORY_DAYS = 3650;
 const DAY_NAMES = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Ndz'];
 const CHILD_AVATARS = ['👧', '👦', '🧒', '👶', '🧑', '👱‍♀️', '👱‍♂️', '🧑‍🦱', '🧑‍🦰', '🧑‍🦳', '🦊', '🐼', '🦁', '🐯', '🐨', '🐸', '🐵', '🐶', '🐱', '🐰', '🦄', '🐙', '🦕', '🦖', '🦋', '⚽', '🏀', '🎮', '🎨', '🎵'];
 const TASK_TEMPLATES = [{
@@ -189,14 +189,21 @@ const getWeekStart = dateInput => {
   date.setDate(date.getDate() + diff);
   return toDateString(date);
 };
+const getLeaderboardPoints = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 const sortChildrenForLeaderboard = (children, streaks, points) => [...children].sort((a, b) => {
-  const aIdeal = streaks[a.id]?.idealWeeksInRow || 0;
-  const bIdeal = streaks[b.id]?.idealWeeksInRow || 0;
-  if (aIdeal !== bIdeal) return bIdeal - aIdeal;
+  const aPoints = getLeaderboardPoints(points[a.id]);
+  const bPoints = getLeaderboardPoints(points[b.id]);
+  if (aPoints !== bPoints) return bPoints - aPoints;
   const aStreak = streaks[a.id]?.current || 0;
   const bStreak = streaks[b.id]?.current || 0;
   if (aStreak !== bStreak) return bStreak - aStreak;
-  return (points[b.id] || 0) - (points[a.id] || 0);
+  const aIdeal = streaks[a.id]?.idealWeeksInRow || 0;
+  const bIdeal = streaks[b.id]?.idealWeeksInRow || 0;
+  if (aIdeal !== bIdeal) return bIdeal - aIdeal;
+  return String(a.name || '').localeCompare(String(b.name || ''), 'pl');
 });
 const rankIcon = index => {
   if (index === 0) return '🏆';
@@ -512,7 +519,7 @@ const App = () => {
     const adjustedDay = getDayNumber(date);
     if (!child.activeDays.includes(adjustedDay)) return 'NOT_ACTIVE';
     const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && t.active !== false && isTaskScheduledForDate(t, date));
-    if (minTasks.length === 0) return 'PASSED';
+    if (minTasks.length === 0) return 'NO_REQUIRED_TASKS';
     const approvedCount = minTasks.filter(task => {
       return completions.some(c => c.taskId === task.id && c.childId === childId && c.date === date && c.approvedByParent);
     }).length;
@@ -526,7 +533,7 @@ const App = () => {
       date.setDate(date.getDate() + i);
       const dateStr = getDateString(date);
       const status = evaluateDay(childId, dateStr);
-      if (status === 'NOT_ACTIVE') continue;
+      if (status === 'NOT_ACTIVE' || status === 'NO_REQUIRED_TASKS') continue;
       activeDays += 1;
       if (status === 'PASSED') {
         passedDays += 1;
@@ -1333,10 +1340,14 @@ const App = () => {
     });
   }
   if (view === 'childSelect') {
+    const hasLeaderboard = familyLeaderboard.children.length > 0;
     return React.createElement(ChildSelectionView, {
       children: activeChildren,
       streaks: streaks,
       points: points,
+      leaderboardChildren: hasLeaderboard ? familyLeaderboard.children : activeChildren,
+      leaderboardStreaks: streaks,
+      leaderboardPoints: points,
       familyGoal: familyGoal,
       evaluateDay: evaluateDay,
       getDateString: getDateString,
@@ -2875,7 +2886,7 @@ const WeeklyLeaderboardPanel = ({
       current: 0,
       idealWeeksInRow: 0
     };
-    const childPoints = points[child.id] || 0;
+    const childPoints = getLeaderboardPoints(points[child.id]);
     return React.createElement("div", {
       key: child.id,
       className: "task-item"
@@ -3375,6 +3386,9 @@ const ChildSelectionView = ({
   children,
   streaks,
   points,
+  leaderboardChildren = null,
+  leaderboardStreaks = null,
+  leaderboardPoints = null,
   familyGoal,
   evaluateDay,
   getDateString,
@@ -3413,9 +3427,9 @@ const ChildSelectionView = ({
       textAlign: 'center'
     }
   }, child.name)))), React.createElement(WeeklyLeaderboardPanel, {
-    children: children,
-    streaks: streaks,
-    points: points,
+    children: leaderboardChildren || children,
+    streaks: leaderboardStreaks || streaks,
+    points: leaderboardPoints || points,
     title: "\uD83C\uDFC6 Ranking rodzinny"
   }), React.createElement("div", {
     style: {
