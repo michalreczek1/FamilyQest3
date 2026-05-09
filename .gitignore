@@ -18,3 +18,4 @@ deploy.log
 deploy-fq.bat
 deploy-fq.ps1
 deploy-fq2.ps1
+.claude/
