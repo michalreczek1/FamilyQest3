@@ -221,6 +221,33 @@ const runUiCheck = async () => {
   await historyDialog.getByText('Premia za wytrwałość').waitFor({ state: 'visible', timeout: 10000 });
   await page.screenshot({ path: 'tmp/point-ledger-history-check.png', fullPage: true });
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await historyDialog.waitFor({ state: 'visible', timeout: 10000 });
+  await page.screenshot({ path: 'tmp/point-ledger-history-mobile-check.png', fullPage: false });
+  const layout = await page.locator('.point-history-entry').evaluateAll((entries) =>
+    entries.map((entry) => {
+      const rect = entry.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        height: rect.height,
+        scrollWidth: entry.scrollWidth,
+        clientWidth: entry.clientWidth,
+      };
+    }),
+  );
+  assert(layout.length >= 4, 'mobile history should render ledger entries');
+  layout.forEach((box, index) => {
+    assert(box.height > 44, `mobile history entry ${index} is too short`);
+    assert(box.scrollWidth <= box.clientWidth + 1, `mobile history entry ${index} overflows horizontally`);
+    if (index > 0) {
+      assert(box.top >= layout[index - 1].bottom - 1, `mobile history entry ${index} overlaps previous entry`);
+    }
+  });
+
   await browser.close();
 };
 
@@ -232,6 +259,7 @@ const runUiCheck = async () => {
   console.log('Point ledger logic OK: task/day/extra/bonus entries generated');
   console.log('Point history UI OK: child opens scrollable point history popup');
   console.log('Screenshot: tmp/point-ledger-history-check.png');
+  console.log('Mobile screenshot: tmp/point-ledger-history-mobile-check.png');
 })().catch(async (error) => {
   console.error(error);
   await prisma.$disconnect().catch(() => {});

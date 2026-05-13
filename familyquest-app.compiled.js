@@ -1638,21 +1638,9 @@ const App = () => {
       "aria-modal": "true",
       "aria-labelledby": "child-points-title"
     }, React.createElement("div", {
-      className: "modal-content",
-      style: {
-        maxWidth: '640px',
-        maxHeight: 'calc(100vh - 2rem)',
-        display: 'flex',
-        flexDirection: 'column'
-      }
+      className: "modal-content point-history-modal-content"
     }, React.createElement("div", {
-      style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: '1rem',
-        alignItems: 'center',
-        marginBottom: '1rem'
-      }
+      className: "point-history-header"
     }, React.createElement("h2", {
       id: "child-points-title",
       style: {
@@ -1663,23 +1651,13 @@ const App = () => {
       onClick: () => setShowPointHistory(false),
       title: "Zamknij"
     }, "\u2715")), React.createElement("div", {
-      className: "glass-card",
-      style: {
-        marginBottom: '1rem',
-        background: 'rgba(254, 200, 75, 0.14)',
-        borderColor: 'rgba(254, 200, 75, 0.4)'
-      }
+      className: "glass-card point-history-summary"
     }, React.createElement("div", {
       className: "stat-value"
     }, childPoints), React.createElement("div", {
       className: "stat-label"
     }, "aktualnych punkt\xF3w")), React.createElement("div", {
-      style: {
-        overflowY: 'auto',
-        paddingRight: '0.25rem',
-        display: 'grid',
-        gap: '0.75rem'
-      }
+      className: "point-history-list"
     }, childPointLedger.length === 0 ? React.createElement("div", {
       className: "empty-state"
     }, "Nie ma jeszcze historii punkt\xF3w") : childPointLedger.map(entry => {
@@ -1689,36 +1667,17 @@ const App = () => {
       const typeLabel = entry.type === 'TASK_APPROVED' ? 'Zadanie' : entry.type === 'DAY_PASSED' ? 'Dzie\u0144' : entry.type === 'WEEK_IDEAL' ? 'Tydzie\u0144' : entry.type === 'EXTRA_TASK' ? 'Extra' : entry.type === 'PENALTY' ? 'Kara' : entry.type === 'REVERSAL' ? 'Cofni\u0119cie' : 'Premia';
       return React.createElement("div", {
         key: entry.id,
-        className: "task-item",
-        style: {
-          alignItems: 'flex-start'
-        }
+        className: "point-history-entry"
       }, React.createElement("div", {
-        className: `badge ${isNegative ? 'badge-min' : 'badge-points'}`,
-        style: {
-          minWidth: '4.5rem',
-          textAlign: 'center'
-        }
+        className: `badge ${isNegative ? 'badge-min' : 'badge-points'} point-history-delta`
       }, delta > 0 ? '+' : '', delta, " pkt"), React.createElement("div", {
-        style: {
-          flex: 1
-        }
+        className: "point-history-body"
       }, React.createElement("div", {
-        style: {
-          fontWeight: 800
-        }
+        className: "point-history-title"
       }, entry.title || typeLabel), React.createElement("div", {
-        style: {
-          fontSize: '0.84rem',
-          opacity: 0.72,
-          marginTop: '0.2rem'
-        }
+        className: "point-history-meta"
       }, typeLabel, when ? ` • ${when}` : '', Number.isFinite(Number(entry.newPoints)) ? ` • saldo: ${entry.newPoints}` : ''), entry.note && entry.note !== entry.title && React.createElement("div", {
-        style: {
-          fontSize: '0.82rem',
-          opacity: 0.72,
-          marginTop: '0.2rem'
-        }
+        className: "point-history-note"
       }, entry.note)));
     })))), showChildRewards && React.createElement("div", {
       className: "modal",
