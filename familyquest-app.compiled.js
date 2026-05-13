@@ -258,6 +258,7 @@ const App = () => {
   const [parentTab, setParentTab] = useState('approvals');
   const [showModal, setShowModal] = useState(null);
   const [editingChild, setEditingChild] = useState(null);
+  const [editingTask, setEditingTask] = useState(null);
   const [editingReward, setEditingReward] = useState(null);
   const [approvalFilterChildId, setApprovalFilterChildId] = useState('ALL');
   const [approvalFilterDate, setApprovalFilterDate] = useState('');
@@ -305,6 +306,7 @@ const App = () => {
     setParentTab('approvals');
     setShowModal(null);
     setEditingChild(null);
+    setEditingTask(null);
     setEditingReward(null);
     setApprovalFilterChildId('ALL');
     setApprovalFilterDate('');
@@ -1173,7 +1175,7 @@ const App = () => {
     });
     setShowModal(null);
   };
-  const addTask = async (childId, title, tier, points, description) => {
+  const addTask = async (childId, title, tier, points, description, daysOfWeek = []) => {
     const targetChildren = childId === 'ALL' ? activeChildren : activeChildren.filter(child => child.id === childId);
     if (targetChildren.length === 0) {
       alert('Wybierz dziecko albo dodaj najpierw profil dziecka.');
@@ -1188,6 +1190,7 @@ const App = () => {
       tier,
       points: points || 0,
       description,
+      daysOfWeek: normalizeTaskArchiveDays(daysOfWeek),
       active: true,
       createdAt: now
     }));
@@ -1247,13 +1250,35 @@ const App = () => {
       archived: true
     });
   };
-  const updateTask = (taskId, updates) => {
-    setTasks(prev => prev.map(task => task.id === taskId ? {
-      ...task,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    } : task));
-    addAuditLog('UPDATE_TASK', 'TASK', taskId, updates);
+  const updateTask = async (taskId, updates) => {
+    try {
+      const payload = {
+        ...updates,
+        title: String(updates.title || '').trim(),
+        description: updates.description || '',
+        points: Number(updates.points || 0),
+        daysOfWeek: normalizeTaskArchiveDays(updates.daysOfWeek)
+      };
+      const response = await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`, {
+        method: 'PUT',
+        body: payload
+      });
+      setTasks(prev => prev.map(task => task.id === taskId ? response.task || {
+        ...task,
+        ...payload,
+        updatedAt: new Date().toISOString()
+      } : task));
+      await loadData({
+        preserveView: true,
+        silent: true,
+        skipNextAutoSave: true
+      });
+      addAuditLog('UPDATE_TASK', 'TASK', taskId, payload);
+      return response.task;
+    } catch (error) {
+      alert(error.message || 'Nie udało się zapisać zadania');
+      throw error;
+    }
   };
   const archiveTask = async (taskId, {
     matching = false
@@ -2509,22 +2534,9 @@ const App = () => {
         className: "badge badge-points"
       }, "+", task.points, " pkt"), React.createElement("button", {
         className: "btn btn-secondary",
-        onClick: () => {
-          const title = prompt('Nowy tytuł zadania:', task.title);
-          if (!title) return;
-          const tier = prompt('Typ zadania (MIN/PLUS/WEEKLY):', task.tier);
-          if (!tier) return;
-          const normalizedTier = tier.trim().toUpperCase();
-          if (!['MIN', 'PLUS', 'WEEKLY'].includes(normalizedTier)) return;
-          const pointsValue = prompt('Punkty za zadanie:', String(task.points || 0));
-          const parsedPoints = parseInt(pointsValue || '0', 10);
-          updateTask(task.id, {
-            title: title.trim(),
-            tier: normalizedTier,
-            points: Number.isNaN(parsedPoints) ? 0 : parsedPoints
-          });
-        }
-      }, "\u270F\uFE0F"), React.createElement("button", {
+        title: "Edytuj zadanie",
+        onClick: () => setEditingTask(task)
+      }, "\u270F\uFE0F Edytuj"), React.createElement("button", {
         className: "btn btn-danger",
         title: "Archiwizuj tylko u tego dziecka",
         onClick: async () => {
@@ -2786,6 +2798,14 @@ const App = () => {
       children: activeChildren,
       onAdd: addTask,
       onClose: () => setShowModal(null)
+    }), editingTask && React.createElement(EditTaskModal, {
+      task: editingTask,
+      children: activeChildren,
+      onSave: async updates => {
+        await updateTask(editingTask.id, updates);
+        setEditingTask(null);
+      },
+      onClose: () => setEditingTask(null)
     }), showModal === 'addReward' && React.createElement(AddRewardModal, {
       onAdd: addReward,
       onClose: () => setShowModal(null)
@@ -3983,6 +4003,7 @@ const AddTaskModal = ({
   const [tier, setTier] = useState('MIN');
   const [points, setPoints] = useState(0);
   const [description, setDescription] = useState('');
+  const [daysOfWeek, setDaysOfWeek] = useState([1, 2, 3, 4, 5, 6, 7]);
   const [templateId, setTemplateId] = useState('');
   const templatesForTier = TASK_TEMPLATES.filter(t => t.tier === tier);
   const applyTemplate = id => {
@@ -3994,10 +4015,13 @@ const AddTaskModal = ({
     setPoints(template.points);
     setDescription(template.description || '');
   };
+  const toggleDay = dayNum => {
+    setDaysOfWeek(prev => prev.includes(dayNum) ? prev.filter(day => day !== dayNum) : [...prev, dayNum].sort((a, b) => a - b));
+  };
   const handleSubmit = e => {
     e.preventDefault();
     if (!childId) return;
-    onAdd(childId, title, tier, points, description);
+    onAdd(childId, title, tier, points, description, daysOfWeek);
   };
   return React.createElement("div", {
     className: "modal"
@@ -4039,6 +4063,37 @@ const AddTaskModal = ({
     required: true,
     placeholder: "np. Po\u015Bciel \u0142\xF3\u017Cko"
   }), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Dni tygodnia"), React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+      gap: '0.5rem',
+      marginBottom: '1rem'
+    }
+  }, DAY_NAMES.map((day, index) => {
+    const dayNum = index + 1;
+    const active = daysOfWeek.includes(dayNum);
+    return React.createElement("button", {
+      key: dayNum,
+      type: "button",
+      onClick: () => toggleDay(dayNum),
+      style: {
+        padding: '0.75rem 0.45rem',
+        background: active ? 'rgba(18, 183, 106, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+        border: active ? '2px solid #12B76A' : '2px solid rgba(255, 255, 255, 0.2)',
+        borderRadius: '0.5rem',
+        cursor: 'pointer',
+        fontSize: '0.85rem',
+        fontWeight: 600,
+        color: 'white'
+      }
+    }, day);
+  })), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',
@@ -4124,6 +4179,201 @@ const AddTaskModal = ({
       flex: 1
     }
   }, "Dodaj zadanie")))));
+};
+const EditTaskModal = ({
+  task,
+  children,
+  onSave,
+  onClose
+}) => {
+  const [childId, setChildId] = useState(task?.childId || '');
+  const [title, setTitle] = useState(task?.title || '');
+  const [tier, setTier] = useState(task?.tier || 'MIN');
+  const [points, setPoints] = useState(Number(task?.points || 0));
+  const [description, setDescription] = useState(task?.description || '');
+  const [daysOfWeek, setDaysOfWeek] = useState(normalizeTaskArchiveDays(task?.daysOfWeek).length > 0 ? normalizeTaskArchiveDays(task?.daysOfWeek) : [1, 2, 3, 4, 5, 6, 7]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const toggleDay = dayNum => {
+    setDaysOfWeek(prev => prev.includes(dayNum) ? prev.filter(day => day !== dayNum) : [...prev, dayNum].sort((a, b) => a - b));
+  };
+  const handleSubmit = async e => {
+    e.preventDefault();
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      setError('Podaj nazwę zadania.');
+      return;
+    }
+    if (!childId) {
+      setError('Wybierz dziecko.');
+      return;
+    }
+    if (daysOfWeek.length === 0) {
+      setError('Wybierz przynajmniej jeden dzień tygodnia.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave({
+        childId,
+        title: cleanTitle,
+        tier,
+        points: Number(points || 0),
+        description: description.trim(),
+        daysOfWeek
+      });
+    } catch (saveError) {
+      setError(saveError.message || 'Nie udało się zapisać zadania.');
+      setSaving(false);
+    }
+  };
+  return React.createElement("div", {
+    className: "modal",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "Edytuj zadanie"
+  }, React.createElement("div", {
+    className: "modal-content"
+  }, React.createElement("h2", {
+    style: {
+      marginBottom: '1.5rem'
+    }
+  }, "Edytuj zadanie"), error && React.createElement("div", {
+    className: "error"
+  }, error), React.createElement("form", {
+    onSubmit: handleSubmit
+  }, React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Dziecko"), React.createElement("select", {
+    className: "select",
+    value: childId,
+    onChange: e => setChildId(e.target.value),
+    required: true
+  }, children.map(child => React.createElement("option", {
+    key: child.id,
+    value: child.id
+  }, child.avatar, " ", child.name))), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Nazwa zadania"), React.createElement("input", {
+    type: "text",
+    className: "input",
+    value: title,
+    onChange: e => setTitle(e.target.value),
+    required: true,
+    placeholder: "np. Pościel łóżko"
+  }), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Typ zadania"), React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+      gap: '0.5rem',
+      marginBottom: '1rem'
+    }
+  }, ['MIN', 'PLUS', 'WEEKLY'].map(t => React.createElement("button", {
+    key: t,
+    type: "button",
+    onClick: () => setTier(t),
+    className: `badge badge-${t.toLowerCase()}`,
+    style: {
+      padding: '1rem 0.55rem',
+      opacity: tier === t ? 1 : 0.55,
+      border: tier === t ? '2px solid white' : '2px solid transparent',
+      cursor: 'pointer',
+      whiteSpace: 'normal',
+      lineHeight: 1.15
+    }
+  }, t === 'MIN' ? '📋 Podstawowe' : t === 'PLUS' ? '⭐ Bonus' : '📅 Tygodniowe'))), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Punkty"), React.createElement("input", {
+    type: "number",
+    className: "input",
+    value: points,
+    onChange: e => setPoints(parseInt(e.target.value || '0', 10) || 0),
+    min: "0",
+    max: "10000",
+    placeholder: "0"
+  }), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Dni tygodnia"), React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+      gap: '0.5rem',
+      marginBottom: '1rem'
+    }
+  }, DAY_NAMES.map((day, index) => {
+    const dayNum = index + 1;
+    const active = daysOfWeek.includes(dayNum);
+    return React.createElement("button", {
+      key: dayNum,
+      type: "button",
+      onClick: () => toggleDay(dayNum),
+      style: {
+        padding: '0.75rem 0.45rem',
+        background: active ? 'rgba(18, 183, 106, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+        border: active ? '2px solid #12B76A' : '2px solid rgba(255, 255, 255, 0.2)',
+        borderRadius: '0.5rem',
+        cursor: 'pointer',
+        fontSize: '0.85rem',
+        fontWeight: 600,
+        color: 'white'
+      }
+    }, day);
+  })), React.createElement("label", {
+    style: {
+      display: 'block',
+      marginBottom: '0.5rem',
+      opacity: 0.8
+    }
+  }, "Opis"), React.createElement("textarea", {
+    className: "textarea",
+    value: description,
+    onChange: e => setDescription(e.target.value),
+    placeholder: "np. Zaraz po wstaniu",
+    rows: "3"
+  }), React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: '1rem'
+    }
+  }, React.createElement("button", {
+    type: "button",
+    className: "btn btn-secondary",
+    onClick: onClose,
+    disabled: saving,
+    style: {
+      flex: 1
+    }
+  }, "Anuluj"), React.createElement("button", {
+    type: "submit",
+    className: "btn btn-primary",
+    disabled: saving,
+    style: {
+      flex: 1
+    }
+  }, saving ? 'Zapisywanie...' : 'Zapisz zmiany')))));
 };
 const AddRewardModal = ({
   onAdd,
