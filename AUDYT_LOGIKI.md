@@ -24,6 +24,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano jawne cofniecie zatwierdzenia zadania przez rodzica: `POST /api/completions/:id/reverse-approval`.
 - Cofniecie zatwierdzenia przelicza punkty i passe ze zrodel prawdy, zapisuje jawny wpis `REVERSAL` w `pointAdjustments` i nie nalicza tej korekty drugi raz przy kolejnym `recomputePointsAndGrants`.
 - Panel rodzica pokazuje przycisk `Cofnij` przy zatwierdzonym zadaniu na wybrany dzien i wyswietla realny efekt punktowy po operacji.
+- Dodano osobny restore backupu: `POST /api/storage/restore-backup`, dostepny tylko dla rodzica.
+- Import JSON w UI uzywa teraz restore, a nie lokalnej podmiany stanu i pozniejszego `storage/merge`.
+- Restore backupu normalizuje snapshot, nadpisuje stan rodziny, przelicza punkty/passę na serwerze i dopisuje audit log `RESTORE_BACKUP`.
 
 ## Weryfikacja Wykonana
 
@@ -35,6 +38,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Snapshot przed wdrozeniem: `predeploy-familyquest-20260513-105625`.
 - Backup plikow produkcyjnych przed pull: `/opt/familyquest/.deploy-backups/local-before-pull-20260513-105626`.
 - `npm run test:reverse-approval` - OK, test sprawdzil logike cofniecia `9 -> 4` punktow bez podwojnego odejmowania po recompute oraz UI rodzica z przyciskiem `Cofnij` i alertem `-5 pkt`.
+- `npm run test:restore-backup` - OK, test sprawdzil przeliczenie punktow ze snapshotu `999 -> 7`, zastapienie danych rodziny i brak uzycia `storage/merge` podczas importu.
 - `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
@@ -44,36 +48,33 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Brak pelnego ledgeru punktow, czyli historii transakcji punktowych.
-2. Import JSON nadal zachowuje sie jak merge storage, nie jak prawdziwy restore backupu.
-3. Brak ochrony przed rownoleglym nadpisaniem `FamilyState`.
-4. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-5. Testy API wymagaja stabilnej lokalnej bazy testowej.
-6. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
+2. Brak ochrony przed rownoleglym nadpisaniem `FamilyState`.
+3. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
+4. Testy API wymagaja stabilnej lokalnej bazy testowej.
+5. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po cofnieciu zatwierdzenia: **restore backupu osobno od storage merge**.
+Najbardziej sensowny kolejny pakiet po restore backupu: **wersjonowanie `FamilyState` / ochrona przed lost update**.
 
 Dlaczego ten pakiet teraz:
 
-- To jest nastepny punkt, ktory moze realnie uszkodzic dane, jesli import JSON zostanie pomylony z synchronizacja.
-- Backend juz ma `normalizeStateData` i `recomputePointsAndGrants`, wiec da sie zrobic bez projektowania pelnego ledgeru.
-- Dobrze pasuje do obecnej filozofii: po restore stan jest nadpisany jawnie, a punkty/passsa sa przeliczone na serwerze.
-- Da sie zweryfikowac fixturem API oraz Playwrightem importu z potwierdzeniem, ze to operacja zastapienia danych.
+- Coraz wiecej operacji krytycznych robi `loadStateData -> mutate -> saveStateData`.
+- Restore, cofniecie zatwierdzenia, approve i premie/kary moga sie nadpisywac, jesli dwa urzadzenia zapisza stan rownolegle.
+- Po rozdzieleniu restore od merge to jest teraz najwieksze pozostale ryzyko integralnosci danych.
+- Da sie wdrozyc etapami: najpierw wersja w JSON i retry na wybranych endpointach punktowych, potem pole Prisma.
 
 Minimalny zakres wdrozenia:
 
-1. Dodac endpoint `POST /api/storage/restore-backup`, tylko dla rodzica.
-2. Walidowac caly snapshot przez `normalizeStateData`.
-3. Nadpisac stan rodziny jako restore, nie merge.
-4. Po restore uruchomic `recomputePointsAndGrants`.
-5. Przepiac frontendowy import JSON na nowy endpoint.
-6. W UI pokazac jasne potwierdzenie: import zastapi dane rodziny.
-7. Dodac test, ktory pokazuje, ze restore usuwa stare dane, przelicza punkty i nie przyjmuje surowego `points` ze snapshotu jako autorytetu.
+1. Dodac `version` do `FamilyState.data`.
+2. `loadStateData` ma zwracac wersje, a `saveStateData` zapisywac tylko gdy wersja sie zgadza.
+3. Przy konflikcie endpoint powinien ponowic operacje na swiezym stanie albo zwrocic `409`.
+4. Najpierw objac endpointy: approve/reject/reverse completion, extra task approve/reject, point adjustment, restore backup.
+5. Dodac test symulujacy dwa rownolegle zapisy, z potwierdzeniem ze drugi nie nadpisuje cicho pierwszego.
 
 Ryzyko/decyzja przed implementacja:
 
-- Trzeba zdecydowac, czy restore ma wymagac dodatkowego wpisania PIN-u rodzica. Rekomendacja: na poczatek wystarczy sesja rodzica + modal potwierdzajacy, PIN mozna dodac pozniej razem z wersjonowaniem/operacjami krytycznymi.
+- Wariant z wersja tylko w JSON jest szybszy, ale mniej atomowy niz osobne pole Prisma. Rekomendacja: jesli chcemy realnie zamknac lost update, dodac osobne pole `version` w modelu `FamilyState`.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -116,20 +117,16 @@ Priorytet: zrealizowane, pozostale decyzje P2/P3.
 
 ### 3. Restore Backupu Osobno Od Storage Merge
 
-Status: otwarte.
+Status: wdrozone.
 
-`/api/storage/merge` nadal jest synchronizacja klienta, nie pelnym restore. Backend ignoruje incoming `points` w zwyklym merge, co chroni przed starymi snapshotami, ale oznacza, ze import JSON w UI nie jest prawdziwym odtworzeniem backupu.
+`/api/storage/merge` zostaje synchronizacja klienta, a import JSON uzywa osobnego `POST /api/storage/restore-backup`. Restore nadpisuje caly stan rodziny, normalizuje dane i uruchamia `recomputePointsAndGrants`, wiec snapshotowe `points` nie sa autorytatywne.
 
-Co zrobic dalej:
+Co zostaje dalej:
 
-1. Dodac endpoint `POST /api/storage/restore-backup`, tylko dla rodzica.
-2. Walidowac caly snapshot przez `normalizeStateData`.
-3. Nadpisywac stan jako restore, nie merge.
-4. Po restore uruchomic `recomputePointsAndGrants`.
-5. Frontendowy import JSON przepiac na ten endpoint.
-6. Pokazac w UI komunikat, ze import zastapi dane rodziny.
+1. Rozwazyc dodatkowy PIN dla restore po wdrozeniu wersjonowania.
+2. Dodac docelowy test integracyjny na prawdziwej bazie.
 
-Priorytet: P2.
+Priorytet: zrealizowane, pozostale decyzje P3.
 
 ### 4. Wersjonowanie `FamilyState`
 
@@ -227,18 +224,16 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Rozdzielic restore backup od zwyklego storage merge.
-2. Dodac wersjonowanie `FamilyState` dla ochrony przed lost update.
-3. Rozwiazac globalne kolizje kodow dzieci.
-4. Uporzadkowac zrodlo frontendu i README/PWA.
-5. Dopiero potem projektowac pelny `pointLedger`.
+1. Dodac wersjonowanie `FamilyState` dla ochrony przed lost update.
+2. Rozwiazac globalne kolizje kodow dzieci.
+3. Uporzadkowac zrodlo frontendu i README/PWA.
+4. Dopiero potem projektowac pelny `pointLedger`.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: restore backup + UI importu.
-- Pakiet B: wersjonowanie `FamilyState`.
-- Pakiet C: logowanie dziecka z kodem rodziny.
-- Pakiet D: porzadkowanie frontendu/build/docs.
-- Pakiet E: pelny ledger punktow.
+- Pakiet A: wersjonowanie `FamilyState`.
+- Pakiet B: logowanie dziecka z kodem rodziny.
+- Pakiet C: porzadkowanie frontendu/build/docs.
+- Pakiet D: pelny ledger punktow.

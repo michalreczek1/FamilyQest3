@@ -1034,6 +1034,29 @@ const reverseApprovalEffects = (data, completion, actorUserId, reason = '', now 
   };
 };
 
+const normalizeRestoredBackupData = (backup, actorUserId, now = new Date().toISOString()) => {
+  const source = isObjectRecord(backup?.data) ? backup.data : backup;
+  if (!isObjectRecord(source)) {
+    return null;
+  }
+
+  const nextData = normalizeStateData(source);
+  nextData.children = nextData.children.map((child) => ({
+    ...child,
+    accessCode: ensureUniqueChildAccessCode(nextData.children, child.accessCode, child.id) || child.accessCode || null,
+  }));
+  recomputePointsAndGrants(nextData);
+  nextData.auditLogs = addAuditLogEntry(nextData, actorUserId, 'RESTORE_BACKUP', 'BACKUP', 'family', {
+    restoredAt: now,
+    childrenCount: nextData.children.length,
+    tasksCount: nextData.tasks.length,
+    completionsCount: nextData.completions.length,
+    extraTasksCount: nextData.extraTasks.length,
+    rewardUnlocksCount: nextData.rewardUnlocks.length,
+  });
+  return nextData;
+};
+
 const pickChildMapValue = (source, childId) => {
   if (!isObjectRecord(source)) {
     return {};
@@ -2883,6 +2906,35 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (req, res) => {
+  const backup = Object.prototype.hasOwnProperty.call(req.body || {}, 'backup') ? req.body.backup : req.body;
+  const nextData = normalizeRestoredBackupData(backup, req.auth.user.id);
+  if (!nextData) {
+    res.status(400).json({ error: 'Nieprawidłowy plik backupu' });
+    return;
+  }
+
+  try {
+    const { state } = await loadStateData(req.auth.user.familyId);
+    await saveStateData(state.id, nextData);
+    res.json({
+      ok: true,
+      restored: {
+        children: nextData.children.length,
+        tasks: nextData.tasks.length,
+        completions: nextData.completions.length,
+        extraTasks: nextData.extraTasks.length,
+        rewardUnlocks: nextData.rewardUnlocks.length,
+      },
+      points: nextData.points,
+      streaks: nextData.streaks,
+    });
+  } catch (error) {
+    console.error('Storage restore backup error:', error);
+    res.status(500).json({ error: 'Nie udało się odtworzyć backupu' });
+  }
+});
+
 app.get('/api/storage/list', authMiddleware, async (req, res) => {
   try {
     const prefix = String(req.query.prefix || '');
@@ -2946,6 +2998,7 @@ module.exports = {
   prisma,
   __test: {
     recomputePointsAndGrants,
+    normalizeRestoredBackupData,
     reverseApprovalEffects,
   },
 };

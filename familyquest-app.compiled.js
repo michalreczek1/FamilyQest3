@@ -261,6 +261,8 @@ const App = () => {
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
   const saveRequestedRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  const skipAutoSaveUntilRef = useRef(0);
   const resetFamilyData = () => {
     setChildren([]);
     setTasks([]);
@@ -327,7 +329,8 @@ const App = () => {
   }, []);
   const loadData = async ({
     preserveView = false,
-    silent = false
+    silent = false,
+    skipNextAutoSave = false
   } = {}) => {
     if (!silent) {
       setLoading(true);
@@ -349,6 +352,10 @@ const App = () => {
         setView('login');
         setHasLoadedSnapshot(false);
         return;
+      }
+      if (skipNextAutoSave) {
+        skipNextSaveRef.current = true;
+        skipAutoSaveUntilRef.current = Date.now() + 2000;
       }
       setUser(session.user);
       const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
@@ -467,6 +474,13 @@ const App = () => {
   }, [storage]);
   useEffect(() => {
     if (!loading && user && hasLoadedSnapshot) {
+      if (skipNextSaveRef.current) {
+        skipNextSaveRef.current = false;
+        return;
+      }
+      if (Date.now() < skipAutoSaveUntilRef.current) {
+        return;
+      }
       pendingSaveSnapshotRef.current = {
         children,
         tasks,
@@ -1326,28 +1340,27 @@ const App = () => {
     a.click();
     URL.revokeObjectURL(url);
   };
-  const importFamilyBackup = jsonText => {
+  const importFamilyBackup = async jsonText => {
     const parsed = JSON.parse(jsonText);
-    const data = parsed?.data || {};
-    setChildren(data.children || []);
-    setTasks(data.tasks || []);
-    setCompletions(data.completions || []);
-    setExtraTasks(data.extraTasks || []);
-    setPointAdjustments(data.pointAdjustments || []);
-    setRewards(data.rewards || []);
-    setStreaks(data.streaks || {});
-    setPoints(data.points || {});
-    setRewardUnlocks(data.rewardUnlocks || []);
-    setFamilyGoal(data.familyGoal || {
-      title: 'Cel rodzinny',
-      target: 500,
-      mode: 'points'
+    const data = parsed?.data || parsed;
+    const childrenCount = Array.isArray(data?.children) ? data.children.length : 0;
+    const tasksCount = Array.isArray(data?.tasks) ? data.tasks.length : 0;
+    const ok = window.confirm(`Import backupu zastąpi aktualne dane rodziny.\n\nW pliku: ${childrenCount} dzieci, ${tasksCount} zadań.\nPo imporcie punkty i passa zostaną przeliczone przez serwer.\n\nKontynuować?`);
+    if (!ok) {
+      throw new Error('Import anulowany');
+    }
+    const result = await apiRequest('/api/storage/restore-backup', {
+      method: 'POST',
+      body: {
+        backup: parsed
+      }
     });
-    setAuditLogs(data.auditLogs || []);
-    setDayPointGrants(data.dayPointGrants || {});
-    setWeekBonusGrants(data.weekBonusGrants || {});
-    setTaskPointGrants(data.taskPointGrants || {});
-    addAuditLog('IMPORT_BACKUP', 'BACKUP', 'family');
+    await loadData({
+      preserveView: true,
+      silent: true,
+      skipNextAutoSave: true
+    });
+    return result;
   };
   if (loading) {
     return React.createElement("div", {
@@ -3238,8 +3251,9 @@ const SettingsBackupPanel = ({
       if (!file) return;
       const text = await file.text();
       try {
-        onImport(text);
-        setMessage('Backup został zaimportowany.');
+        const result = await onImport(text);
+        const restored = result?.restored || {};
+        setMessage(`Backup został odtworzony. Dzieci: ${restored.children ?? '?'}, zadania: ${restored.tasks ?? '?'}.`);
       } catch (err) {
         setMessage('Import nieudany: ' + err.message);
       }
