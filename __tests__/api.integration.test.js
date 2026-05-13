@@ -473,4 +473,77 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(completeStreaksRes.body.value[child.id].current).toBe(1);
     expect(completeStreaksRes.body.value[child.id].best).toBe(1);
   });
+
+  test('point adjustment retries once after a transient family state conflict', async () => {
+    const suffix = `points-retry-${Date.now()}`;
+    const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));
+    expect(registerRes.status).toBe(201);
+    const parentToken = registerRes.body.token;
+
+    const addChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: `Retry-${suffix}`,
+        avatar: '⭐',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addChildRes.status).toBe(201);
+    const child = addChildRes.body.child;
+
+    const bonusRes = await request(app)
+      .post('/api/point-adjustments')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        type: 'BONUS',
+        points: 5,
+        note: 'Punkty startowe',
+      });
+    expect(bonusRes.status).toBe(201);
+
+    const originalUpdateMany = prisma.familyState.updateMany.bind(prisma.familyState);
+    let injectedConflict = false;
+    const updateManySpy = jest.spyOn(prisma.familyState, 'updateMany').mockImplementation(async (args) => {
+      const statePayload = args?.data?.data;
+      const hasRetryPenalty =
+        Array.isArray(statePayload?.pointAdjustments) &&
+        statePayload.pointAdjustments.some((adjustment) => adjustment.note === 'Retry konfliktu');
+      if (!injectedConflict && hasRetryPenalty) {
+        injectedConflict = true;
+        return { count: 0 };
+      }
+      return originalUpdateMany(args);
+    });
+
+    try {
+      const penaltyRes = await request(app)
+        .post('/api/point-adjustments')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          childId: child.id,
+          type: 'PENALTY',
+          points: 2,
+          note: 'Retry konfliktu',
+        });
+      expect(penaltyRes.status).toBe(201);
+      expect(injectedConflict).toBe(true);
+      expect(penaltyRes.body.pointAdjustment.delta).toBe(-2);
+      expect(penaltyRes.body.points[child.id]).toBe(3);
+    } finally {
+      updateManySpy.mockRestore();
+    }
+
+    const adjustmentsRes = await request(app)
+      .get('/api/storage/get/pointAdjustments')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(adjustmentsRes.status).toBe(200);
+    expect(adjustmentsRes.body.value.filter((adjustment) => adjustment.note === 'Retry konfliktu')).toHaveLength(1);
+
+    const pointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsRes.status).toBe(200);
+    expect(pointsRes.body.value[child.id]).toBe(3);
+  });
 });

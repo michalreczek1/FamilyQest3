@@ -64,6 +64,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
 - Lokalny `.env` nie powinien wskazywac starej bazy Railway. Testy API maja teraz osobny profil `.env.test.example` i baze `familyquest_test` w `CT 102`.
 - `npm run test:api` - OK, runner resetuje tylko baze `familyquest_test`, tuneluje PostgreSQL przez `ssh proxmox`, wykonuje `prisma db push` i pelne testy Jest na prawdziwej bazie.
+- Naprawiono falszywe konflikty `FAMILY_STATE_VERSION_CONFLICT` przy zapisach punktow: odczyty zapisujace przeliczone punkty robia zapis tylko, gdy wynik realnie sie zmienil, `storage/merge` nie podbija wersji przy braku zmian, a premia/kara punktowa ponawia zapis raz na swiezym stanie.
+- `npm run test:api` - OK po naprawie konfliktow, dodany test wymusza konflikt wersji przy pierwszym zapisie kary i potwierdza sukces bez drugiego klikniecia.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
 
 ## Co Nadal Jest Do Zrobienia

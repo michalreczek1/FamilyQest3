@@ -1097,6 +1097,24 @@ const recomputePointsAndGrants = (data) => {
   return data;
 };
 
+const getComputedStateFingerprint = (data) =>
+  JSON.stringify({
+    points: data.points,
+    streaks: data.streaks,
+    pointLedger: data.pointLedger,
+    taskPointGrants: data.taskPointGrants,
+    dayPointGrants: data.dayPointGrants,
+    weekBonusGrants: data.weekBonusGrants,
+  });
+
+const recomputePointsAndGrantsIfChanged = (data) => {
+  const before = getComputedStateFingerprint(data);
+  recomputePointsAndGrants(data);
+  return getComputedStateFingerprint(data) !== before;
+};
+
+const hasStateDataChanged = (previousData, nextData) => JSON.stringify(previousData) !== JSON.stringify(nextData);
+
 const adjustPoints = (data, childId, amount) => {
   const current = Number(data.points[childId] || 0);
   const next = Math.max(0, current + amount);
@@ -2055,8 +2073,9 @@ app.get('/api/task-templates', authMiddleware, async (req, res) => {
 app.get('/api/leaderboard', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
-    recomputePointsAndGrants(data);
-    await saveStateData(state, data, { skipOnConflict: true });
+    if (recomputePointsAndGrantsIfChanged(data)) {
+      await saveStateData(state, data, { skipOnConflict: true });
+    }
     const children = data.children
       .filter((child) => !child.archived)
       .map((child) => ({
@@ -3026,72 +3045,82 @@ app.get('/api/point-adjustments', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, res) => {
-  try {
-    const parsed = pointAdjustmentSchema.safeParse(req.body || {});
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Nieprawidłowe dane premii lub kary' });
+  const parsed = pointAdjustmentSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Nieprawidłowe dane premii lub kary' });
+    return;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const { state, data } = await loadStateData(req.auth.user.familyId);
+      recomputePointsAndGrants(data);
+
+      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+      if (!child) {
+        res.status(404).json({ error: 'Dziecko nie istnieje' });
+        return;
+      }
+
+      const requestedPoints = parsed.data.points;
+      const delta = parsed.data.type === 'BONUS' ? requestedPoints : -requestedPoints;
+      const result = adjustPoints(data, parsed.data.childId, delta);
+      if (parsed.data.type === 'PENALTY' && result.appliedDelta === 0) {
+        res.status(409).json({ error: 'Dziecko nie ma punktów do odjęcia' });
+        return;
+      }
+      if (result.appliedDelta > 0) {
+        unlockEligibleRewards(data, parsed.data.childId, req.auth.user.id);
+      }
+
+      const now = new Date().toISOString();
+      const adjustment = {
+        id: createEntityId('points'),
+        childId: parsed.data.childId,
+        type: parsed.data.type,
+        requestedPoints,
+        points: Math.abs(result.appliedDelta),
+        delta: result.appliedDelta,
+        previousPoints: result.previousPoints,
+        newPoints: result.newPoints,
+        note: parsed.data.note ? parsed.data.note.trim() : '',
+        createdBy: req.auth.user.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      data.pointAdjustments = [adjustment, ...data.pointAdjustments];
+      data.auditLogs = addAuditLogEntry(
+        data,
+        req.auth.user.id,
+        parsed.data.type === 'BONUS' ? 'GRANT_POINT_BONUS' : 'APPLY_POINT_PENALTY',
+        'POINT_ADJUSTMENT',
+        adjustment.id,
+        {
+          childId: adjustment.childId,
+          requestedPoints: adjustment.requestedPoints,
+          appliedPoints: adjustment.points,
+          delta: adjustment.delta,
+          note: adjustment.note,
+        },
+      );
+      recomputePointsAndGrants(data);
+
+      await saveStateData(state, data);
+      res.status(201).json({ pointAdjustment: adjustment, points: data.points });
+      return;
+    } catch (error) {
+      if (isFamilyStateConflict(error) && attempt === 0) {
+        continue;
+      }
+      if (isFamilyStateConflict(error)) {
+        sendFamilyStateConflict(res);
+        return;
+      }
+      console.error('Point adjustment create error:', error);
+      res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
       return;
     }
-
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-    if (!child) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
-
-    const requestedPoints = parsed.data.points;
-    const delta = parsed.data.type === 'BONUS' ? requestedPoints : -requestedPoints;
-    const result = adjustPoints(data, parsed.data.childId, delta);
-    if (parsed.data.type === 'PENALTY' && result.appliedDelta === 0) {
-      res.status(409).json({ error: 'Dziecko nie ma punktów do odjęcia' });
-      return;
-    }
-    if (result.appliedDelta > 0) {
-      unlockEligibleRewards(data, parsed.data.childId, req.auth.user.id);
-    }
-
-    const now = new Date().toISOString();
-    const adjustment = {
-      id: createEntityId('points'),
-      childId: parsed.data.childId,
-      type: parsed.data.type,
-      requestedPoints,
-      points: Math.abs(result.appliedDelta),
-      delta: result.appliedDelta,
-      previousPoints: result.previousPoints,
-      newPoints: result.newPoints,
-      note: parsed.data.note ? parsed.data.note.trim() : '',
-      createdBy: req.auth.user.id,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    data.pointAdjustments = [adjustment, ...data.pointAdjustments];
-    data.auditLogs = addAuditLogEntry(
-      data,
-      req.auth.user.id,
-      parsed.data.type === 'BONUS' ? 'GRANT_POINT_BONUS' : 'APPLY_POINT_PENALTY',
-      'POINT_ADJUSTMENT',
-      adjustment.id,
-      {
-        childId: adjustment.childId,
-        requestedPoints: adjustment.requestedPoints,
-        appliedPoints: adjustment.points,
-        delta: adjustment.delta,
-        note: adjustment.note,
-      },
-    );
-
-    await saveStateData(state, data);
-    res.status(201).json({ pointAdjustment: adjustment, points: data.points });
-  } catch (error) {
-    if (isFamilyStateConflict(error)) {
-      sendFamilyStateConflict(res);
-      return;
-    }
-    console.error('Point adjustment create error:', error);
-    res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
   }
 });
 
@@ -3356,8 +3385,9 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     if (['points', 'streaks', 'pointLedger', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
-      recomputePointsAndGrants(data);
-      await saveStateData(state, data, { skipOnConflict: true });
+      if (recomputePointsAndGrantsIfChanged(data)) {
+        await saveStateData(state, data, { skipOnConflict: true });
+      }
     }
     res.json({
       key,
@@ -3383,6 +3413,10 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     const nextData = mergeStorageValuesForUser(data, { [key]: req.body?.value ?? null }, req.auth.user);
+    if (!hasStateDataChanged(data, nextData)) {
+      res.json({ ok: true, key, skipped: true });
+      return;
+    }
     await saveStateData(state, nextData);
 
     res.json({ ok: true, key });
@@ -3411,19 +3445,30 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
     }
   }
 
-  try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const nextData = mergeStorageValuesForUser(data, values, req.auth.user);
-    await saveStateData(state, nextData);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const { state, data } = await loadStateData(req.auth.user.familyId);
+      const nextData = mergeStorageValuesForUser(data, values, req.auth.user);
+      if (!hasStateDataChanged(data, nextData)) {
+        res.json({ ok: true, keys, skipped: true });
+        return;
+      }
+      await saveStateData(state, nextData);
 
-    res.json({ ok: true, keys });
-  } catch (error) {
-    if (isFamilyStateConflict(error)) {
-      sendFamilyStateConflict(res);
+      res.json({ ok: true, keys });
+      return;
+    } catch (error) {
+      if (isFamilyStateConflict(error) && attempt === 0) {
+        continue;
+      }
+      if (isFamilyStateConflict(error)) {
+        sendFamilyStateConflict(res);
+        return;
+      }
+      console.error('Storage merge error:', error);
+      res.status(500).json({ error: 'Blad zapisu storage merge' });
       return;
     }
-    console.error('Storage merge error:', error);
-    res.status(500).json({ error: 'Blad zapisu storage merge' });
   }
 });
 
