@@ -27,6 +27,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano osobny restore backupu: `POST /api/storage/restore-backup`, dostepny tylko dla rodzica.
 - Import JSON w UI uzywa teraz restore, a nie lokalnej podmiany stanu i pozniejszego `storage/merge`.
 - Restore backupu normalizuje snapshot, nadpisuje stan rodziny, przelicza punkty/passę na serwerze i dopisuje audit log `RESTORE_BACKUP`.
+- Dodano wersjonowanie `FamilyState` jako osobne pole Prisma `version`.
+- `saveStateData` zapisuje warunkowo po `id + version` i podbija wersje po kazdym udanym zapisie.
+- Staly zapis ze starej wersji zwraca konflikt `FAMILY_STATE_VERSION_CONFLICT` zamiast cicho nadpisac nowsze dane.
 
 ## Weryfikacja Wykonana
 
@@ -39,6 +42,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Backup plikow produkcyjnych przed pull: `/opt/familyquest/.deploy-backups/local-before-pull-20260513-105626`.
 - `npm run test:reverse-approval` - OK, test sprawdzil logike cofniecia `9 -> 4` punktow bez podwojnego odejmowania po recompute oraz UI rodzica z przyciskiem `Cofnij` i alertem `-5 pkt`.
 - `npm run test:restore-backup` - OK, test sprawdzil przeliczenie punktow ze snapshotu `999 -> 7`, zastapienie danych rodziny i brak uzycia `storage/merge` podczas importu.
+- `npm run test:state-version` - OK, test zasymulowal dwa rownolegle zapisy i potwierdzil konflikt przy drugim zapisie ze stara wersja.
+- `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
 - `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
@@ -48,33 +53,32 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Brak pelnego ledgeru punktow, czyli historii transakcji punktowych.
-2. Brak ochrony przed rownoleglym nadpisaniem `FamilyState`.
-3. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-4. Testy API wymagaja stabilnej lokalnej bazy testowej.
-5. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
+2. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
+3. Testy API wymagaja stabilnej lokalnej bazy testowej.
+4. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po restore backupu: **wersjonowanie `FamilyState` / ochrona przed lost update**.
+Najbardziej sensowny kolejny pakiet po wersjonowaniu: **globalne kolizje kodow dzieci**.
 
 Dlaczego ten pakiet teraz:
 
-- Coraz wiecej operacji krytycznych robi `loadStateData -> mutate -> saveStateData`.
-- Restore, cofniecie zatwierdzenia, approve i premie/kary moga sie nadpisywac, jesli dwa urzadzenia zapisza stan rownolegle.
-- Po rozdzieleniu restore od merge to jest teraz najwieksze pozostale ryzyko integralnosci danych.
-- Da sie wdrozyc etapami: najpierw wersja w JSON i retry na wybranych endpointach punktowych, potem pole Prisma.
+- Logowanie dziecka nadal szuka `accessCode` globalnie po wszystkich rodzinach.
+- Dwie rodziny z tym samym kodem dziecka moga dostac konflikt przy logowaniu.
+- To jest mniejsze i bardziej domkniete niz pelny ledger punktow.
+- Da sie zweryfikowac testem fixture: dwie rodziny, ten sam kod dziecka, logowanie przez kod rodziny + kod dziecka.
 
 Minimalny zakres wdrozenia:
 
-1. Dodac `version` do `FamilyState.data`.
-2. `loadStateData` ma zwracac wersje, a `saveStateData` zapisywac tylko gdy wersja sie zgadza.
-3. Przy konflikcie endpoint powinien ponowic operacje na swiezym stanie albo zwrocic `409`.
-4. Najpierw objac endpointy: approve/reject/reverse completion, extra task approve/reject, point adjustment, restore backup.
-5. Dodac test symulujacy dwa rownolegle zapisy, z potwierdzeniem ze drugi nie nadpisuje cicho pierwszego.
+1. Dodac rodzinny kod logowania albo jawny identyfikator rodziny dla dziecka.
+2. Zmienic UI logowania dziecka: kod rodziny + kod dziecka.
+3. Zmienic `/api/auth/login-child`, zeby najpierw zawęzal rodzine, a dopiero potem szukal dziecka.
+4. Zachowac migracyjnie stary tryb tylko wtedy, gdy kod dziecka jest globalnie unikalny.
+5. Dodac test na dwie rodziny z tym samym kodem dziecka.
 
 Ryzyko/decyzja przed implementacja:
 
-- Wariant z wersja tylko w JSON jest szybszy, ale mniej atomowy niz osobne pole Prisma. Rekomendacja: jesli chcemy realnie zamknac lost update, dodac osobne pole `version` w modelu `FamilyState`.
+- Trzeba wybrac format kodu rodziny. Rekomendacja: krotki, czytelny kod 4-6 znakow przypisany rodzinie, a nie email rodzica w logowaniu dziecka.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -130,18 +134,16 @@ Priorytet: zrealizowane, pozostale decyzje P3.
 
 ### 4. Wersjonowanie `FamilyState`
 
-Status: otwarte.
+Status: wdrozone.
 
-Stan rodziny nadal jest jednym JSON-em. Wiele endpointow robi wzorzec `loadStateData -> mutate -> saveStateData`. Rownolegle zapisy z dwoch urzadzen moga sie nadpisac.
+Stan rodziny nadal jest jednym JSON-em, ale `FamilyState` ma teraz pole `version`, a `saveStateData` robi warunkowy zapis po oczekiwanej wersji. Rownolegly zapis ze stara wersja dostaje konflikt zamiast cichego nadpisania.
 
-Co zrobic dalej:
+Co zostaje dalej:
 
-1. Dodac `version` do `FamilyState.data` albo osobne pole w modelu Prisma.
-2. `saveStateData` powinno zapisywac warunkowo: aktualizuj tylko jesli wersja sie zgadza.
-3. Przy konflikcie endpoint powinien ponowic operacje na swiezym stanie albo zwrocic `409`.
-4. Najpierw objac tym operacje punktowe: approve/reject completion, extra task, point adjustment, restore backup.
+1. Rozwazyc retry dla wybranych idempotentnych operacji.
+2. Dodac docelowy test integracyjny na prawdziwej bazie, gdy lokalny `DATABASE_URL` bedzie stabilny.
 
-Priorytet: P2.
+Priorytet: zrealizowane, retry/test DB P3.
 
 ### 5. Globalne Kolizje Kodow Dzieci
 
@@ -224,16 +226,14 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Dodac wersjonowanie `FamilyState` dla ochrony przed lost update.
-2. Rozwiazac globalne kolizje kodow dzieci.
-3. Uporzadkowac zrodlo frontendu i README/PWA.
-4. Dopiero potem projektowac pelny `pointLedger`.
+1. Rozwiazac globalne kolizje kodow dzieci.
+2. Uporzadkowac zrodlo frontendu i README/PWA.
+3. Dopiero potem projektowac pelny `pointLedger`.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: wersjonowanie `FamilyState`.
-- Pakiet B: logowanie dziecka z kodem rodziny.
-- Pakiet C: porzadkowanie frontendu/build/docs.
-- Pakiet D: pelny ledger punktow.
+- Pakiet A: logowanie dziecka z kodem rodziny.
+- Pakiet B: porzadkowanie frontendu/build/docs.
+- Pakiet C: pelny ledger punktow.

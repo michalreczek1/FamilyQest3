@@ -41,6 +41,7 @@ model FamilyState {
   familyId  String   @unique
   family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
   data      Json
+  version   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

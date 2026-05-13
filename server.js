@@ -316,6 +316,10 @@ const authMiddleware = async (req, res, next) => {
     req.auth = { user };
     next();
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     res.status(401).json({ error: 'Nieprawidłowy token' });
   }
 };
@@ -340,6 +344,14 @@ const getOrCreateState = async (familyId) => {
     },
   });
 };
+
+class FamilyStateConflictError extends Error {
+  constructor(message = 'Stan rodziny zmienił się w trakcie zapisu') {
+    super(message);
+    this.name = 'FamilyStateConflictError';
+    this.code = 'FAMILY_STATE_VERSION_CONFLICT';
+  }
+}
 
 const isValidStorageKey = (key) => /^[a-zA-Z0-9:_-]{1,80}$/.test(key);
 
@@ -560,11 +572,48 @@ const loadStateData = async (familyId) => {
   };
 };
 
-const saveStateData = async (stateId, data) =>
-  prisma.familyState.update({
-    where: { id: stateId },
-    data: { data },
+const getFamilyStateVersion = (state) => {
+  const version = Number(state?.version);
+  return Number.isInteger(version) && version >= 0 ? version : 0;
+};
+
+const createSaveStateData = (familyStateClient) => async (state, data, options = {}) => {
+  const stateId = isObjectRecord(state) ? state.id : state;
+  if (!stateId) {
+    throw new Error('Brak identyfikatora stanu rodziny');
+  }
+
+  if (!isObjectRecord(state)) {
+    return familyStateClient.update({
+      where: { id: stateId },
+      data: {
+        data,
+        version: { increment: 1 },
+      },
+    });
+  }
+
+  const expectedVersion = getFamilyStateVersion(state);
+  const result = await familyStateClient.updateMany({
+    where: {
+      id: stateId,
+      version: expectedVersion,
+    },
+    data: {
+      data,
+      version: { increment: 1 },
+    },
   });
+
+  if (result.count !== 1) {
+    if (options.skipOnConflict) return null;
+    throw new FamilyStateConflictError();
+  }
+
+  return familyStateClient.findUnique({ where: { id: stateId } });
+};
+
+const saveStateData = createSaveStateData(prisma.familyState);
 
 const addAuditLogEntry = (data, actorUserId, action, entityType, entityId, details = {}) => {
   const entry = {
@@ -578,6 +627,14 @@ const addAuditLogEntry = (data, actorUserId, action, entityType, entityId, detai
   };
   return [entry, ...data.auditLogs].slice(0, 500);
 };
+
+const isFamilyStateConflict = (error) => error?.code === 'FAMILY_STATE_VERSION_CONFLICT';
+
+const sendFamilyStateConflict = (res) =>
+  res.status(409).json({
+    error: 'Stan rodziny zmienił się na innym urządzeniu. Odśwież dane i spróbuj ponownie.',
+    code: 'FAMILY_STATE_VERSION_CONFLICT',
+  });
 
 const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChildId = null) => {
   const usedCodes = new Set(
@@ -1313,6 +1370,10 @@ app.get('/health', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     db = 'error';
   }
   res.json({
@@ -1380,6 +1441,10 @@ app.post('/api/auth/register', async (req, res) => {
       user: toPublicUser(created),
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Register error:', error);
     res.status(500).json({ error: 'Nie udało się utworzyć konta' });
   }
@@ -1419,6 +1484,10 @@ app.post('/api/auth/login', async (req, res) => {
       user: toPublicUser(user),
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Login error:', error);
     res.status(500).json({ error: 'Logowanie nie powiodło się' });
   }
@@ -1448,6 +1517,10 @@ app.put('/api/auth/pin', authMiddleware, async (req, res) => {
     });
     res.json({ user: toPublicUser(user) });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Pin update error:', error);
     res.status(500).json({ error: 'Nie udało się zapisać PIN-u' });
   }
@@ -1481,6 +1554,10 @@ app.put('/api/auth/password', authMiddleware, async (req, res) => {
 
     res.json({ ok: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Password change error:', error);
     res.status(500).json({ error: 'Nie udało się zmienić hasła' });
   }
@@ -1501,6 +1578,10 @@ app.get('/api/auth/parents', authMiddleware, requireParent, async (req, res) => 
     });
     res.json({ users });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('List parents error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać listy użytkowników' });
   }
@@ -1543,6 +1624,10 @@ app.post('/api/auth/parents', authMiddleware, requireParent, async (req, res) =>
 
     res.status(201).json({ user: created });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Create parent error:', error);
     res.status(500).json({ error: 'Nie udało się dodać użytkownika' });
   }
@@ -1585,6 +1670,10 @@ app.put('/api/auth/parents/:id/active', authMiddleware, requireParent, async (re
 
     res.json({ user: updated });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Toggle parent error:', error);
     res.status(500).json({ error: 'Nie udało się zmienić statusu użytkownika' });
   }
@@ -1617,6 +1706,10 @@ app.put('/api/auth/password/reset', authMiddleware, requireParent, async (req, r
     });
     res.json({ ok: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reset password error:', error);
     res.status(500).json({ error: 'Nie udało się zresetować hasła' });
   }
@@ -1654,6 +1747,10 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       ...(ALLOW_DEBUG_RESET_TOKEN && debugToken ? { debugResetToken: debugToken } : {}),
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Forgot password error:', error);
     res.status(500).json({ error: 'Nie udało się rozpocząć resetu hasła' });
   }
@@ -1684,6 +1781,10 @@ app.post('/api/auth/reset-password/token', async (req, res) => {
     passwordResetTokens.delete(parsed.data.token);
     res.json({ ok: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reset password token error:', error);
     res.status(500).json({ error: 'Nie udało się zresetować hasła' });
   }
@@ -1756,6 +1857,10 @@ app.post('/api/auth/login-child', async (req, res) => {
       },
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Child login error:', error);
     res.status(500).json({ error: 'Logowanie dziecka nie powiodło się' });
   }
@@ -1769,7 +1874,7 @@ app.get('/api/leaderboard', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     recomputePointsAndGrants(data);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data, { skipOnConflict: true });
     const children = data.children
       .filter((child) => !child.archived)
       .map((child) => ({
@@ -1793,6 +1898,10 @@ app.get('/api/leaderboard', authMiddleware, async (req, res) => {
       streaks,
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Leaderboard error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać tablicy wyników' });
   }
@@ -1813,6 +1922,10 @@ app.get('/api/children', authMiddleware, async (req, res) => {
 
     res.json({ children: list });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Children list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać listy dzieci' });
   }
@@ -1858,9 +1971,13 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       activeDays: child.activeDays,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ child });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Child create error:', error);
     res.status(500).json({ error: 'Nie udało się dodać dziecka' });
   }
@@ -1906,9 +2023,13 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
 
     data.children[index] = next;
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_CHILD', 'CHILD', childId, parsed.data);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ child: next });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Child update error:', error);
     res.status(500).json({ error: 'Nie udało się zaktualizować dziecka' });
   }
@@ -1927,9 +2048,13 @@ app.delete('/api/children/:id', authMiddleware, requireParent, async (req, res) 
     child.archived = true;
     child.updatedAt = new Date().toISOString();
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_CHILD', 'CHILD', childId);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ ok: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Child archive error:', error);
     res.status(500).json({ error: 'Nie udało się zarchiwizować dziecka' });
   }
@@ -1953,6 +2078,10 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
 
     res.json({ tasks: list });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Task list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać listy zadań' });
   }
@@ -1992,9 +2121,13 @@ app.post('/api/tasks', authMiddleware, requireParent, async (req, res) => {
       points: task.points,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ task });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Task create error:', error);
     res.status(500).json({ error: 'Nie udało się dodać zadania' });
   }
@@ -2039,9 +2172,13 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
 
     data.tasks[index] = next;
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ task: next });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Task update error:', error);
     res.status(500).json({ error: 'Nie udało się zaktualizować zadania' });
   }
@@ -2060,9 +2197,13 @@ app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => 
     task.active = false;
     task.updatedAt = new Date().toISOString();
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ ok: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Task archive error:', error);
     res.status(500).json({ error: 'Nie udało się zarchiwizować zadania' });
   }
@@ -2090,6 +2231,10 @@ app.get('/api/completions', authMiddleware, async (req, res) => {
 
     res.json({ completions: list });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Completion list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać listy wykonań' });
   }
@@ -2158,7 +2303,7 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
         date: existing.date,
         doneByChild: existing.doneByChild,
       });
-      await saveStateData(state.id, data);
+      await saveStateData(state, data);
       res.json({ completion: existing });
       return;
     }
@@ -2184,9 +2329,13 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
       date: completion.date,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ completion });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Completion create/update error:', error);
     res.status(500).json({ error: 'Nie udało się zapisać wykonania zadania' });
   }
@@ -2208,6 +2357,10 @@ app.get('/api/completions/pending', authMiddleware, requireParent, async (req, r
 
     res.json({ completions: queue });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Pending completions error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać kolejki zatwierdzeń' });
   }
@@ -2237,9 +2390,13 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
       taskId: completion.taskId,
       date: completion.date,
     });
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ completion });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Approve completion error:', error);
     res.status(500).json({ error: 'Nie udało się zatwierdzić zadania' });
   }
@@ -2286,9 +2443,13 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
       taskId: completion.taskId,
       date: completion.date,
     });
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ completion });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reject completion error:', error);
     res.status(500).json({ error: 'Nie udało się odrzucić zadania' });
   }
@@ -2320,9 +2481,13 @@ app.post('/api/completions/:id/reverse-approval', authMiddleware, requireParent,
       return;
     }
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json(result);
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reverse approval error:', error);
     res.status(500).json({ error: 'Nie udało się cofnąć zatwierdzenia' });
   }
@@ -2361,9 +2526,13 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
       childId: parsed.data.childId || null,
       date: parsed.data.date || null,
     });
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ ok: true, approvedCount: approvedIds.length, approvedIds });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Bulk approve error:', error);
     res.status(500).json({ error: 'Nie udało się zatwierdzić zadań zbiorczo' });
   }
@@ -2391,6 +2560,10 @@ app.get('/api/extra-tasks', authMiddleware, async (req, res) => {
 
     res.json({ extraTasks: list });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Extra task list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać zadań dodatkowych' });
   }
@@ -2444,9 +2617,13 @@ app.post('/api/extra-tasks', authMiddleware, async (req, res) => {
       title: extraTask.title,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ extraTask });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Extra task create error:', error);
     res.status(500).json({ error: 'Nie udało się zgłosić zadania dodatkowego' });
   }
@@ -2489,9 +2666,13 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
       title: extraTask.title,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ extraTask });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Approve extra task error:', error);
     res.status(500).json({ error: 'Nie udało się zatwierdzić zadania dodatkowego' });
   }
@@ -2525,9 +2706,13 @@ app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (re
       title: extraTask.title,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ extraTask });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reject extra task error:', error);
     res.status(500).json({ error: 'Nie udało się odrzucić zadania dodatkowego' });
   }
@@ -2547,6 +2732,10 @@ app.get('/api/point-adjustments', authMiddleware, async (req, res) => {
 
     res.json({ pointAdjustments: list });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Point adjustments list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać premii i kar punktowych' });
   }
@@ -2610,9 +2799,13 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
       },
     );
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ pointAdjustment: adjustment, points: data.points });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Point adjustment create error:', error);
     res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
   }
@@ -2631,6 +2824,10 @@ app.get('/api/rewards', authMiddleware, async (req, res) => {
       rewardUnlocks: unlocks,
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Rewards list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać nagród' });
   }
@@ -2663,9 +2860,13 @@ app.post('/api/rewards', authMiddleware, requireParent, async (req, res) => {
       requiredIdealWeeks: reward.requiredIdealWeeks,
     });
 
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ reward });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reward create error:', error);
     res.status(500).json({ error: 'Nie udało się dodać nagrody' });
   }
@@ -2704,9 +2905,13 @@ app.put('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
     reward.updatedAt = new Date().toISOString();
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_REWARD', 'REWARD', rewardId, parsed.data);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ reward });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reward update error:', error);
     res.status(500).json({ error: 'Nie udało się zaktualizować nagrody' });
   }
@@ -2725,9 +2930,13 @@ app.delete('/api/rewards/:id', authMiddleware, requireParent, async (req, res) =
     reward.active = false;
     reward.updatedAt = new Date().toISOString();
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_REWARD', 'REWARD', rewardId);
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ reward });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reward archive error:', error);
     res.status(500).json({ error: 'Nie udało się zarchiwizować nagrody' });
   }
@@ -2774,9 +2983,13 @@ app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, r
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UNLOCK_REWARD', 'REWARD', rewardId, {
       childId: parsed.data.childId,
     });
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.status(201).json({ unlock, created: true });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reward unlock error:', error);
     res.status(500).json({ error: 'Nie udało się odblokować nagrody' });
   }
@@ -2795,10 +3008,14 @@ app.post('/api/rewards/unlocks/:unlockId/claim', authMiddleware, requireParent, 
     if (!unlock.claimedAt) {
       unlock.claimedAt = new Date().toISOString();
       data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'CLAIM_REWARD', 'REWARD_UNLOCK', unlockId);
-      await saveStateData(state.id, data);
+      await saveStateData(state, data);
     }
     res.json({ unlock });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Reward claim error:', error);
     res.status(500).json({ error: 'Nie udało się oznaczyć nagrody jako wydanej' });
   }
@@ -2809,6 +3026,10 @@ app.get('/api/family-goal', authMiddleware, async (req, res) => {
     const { data } = await loadStateData(req.auth.user.familyId);
     res.json({ familyGoal: data.familyGoal });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Family goal read error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać celu rodzinnego' });
   }
@@ -2829,9 +3050,13 @@ app.put('/api/family-goal', authMiddleware, requireParent, async (req, res) => {
       target: parsed.data.target,
       mode: parsed.data.mode,
     });
-    await saveStateData(state.id, data);
+    await saveStateData(state, data);
     res.json({ familyGoal: data.familyGoal });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Family goal update error:', error);
     res.status(500).json({ error: 'Nie udało się zaktualizować celu rodzinnego' });
   }
@@ -2848,13 +3073,17 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     if (['points', 'streaks', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
       recomputePointsAndGrants(data);
-      await saveStateData(state.id, data);
+      await saveStateData(state, data, { skipOnConflict: true });
     }
     res.json({
       key,
       value: filterStorageValueForUser(key, data, req.auth.user),
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Storage get error:', error);
     res.status(500).json({ error: 'Błąd odczytu storage' });
   }
@@ -2870,10 +3099,14 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     const nextData = mergeStorageValuesForUser(data, { [key]: req.body?.value ?? null }, req.auth.user);
-    await saveStateData(state.id, nextData);
+    await saveStateData(state, nextData);
 
     res.json({ ok: true, key });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Storage set error:', error);
     res.status(500).json({ error: 'Błąd zapisu storage' });
   }
@@ -2897,10 +3130,14 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     const nextData = mergeStorageValuesForUser(data, values, req.auth.user);
-    await saveStateData(state.id, nextData);
+    await saveStateData(state, nextData);
 
     res.json({ ok: true, keys });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Storage merge error:', error);
     res.status(500).json({ error: 'Blad zapisu storage merge' });
   }
@@ -2916,7 +3153,7 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
 
   try {
     const { state } = await loadStateData(req.auth.user.familyId);
-    await saveStateData(state.id, nextData);
+    await saveStateData(state, nextData);
     res.json({
       ok: true,
       restored: {
@@ -2930,6 +3167,10 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
       streaks: nextData.streaks,
     });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Storage restore backup error:', error);
     res.status(500).json({ error: 'Nie udało się odtworzyć backupu' });
   }
@@ -2944,6 +3185,10 @@ app.get('/api/storage/list', authMiddleware, async (req, res) => {
     const keys = sourceKeys.filter((key) => key.startsWith(prefix));
     res.json({ keys });
   } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
     console.error('Storage list error:', error);
     res.status(500).json({ error: 'Błąd listowania storage' });
   }
@@ -3000,5 +3245,8 @@ module.exports = {
     recomputePointsAndGrants,
     normalizeRestoredBackupData,
     reverseApprovalEffects,
+    createSaveStateData,
+    FamilyStateConflictError,
+    isFamilyStateConflict,
   },
 };
