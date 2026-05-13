@@ -37,6 +37,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano bezpieczna archiwizacje zadan: zadanie dostaje `archivedAt`, a historyczne zatwierdzenia sprzed archiwizacji nadal zostaja w punktach i ledgerze.
 - Dodano backendowy endpoint `POST /api/tasks/:id/archive-matching`, ktory archiwizuje wszystkie aktywne zadania o tej samej definicji u dzieci.
 - Panel rodzica w zakladce `Zadania` pokazuje przycisk `U wszystkich`, gdy istnieje wiecej niz jedna aktywna kopia tego samego zadania.
+- Panel rodzica ma widok `Archiwum` zadan oraz przycisk `Przywroc`. Przywrocenie zapisuje `restoredAt`, wiec okres miedzy `archivedAt` i `restoredAt` pozostaje historycznie nieaktywny.
 - Panel rodzica ma teraz modal `Edytuj zadanie` zamiast systemowych `prompt()`. Edycja obejmuje dziecko, nazwe, typ `MIN/PLUS/WEEKLY`, punkty, dni tygodnia i opis.
 - Uporzadkowano zrodlo frontendu: aktualnym i jedynym browser-loaded zrodlem jest `familyquest-app.compiled.js`; stary `familyquest-app.jsx` zostal usuniety jako legacy/localStorage.
 - Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu frontendu, braku legacy JSX i aktualnej polityki PWA bez offline cache.
@@ -57,6 +58,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
 - `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
 - `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
+- `npm run test:task-restore` - OK, test sprawdzil, ze okres archiwum pozostaje nieaktywny po przywroceniu oraz Playwrightowo przejscie `Archiwum -> Przywroc -> Aktywne`.
 - `npm run test:task-edit` - OK, Playwright sprawdzil modal edycji zadania, zmiane nazwy, typu, punktow, opisu i dni tygodnia oraz payload `PUT /api/tasks/:id`.
 - `npm run test:frontend-source` - OK, test potwierdza `familyquest-app.compiled.js` jako entrypoint, brak legacy JSX oraz service worker cleanup.
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
@@ -70,27 +72,19 @@ Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym por
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
 2. Testy API wymagaja stabilnej lokalnej bazy testowej.
-3. Archiwizacja zadan ma juz bulk dla identycznej definicji, ale nie ma jeszcze widoku archiwum ani przywracania zadania z UI.
+3. Archiwizacja/przywracanie zadan jest wdrozone, ale nie ma jeszcze zbiorczego przywracania wszystkich pasujacych kopii.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po uporzadkowaniu frontendu: **archiwum/przywracanie zadan albo stabilna lokalna baza testowa**.
+Najbardziej sensowny kolejny pakiet po archiwum zadan: **stabilna lokalna baza testowa**.
 
 Dlaczego ten pakiet teraz:
 
 - Globalne kolizje kodow dzieci nadal sa odlozone na koniec, bo obecnie jest jedna rodzina.
-- Bulk archiwizacja jest wdrozona, ale nie ma jeszcze wygodnego widoku archiwum ani przywracania.
 - Lokalny `npm test` pomija integracje bez bazy testowej, wiec regresje API nadal sa slabiej pokryte lokalnie.
+- Endpointy zadan, punktow i restore maja juz sporo logiki domenowej, wiec testy API na prawdziwej bazie zaczynaja byc coraz bardziej potrzebne.
 
 Minimalny zakres wdrozenia:
-
-Opcja A - archiwum/przywracanie:
-
-1. Dodac filtr/widok zarchiwizowanych zadan w panelu rodzica.
-2. Dodac endpoint i przycisk przywracania zadania.
-3. Sprawdzic, ze `archivedAt` nie kasuje historii punktow po restore.
-
-Opcja B - stabilna lokalna baza testowa:
 
 1. Dodac `.env.test.example`.
 2. Dodac skrypt przygotowania lokalnej bazy testowej.
@@ -98,7 +92,7 @@ Opcja B - stabilna lokalna baza testowa:
 
 Ryzyko/decyzja przed implementacja:
 
-- Trzeba wybrac, czy nastepny ruch ma byc bardziej produktowy dla rodzica, czy techniczny pod testy.
+- Trzeba wybrac, czy lokalna baza testowa ma byc Docker/Postgres, czy baza w istniejacym CT uzywana tylko do testow.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -181,21 +175,21 @@ Priorytet: P2.
 
 ### 6. Archiwizacja Zadan
 
-Status: wdrozone w wariancie bulk dla tej samej definicji.
+Status: wdrozone w wariancie bulk archive + pojedyncze restore.
 
-Rodzic moze archiwizowac pojedyncze zadanie albo jednym przyciskiem `U wszystkich` zarchiwizowac wszystkie aktywne kopie o tej samej definicji: tytul, typ, punkty, opis i dni tygodnia. Archiwizacja ustawia `active: false` i `archivedAt`.
+Rodzic moze archiwizowac pojedyncze zadanie albo jednym przyciskiem `U wszystkich` zarchiwizowac wszystkie aktywne kopie o tej samej definicji: tytul, typ, punkty, opis i dni tygodnia. Archiwizacja ustawia `active: false` i `archivedAt`. Widok `Archiwum` pokazuje zarchiwizowane zadania i pozwala je przywrocic.
 
 Wazna zasada logiki:
 
 - zadania zarchiwizowane nie pokazuja sie dzieciom i nie sa wymagane od daty archiwizacji,
 - zatwierdzone wykonania sprzed `archivedAt` nadal licza sie w `pointLedger`, `points`, dniu zaliczonym i passie historycznej,
-- nowe wykonania dla zarchiwizowanego zadania sa blokowane.
+- nowe wykonania dla zarchiwizowanego zadania sa blokowane,
+- przywrocenie ustawia `restoredAt`; okres `archivedAt` -> `restoredAt` pozostaje historycznie nieaktywny.
 
 Co zostaje dalej:
 
-1. Dodac widok archiwum zadan w panelu rodzica.
-2. Dodac przywracanie zadania z archiwum.
-3. Po stabilizacji testowej bazy dodac pelny test API bez pomijania lokalnego `DATABASE_URL`.
+1. Opcjonalnie dodac zbiorcze przywracanie wszystkich pasujacych kopii zadania.
+2. Po stabilizacji testowej bazy dodac pelny test API bez pomijania lokalnego `DATABASE_URL`.
 
 Priorytet: zrealizowane, rozszerzenia P3.
 
@@ -265,8 +259,8 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Dodac widok archiwum/przywracanie zadan, jesli bedzie potrzebne w codziennym uzyciu.
-2. Przygotowac stabilna lokalna baze testowa.
+1. Przygotowac stabilna lokalna baze testowa.
+2. Opcjonalnie dodac zbiorcze przywracanie pasujacych zadan.
 3. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
 4. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica.
 
@@ -274,7 +268,7 @@ Rekomendowana kolejność od teraz:
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: archiwum/przywracanie zadan.
-- Pakiet B: stabilna lokalna baza testowa.
+- Pakiet A: stabilna lokalna baza testowa.
+- Pakiet B: zbiorcze przywracanie pasujacych zadan.
 - Pakiet C: logowanie dziecka z kodem rodziny.
 - Pakiet D: rozszerzony widok ledgeru dla rodzica.

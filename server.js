@@ -536,11 +536,17 @@ const isTaskScheduledForDate = (task, dateInput) => {
 };
 
 const getTaskArchiveDate = (task) => {
-  if (!task || task.active !== false) return null;
-  const archivedAt = task.archivedAt || task.updatedAt || null;
+  if (!task) return null;
+  const archivedAt = task.archivedAt || (task.active === false ? task.updatedAt : null);
   if (!archivedAt) return null;
   const archivedDate = toDateString(archivedAt);
   return isValidDateString(archivedDate) ? archivedDate : null;
+};
+
+const getTaskRestoreDate = (task) => {
+  if (!task?.restoredAt) return null;
+  const restoredDate = toDateString(task.restoredAt);
+  return isValidDateString(restoredDate) ? restoredDate : null;
 };
 
 const isTaskActiveForDate = (task, dateInput) => {
@@ -548,9 +554,14 @@ const isTaskActiveForDate = (task, dateInput) => {
   const date = toDateString(dateInput);
   const createdDate = getEntityCreatedDate(task);
   if (createdDate && date < createdDate) return false;
-  if (task.active !== false) return true;
+
   const archivedDate = getTaskArchiveDate(task);
-  return Boolean(archivedDate && date < archivedDate);
+  if (!archivedDate) return task.active !== false;
+  if (date < archivedDate) return true;
+
+  const restoredDate = getTaskRestoreDate(task);
+  if (task.active !== false && restoredDate && date >= restoredDate) return true;
+  return false;
 };
 
 const normalizeTaskArchiveText = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl');
@@ -565,14 +576,13 @@ const getTaskArchiveFingerprint = (task) =>
   });
 
 const isApprovedCompletionBeforeArchive = (task, completion) => {
-  if (!task || task.active !== false) return true;
-  const archivedAtMs = Date.parse(task.archivedAt || task.updatedAt || 0);
-  const completionMs = getCompletionTimestamp(completion);
-  if (Number.isFinite(archivedAtMs) && archivedAtMs > 0 && completionMs > 0) {
-    return completionMs <= archivedAtMs;
-  }
+  if (!task) return false;
   const archivedDate = getTaskArchiveDate(task);
-  return Boolean(archivedDate && completion?.date < archivedDate);
+  if (!archivedDate) return true;
+  if (completion?.date < archivedDate) return true;
+
+  const restoredDate = getTaskRestoreDate(task);
+  return Boolean(task.active !== false && restoredDate && completion?.date >= restoredDate);
 };
 
 const getWeekStart = (dateInput) => {
@@ -2342,9 +2352,10 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
     if (typeof parsed.data.active === 'boolean') {
       next.active = parsed.data.active;
       if (parsed.data.active) {
-        next.archivedAt = null;
+        if (next.archivedAt) next.restoredAt = new Date().toISOString();
       } else if (!next.archivedAt) {
         next.archivedAt = new Date().toISOString();
+        next.restoredAt = null;
       }
     }
     next.updatedAt = new Date().toISOString();
@@ -2439,6 +2450,43 @@ app.post('/api/tasks/:id/archive-matching', authMiddleware, requireParent, async
     }
     console.error('Matching task archive error:', error);
     res.status(500).json({ error: 'Nie udało się zarchiwizować pasujących zadań' });
+  }
+});
+
+app.post('/api/tasks/:id/restore', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const taskId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const task = data.tasks.find((item) => item.id === taskId);
+    if (!task) {
+      res.status(404).json({ error: 'Zadanie nie istnieje' });
+      return;
+    }
+    if (task.active !== false) {
+      res.status(409).json({ error: 'Zadanie jest już aktywne' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    task.active = true;
+    task.restoredAt = now;
+    task.updatedAt = now;
+    recomputePointsAndGrants(data);
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASK', 'TASK', taskId, {
+      childId: task.childId,
+      title: task.title,
+      archivedAt: task.archivedAt || null,
+      restoredAt: task.restoredAt,
+    });
+    await saveStateData(state, data);
+    res.json({ ok: true, task, restoredAt: task.restoredAt });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Task restore error:', error);
+    res.status(500).json({ error: 'Nie udało się przywrócić zadania' });
   }
 });
 
