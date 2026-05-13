@@ -2426,44 +2426,24 @@ const App = () => {
           marginTop: '0.35rem'
         }
       }, "Kod dziecka: ", React.createElement("strong", null, child.accessCode || '----')), React.createElement("div", {
-        style: {
-          display: 'flex',
-          gap: '0.5rem',
-          marginTop: '1rem'
-        }
+        className: "child-admin-actions"
       }, React.createElement("button", {
         className: "btn btn-secondary",
-        style: {
-          flex: 1
-        },
         onClick: () => setEditingChild(child)
       }, "\u270F\uFE0F Edytuj"), React.createElement("button", {
         className: "btn btn-danger",
-        style: {
-          flex: 1
-        },
         onClick: () => {
           if (confirm(`Archiwizować profil ${child.name}?`)) {
             archiveChild(child.id);
           }
         }
       }, "\uD83D\uDDC3\uFE0F Archiwizuj")), React.createElement("div", {
-        style: {
-          display: 'flex',
-          gap: '0.5rem',
-          marginTop: '0.5rem'
-        }
+        className: "child-admin-actions"
       }, React.createElement("button", {
         className: "btn btn-success",
-        style: {
-          flex: 1
-        },
         onClick: () => addPointAdjustment(child, 'BONUS')
       }, "\uD83C\uDF81 Premia"), React.createElement("button", {
         className: "btn btn-danger",
-        style: {
-          flex: 1
-        },
         onClick: () => addPointAdjustment(child, 'PENALTY')
       }, "\u26A0\uFE0F Kara")));
     }))), parentTab === 'tasks' && React.createElement(React.Fragment, null, React.createElement("div", {

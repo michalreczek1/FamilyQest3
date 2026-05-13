@@ -407,6 +407,30 @@
     .child-avatar { font-size: 5rem; margin: 1rem 0; }
     .child-card { text-align: center; padding: 2rem; cursor: pointer; transition: all 0.3s; }
     .child-card:hover { transform: scale(1.05); }
+
+    .child-admin-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .child-admin-actions + .child-admin-actions {
+      margin-top: 0.5rem;
+    }
+
+    .child-admin-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      width: 100%;
+      justify-content: center;
+      white-space: normal;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
+      padding-left: 0.7rem;
+      padding-right: 0.7rem;
+    }
     
     .progress-bar {
       height: 12px;
@@ -725,6 +749,10 @@
       .child-hero-avatar {
         font-size: 3.6rem;
       }
+      .child-admin-actions .btn {
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
+      }
       .top-status {
         flex-wrap: wrap;
         justify-content: center;
@@ -777,7 +805,7 @@
 
     <script>
       const appScript = document.createElement('script');
-      appScript.src = `/familyquest-app.compiled.js?v=2026-05-13-task-restore-matching&t=${Date.now()}`;
+      appScript.src = `/familyquest-app.compiled.js?v=2026-05-13-child-actions-layout&t=${Date.now()}`;
       document.body.appendChild(appScript);
     </script>
 </body>

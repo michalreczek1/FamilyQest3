@@ -25,6 +25,7 @@
     "test:task-restore": "node scripts/check-task-restore-archive.js",
     "test:task-edit": "node scripts/check-task-edit-modal.js",
     "test:frontend-source": "node scripts/check-frontend-source.js",
+    "test:child-actions": "node scripts/check-child-actions-layout.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
     "lint": "eslint .",
     "format": "prettier --write ."
