@@ -874,6 +874,32 @@ const App = () => {
       alert(e.message || 'Nie udało się odrzucić zadania');
     }
   };
+  const reverseApproval = async completion => {
+    if (!completion || !completion.approvedByParent) return;
+    const task = tasks.find(item => item.id === completion.taskId);
+    const child = children.find(item => item.id === completion.childId);
+    const label = `${child?.name || 'Dziecko'} • ${task?.title || 'zadanie'} • ${completion.date}`;
+    const ok = window.confirm(`Cofnąć zatwierdzenie?\n\n${label}\n\nSystem przeliczy punkty i passę, a korekta zostanie zapisana w historii.`);
+    if (!ok) return;
+    try {
+      const result = await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/reverse-approval`, {
+        method: 'POST',
+        body: {
+          reason: `Cofnięcie zatwierdzenia: ${task?.title || 'zadanie'}`
+        }
+      });
+      const reversal = result?.reversal || {};
+      const delta = Number(reversal.delta || 0);
+      const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
+      window.alert(`Cofnięto zatwierdzenie.\nEfekt punktowy: ${deltaText} pkt (${reversal.previousPoints ?? '?'} → ${reversal.newPoints ?? '?'}).`);
+      await loadData({
+        preserveView: true,
+        silent: true
+      });
+    } catch (e) {
+      alert(e.message || 'Nie udało się cofnąć zatwierdzenia');
+    }
+  };
   const completeTaskAsParent = async (task, childId, date) => {
     if (!task || !childId || !date) return;
     try {
@@ -2119,12 +2145,16 @@ const App = () => {
         }, task.description)), React.createElement("div", {
           className: `badge badge-${String(task.tier || 'min').toLowerCase()}`
         }, task.tier || 'MIN'), task.points > 0 && React.createElement("div", {
-          className: "badge badge-points"
-        }, "+", task.points, " pkt"), React.createElement("button", {
-          className: isApproved ? 'btn btn-secondary' : 'btn btn-success',
-          disabled: isApproved,
-          onClick: () => completeTaskAsParent(task, child.id, parentTaskDateValue)
-        }, isApproved ? 'Zaliczone' : isDone ? 'Zatwierd\u017A' : 'Zalicz'));
+        className: "badge badge-points"
+      }, "+", task.points, " pkt"), React.createElement("button", {
+        className: isApproved ? 'btn btn-secondary' : 'btn btn-success',
+        disabled: isApproved,
+        onClick: () => completeTaskAsParent(task, child.id, parentTaskDateValue)
+      }, isApproved ? 'Zaliczone' : isDone ? 'Zatwierd\u017A' : 'Zalicz'), isApproved && React.createElement("button", {
+        className: "btn btn-danger",
+        onClick: () => reverseApproval(completion),
+        title: "Cofnij zatwierdzenie i przelicz punkty"
+      }, "Cofnij"));
       }));
     })), React.createElement("div", {
       style: {

@@ -21,6 +21,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Aktywny dzien bez zadan `MIN` nie jest juz automatycznie `PASSED`, tylko `NO_REQUIRED_TASKS`.
 - Produkcja `https://fq.familyos.pl` zostala zaktualizowana do `c5a0a81`.
 - CSP na produkcji zawiera `script-src 'self' 'unsafe-inline' https://unpkg.com`, wiec frontend nie powinien zatrzymywac sie na ekranie `Ladowanie FamilyQuest...` z powodu blokady inline script.
+- Dodano jawne cofniecie zatwierdzenia zadania przez rodzica: `POST /api/completions/:id/reverse-approval`.
+- Cofniecie zatwierdzenia przelicza punkty i passe ze zrodel prawdy, zapisuje jawny wpis `REVERSAL` w `pointAdjustments` i nie nalicza tej korekty drugi raz przy kolejnym `recomputePointsAndGrants`.
+- Panel rodzica pokazuje przycisk `Cofnij` przy zatwierdzonym zadaniu na wybrany dzien i wyswietla realny efekt punktowy po operacji.
 
 ## Weryfikacja Wykonana
 
@@ -31,6 +34,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `https://fq.familyos.pl/health` - OK, backend i baza odpowiadaja.
 - Snapshot przed wdrozeniem: `predeploy-familyquest-20260513-105625`.
 - Backup plikow produkcyjnych przed pull: `/opt/familyquest/.deploy-backups/local-before-pull-20260513-105626`.
+- `npm run test:reverse-approval` - OK, test sprawdzil logike cofniecia `9 -> 4` punktow bez podwojnego odejmowania po recompute oraz UI rodzica z przyciskiem `Cofnij` i alertem `-5 pkt`.
 - `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
@@ -39,37 +43,37 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
-1. Brak jawnej sciezki cofniecia zatwierdzenia z korekta punktow.
-2. Brak pelnego ledgeru punktow, czyli historii transakcji punktowych.
-3. Import JSON nadal zachowuje sie jak merge storage, nie jak prawdziwy restore backupu.
-4. Brak ochrony przed rownoleglym nadpisaniem `FamilyState`.
-5. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-6. Testy API wymagaja stabilnej lokalnej bazy testowej.
-7. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
+1. Brak pelnego ledgeru punktow, czyli historii transakcji punktowych.
+2. Import JSON nadal zachowuje sie jak merge storage, nie jak prawdziwy restore backupu.
+3. Brak ochrony przed rownoleglym nadpisaniem `FamilyState`.
+4. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
+5. Testy API wymagaja stabilnej lokalnej bazy testowej.
+6. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet do wdrozenia: **jawne cofniecie zatwierdzenia z korekta punktow**.
+Najbardziej sensowny kolejny pakiet po cofnieciu zatwierdzenia: **restore backupu osobno od storage merge**.
 
 Dlaczego ten pakiet teraz:
 
-- Poprzednia naprawa slusznie zablokowala ciche cofanie zatwierdzonych completion, ale rodzic nadal potrzebuje bezpiecznej sciezki korekty.
-- To bezposrednio domyka logike liczenia punktow po blednej decyzji rodzica.
-- Jest mniejsze i mniej ryzykowne niz pelny ledger albo wersjonowanie calego `FamilyState`.
-- Da sie zweryfikowac konkretnie: API testem/fixturem oraz Playwrightem z widocznym efektem punktowym w panelu rodzica.
+- To jest nastepny punkt, ktory moze realnie uszkodzic dane, jesli import JSON zostanie pomylony z synchronizacja.
+- Backend juz ma `normalizeStateData` i `recomputePointsAndGrants`, wiec da sie zrobic bez projektowania pelnego ledgeru.
+- Dobrze pasuje do obecnej filozofii: po restore stan jest nadpisany jawnie, a punkty/passsa sa przeliczone na serwerze.
+- Da sie zweryfikowac fixturem API oraz Playwrightem importu z potwierdzeniem, ze to operacja zastapienia danych.
 
 Minimalny zakres wdrozenia:
 
-1. Dodac endpoint rodzica typu `POST /api/completions/:id/reverse-approval`.
-2. Endpoint ma policzyc efekt cofniecia: punkty zadania, ewentualny dzien zaliczony, ewentualny bonus tygodniowy.
-3. Zapisac korekte w `pointAdjustments` jako jawny wpis techniczny z powodem, np. `REVERSAL`.
-4. Oznaczyc completion jako niezatwierdzone albo odrzucone w sposob jawny, bez cichego usuwania historii.
-5. Pokazac rodzicowi w UI potwierdzenie z przewidywanym efektem punktowym.
-6. Dodac test, ktory sprawdza nie tylko status HTTP, ale finalne punkty, passe i widok UI po korekcie.
+1. Dodac endpoint `POST /api/storage/restore-backup`, tylko dla rodzica.
+2. Walidowac caly snapshot przez `normalizeStateData`.
+3. Nadpisac stan rodziny jako restore, nie merge.
+4. Po restore uruchomic `recomputePointsAndGrants`.
+5. Przepiac frontendowy import JSON na nowy endpoint.
+6. W UI pokazac jasne potwierdzenie: import zastapi dane rodziny.
+7. Dodac test, ktory pokazuje, ze restore usuwa stare dane, przelicza punkty i nie przyjmuje surowego `points` ze snapshotu jako autorytetu.
 
 Ryzyko/decyzja przed implementacja:
 
-- Trzeba ustalic, czy cofniecie zatwierdzenia ma odejmowac tez juz odblokowane nagrody. Rekomendacja na teraz: nie cofac automatycznie `rewardUnlocks`; dopisac to jako jawna zasade do UI/dokumentacji, a cofanie nagrod zostawic na osobna decyzje produktowa.
+- Trzeba zdecydowac, czy restore ma wymagac dodatkowego wpisania PIN-u rodzica. Rekomendacja: na poczatek wystarczy sesja rodzica + modal potwierdzajacy, PIN mozna dodac pozniej razem z wersjonowaniem/operacjami krytycznymi.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -98,18 +102,17 @@ Priorytet: P1/P2.
 
 ### 2. Jawna Korekta Punktow Dla Cofania Zatwierdzen
 
-Status: cofanie zatwierdzonego `completion` jest zablokowane.
+Status: wdrozone.
 
-To chroni saldo, ale rodzic nie ma jeszcze wygodnej sciezki "cofnij zatwierdzenie i skoryguj punkty". Na razie musi uzyc kary/premii recznej.
+Rodzic ma osobna sciezke `reverse-approval`. Completion jest oznaczany jako odrzucony po cofnieciu, punkty i passa sa przeliczane, a wpis `REVERSAL` trafia do `pointAdjustments` jako jawna historia efektu.
 
-Co zrobic dalej:
+Co zostaje dalej:
 
-1. Dodac osobna akcje rodzica: `void approval` albo `reverse approval`.
-2. Pokazac rodzicowi przewidywany efekt punktowy.
-3. Zapisac korekte jako `MANUAL_CORRECTION` lub przyszly wpis ledgeru.
-4. Zdecydowac, co robic z nagrodami juz odblokowanymi przez punkty, ktore zostaly potem cofnięte.
+1. Rozbudowac to pozniej o pelny ledger punktow.
+2. Zdecydowac, co robic z nagrodami juz odblokowanymi przez punkty, ktore zostaly potem cofniete.
+3. Dodac docelowy test integracyjny na prawdziwej bazie, gdy bedzie stabilny `DATABASE_URL` testowy.
 
-Priorytet: P2.
+Priorytet: zrealizowane, pozostale decyzje P2/P3.
 
 ### 3. Restore Backupu Osobno Od Storage Merge
 
@@ -224,21 +227,18 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Dodac jawna akcje korekty/cofniecia zatwierdzenia z widocznym efektem punktowym.
-2. Dopisac testy regresyjne dla tej korekty oraz dla juz naprawionych reguł liczenia. Jesli lokalny Postgres nadal blokuje `npm test`, uzyc kontrolowanego testu Playwright/API fixture i opisac ograniczenie.
-3. Rozdzielic restore backup od zwyklego storage merge.
-4. Dodac wersjonowanie `FamilyState` dla ochrony przed lost update.
-5. Rozwiazac globalne kolizje kodow dzieci.
-6. Uporzadkowac zrodlo frontendu i README/PWA.
-7. Dopiero potem projektowac pelny `pointLedger`.
+1. Rozdzielic restore backup od zwyklego storage merge.
+2. Dodac wersjonowanie `FamilyState` dla ochrony przed lost update.
+3. Rozwiazac globalne kolizje kodow dzieci.
+4. Uporzadkowac zrodlo frontendu i README/PWA.
+5. Dopiero potem projektowac pelny `pointLedger`.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: jawne cofniecie zatwierdzenia + korekta punktow.
-- Pakiet B: testy regresyjne API/Playwright dla reguł liczenia.
-- Pakiet C: restore backup + UI importu.
-- Pakiet D: wersjonowanie `FamilyState`.
-- Pakiet E: logowanie dziecka z kodem rodziny.
-- Pakiet F: porzadkowanie frontendu/build/docs.
+- Pakiet A: restore backup + UI importu.
+- Pakiet B: wersjonowanie `FamilyState`.
+- Pakiet C: logowanie dziecka z kodem rodziny.
+- Pakiet D: porzadkowanie frontendu/build/docs.
+- Pakiet E: pelny ledger punktow.

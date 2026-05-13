@@ -437,6 +437,10 @@ const pointAdjustmentSchema = z.object({
   note: z.string().trim().max(240).optional().nullable(),
 });
 
+const reverseApprovalSchema = z.object({
+  reason: z.string().trim().max(240).optional().nullable(),
+});
+
 const bulkApproveSchema = z.object({
   childId: z.string().min(1).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -847,6 +851,7 @@ const recomputePointsAndGrants = (data) => {
     .slice()
     .sort((a, b) => getAdjustmentTimestamp(a) - getAdjustmentTimestamp(b))
     .forEach((adjustment) => {
+      if (adjustment.affectsBalance === false) return;
       if (!childrenById.has(adjustment.childId)) return;
       const delta =
         typeof adjustment.delta === 'number'
@@ -952,6 +957,81 @@ const applyApprovalEffects = (data, completion, actorUserId, now = new Date().to
   refreshChildStreak(data, completion.childId, now);
   unlockEligibleRewards(data, completion.childId, actorUserId);
   return true;
+};
+
+const reverseApprovalEffects = (data, completion, actorUserId, reason = '', now = new Date().toISOString()) => {
+  if (!completion || !completion.approvedByParent) {
+    return null;
+  }
+
+  recomputePointsAndGrants(data);
+  const childId = completion.childId;
+  const previousPoints = Number(data.points[childId] || 0);
+
+  completion.doneByChild = false;
+  completion.approvedByParent = false;
+  completion.approvedAt = null;
+  completion.rejectedByParent = true;
+  completion.rejectedAt = now;
+  completion.reversedAt = now;
+  completion.reversedBy = actorUserId;
+  completion.reversalReason = reason || 'Cofnięcie zatwierdzenia';
+  completion.updatedAt = now;
+
+  recomputePointsAndGrants(data);
+  const newPoints = Number(data.points[childId] || 0);
+  const appliedDelta = newPoints - previousPoints;
+  const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === childId);
+  const child = data.children.find((item) => item.id === childId);
+  const adjustment = {
+    id: createEntityId('points'),
+    childId,
+    type: 'REVERSAL',
+    requestedPoints: Math.abs(appliedDelta),
+    points: Math.abs(appliedDelta),
+    delta: appliedDelta,
+    previousPoints,
+    newPoints,
+    affectsBalance: false,
+    sourceCompletionId: completion.id,
+    sourceTaskId: completion.taskId,
+    sourceDate: completion.date,
+    note:
+      reason ||
+      `Cofnięto zatwierdzenie: ${task?.title || 'zadanie'} (${completion.date || 'bez daty'})`,
+    createdBy: actorUserId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  data.pointAdjustments = [adjustment, ...data.pointAdjustments];
+  data.auditLogs = addAuditLogEntry(data, actorUserId, 'REVERSE_TASK_APPROVAL', 'COMPLETION', completion.id, {
+    childId,
+    childName: child?.name || null,
+    taskId: completion.taskId,
+    taskTitle: task?.title || null,
+    date: completion.date,
+    previousPoints,
+    newPoints,
+    delta: appliedDelta,
+    reason: adjustment.note,
+  });
+
+  return {
+    completion,
+    pointAdjustment: adjustment,
+    points: data.points,
+    reversal: {
+      previousPoints,
+      newPoints,
+      delta: appliedDelta,
+      removedPoints: Math.abs(appliedDelta),
+      childId,
+      taskId: completion.taskId,
+      taskTitle: task?.title || null,
+      date: completion.date,
+    },
+  };
 };
 
 const pickChildMapValue = (source, childId) => {
@@ -2121,7 +2201,7 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
     }
     if (completion.approvedByParent) {
       res.status(409).json({
-        error: 'Zatwierdzonego zadania nie można odrzucić bez jawnej korekty punktów',
+        error: 'Zadanie jest już zatwierdzone',
       });
       return;
     }
@@ -2149,6 +2229,12 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
     const completion = data.completions.find((item) => item.id === completionId);
     if (!completion) {
       res.status(404).json({ error: 'Wykonanie nie istnieje' });
+      return;
+    }
+    if (completion.approvedByParent) {
+      res.status(409).json({
+        error: 'Zatwierdzonego zadania nie można odrzucić bez jawnej korekty punktów',
+      });
       return;
     }
     const child = data.children.find((item) => item.id === completion.childId && !item.archived);
@@ -2182,6 +2268,40 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
   } catch (error) {
     console.error('Reject completion error:', error);
     res.status(500).json({ error: 'Nie udało się odrzucić zadania' });
+  }
+});
+
+app.post('/api/completions/:id/reverse-approval', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const parsed = reverseApprovalSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowy powód cofnięcia zatwierdzenia' });
+      return;
+    }
+
+    const completionId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const completion = data.completions.find((item) => item.id === completionId);
+    if (!completion) {
+      res.status(404).json({ error: 'Wykonanie nie istnieje' });
+      return;
+    }
+    if (!completion.approvedByParent) {
+      res.status(409).json({ error: 'Tylko zatwierdzone zadanie można cofnąć' });
+      return;
+    }
+
+    const result = reverseApprovalEffects(data, completion, req.auth.user.id, parsed.data.reason || '');
+    if (!result) {
+      res.status(409).json({ error: 'Nie udało się cofnąć zatwierdzenia' });
+      return;
+    }
+
+    await saveStateData(state.id, data);
+    res.json(result);
+  } catch (error) {
+    console.error('Reverse approval error:', error);
+    res.status(500).json({ error: 'Nie udało się cofnąć zatwierdzenia' });
   }
 });
 
@@ -2824,4 +2944,8 @@ if (require.main === module) {
 module.exports = {
   app,
   prisma,
+  __test: {
+    recomputePointsAndGrants,
+    reverseApprovalEffects,
+  },
 };
