@@ -2,8 +2,9 @@ const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const request = require('supertest');
 const { chromium } = require('playwright');
-const { __test, prisma } = require('../server');
+const { app, __test, prisma } = require('../server');
 
 const rootDir = path.join(__dirname, '..');
 let staticServer = null;
@@ -109,13 +110,99 @@ const runLogicCheck = () => {
   assert(state.pointLedger.some((entry) => entry.date === '2024-05-15' && entry.type === 'TASK_APPROVED'));
 };
 
+const runApiCheck = async () => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (error) {
+    console.warn(`Task restore matching API check skipped: database is unavailable (${error.code || error.name})`);
+    return false;
+  }
+
+  const suffix = Date.now();
+  const registerRes = await request(app)
+    .post('/api/auth/register')
+    .send({
+      email: `restore.${suffix}@familyquest.local`,
+      password: 'RestoreParentPass123!',
+      pinCode: '2468',
+      familyName: 'Restore Test Family',
+    });
+  assert.strictEqual(registerRes.status, 201);
+  const parentToken = registerRes.body.token;
+
+  const createChild = async (name) => {
+    const response = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ name, avatar: '👧', activeDays: [1, 2, 3, 4, 5, 6, 7] });
+    assert.strictEqual(response.status, 201);
+    return response.body.child;
+  };
+  const firstChild = await createChild(`Restore A ${suffix}`);
+  const secondChild = await createChild(`Restore B ${suffix}`);
+
+  const createTask = async (childId) => {
+    const response = await request(app)
+      .post('/api/tasks')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId,
+        title: 'Wspólne sprzątanie',
+        tier: 'PLUS',
+        points: 4,
+        description: 'Ten sam zestaw do restore',
+        daysOfWeek: [1, 3, 5],
+      });
+    assert.strictEqual(response.status, 201);
+    return response.body.task;
+  };
+  const firstTask = await createTask(firstChild.id);
+  const secondTask = await createTask(secondChild.id);
+
+  const archiveRes = await request(app)
+    .post(`/api/tasks/${firstTask.id}/archive-matching`)
+    .set('Authorization', `Bearer ${parentToken}`);
+  assert.strictEqual(archiveRes.status, 200);
+  assert.strictEqual(archiveRes.body.archivedCount, 2);
+
+  const restoreRes = await request(app)
+    .post(`/api/tasks/${firstTask.id}/restore-matching`)
+    .set('Authorization', `Bearer ${parentToken}`);
+  assert.strictEqual(restoreRes.status, 200);
+  assert.strictEqual(restoreRes.body.restoredCount, 2);
+  assert(restoreRes.body.restoredTaskIds.includes(firstTask.id));
+  assert(restoreRes.body.restoredTaskIds.includes(secondTask.id));
+
+  const firstActiveTasks = await request(app)
+    .get(`/api/tasks?childId=${encodeURIComponent(firstChild.id)}`)
+    .set('Authorization', `Bearer ${parentToken}`);
+  assert.strictEqual(firstActiveTasks.status, 200);
+  assert.strictEqual(firstActiveTasks.body.tasks.some((task) => task.id === firstTask.id), true);
+
+  const secondActiveTasks = await request(app)
+    .get(`/api/tasks?childId=${encodeURIComponent(secondChild.id)}`)
+    .set('Authorization', `Bearer ${parentToken}`);
+  assert.strictEqual(secondActiveTasks.status, 200);
+  assert.strictEqual(secondActiveTasks.body.tasks.some((task) => task.id === secondTask.id), true);
+  return true;
+};
+
 const runUiCheck = async () => {
+  const children = [
+    child,
+    {
+      id: 'restore-child-2',
+      name: 'Ignacy',
+      avatar: '👦',
+      activeDays: [1, 2, 3, 4, 5, 6, 7],
+      createdAt: '2024-01-01T00:00:00.000Z',
+    },
+  ];
   const storageValues = {
-    children: [child],
-    tasks: [
-      {
-        id: 'ui-restore-task',
-        childId: child.id,
+    children,
+    tasks: children.map((item, index) => ({
+        id: `ui-restore-task-${index + 1}`,
+        childId: item.id,
         title: 'Zadanie w archiwum',
         tier: 'PLUS',
         points: 4,
@@ -125,8 +212,7 @@ const runUiCheck = async () => {
         archivedAt: '2024-05-13T09:00:00.000Z',
         createdAt: '2024-01-01T00:00:00.000Z',
         updatedAt: '2024-05-13T09:00:00.000Z',
-      },
-    ],
+      })),
     completions: [],
     extraTasks: [],
     pointAdjustments: [],
@@ -142,6 +228,7 @@ const runUiCheck = async () => {
     taskPointGrants: {},
   };
   let restoreCalled = false;
+  let restoreMatchingCalled = false;
   const baseUrl = process.env.TASK_RESTORE_BASE_URL || (await startStaticServer());
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
@@ -172,11 +259,11 @@ const runUiCheck = async () => {
       });
       return;
     }
-    if (apiPath === '/api/tasks/ui-restore-task/restore') {
+    if (apiPath === '/api/tasks/ui-restore-task-1/restore') {
       restoreCalled = true;
       const restoredAt = new Date().toISOString();
       storageValues.tasks = storageValues.tasks.map((task) =>
-        task.id === 'ui-restore-task'
+        task.id === 'ui-restore-task-1'
           ? {
               ...task,
               active: true,
@@ -187,7 +274,28 @@ const runUiCheck = async () => {
       );
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, task: storageValues.tasks[0], restoredAt }),
+        body: JSON.stringify({ ok: true, task: storageValues.tasks.find((task) => task.id === 'ui-restore-task-1'), restoredAt }),
+      });
+      return;
+    }
+
+    if (apiPath === '/api/tasks/ui-restore-task-1/restore-matching') {
+      restoreMatchingCalled = true;
+      const restoredAt = new Date().toISOString();
+      storageValues.tasks = storageValues.tasks.map((task) => ({
+        ...task,
+        active: true,
+        restoredAt,
+        updatedAt: restoredAt,
+      }));
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          restoredTaskIds: ['ui-restore-task-1', 'ui-restore-task-2'],
+          restoredCount: 2,
+          restoredAt,
+        }),
       });
       return;
     }
@@ -213,22 +321,36 @@ const runUiCheck = async () => {
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
   await page.getByRole('button', { name: /Zadania/ }).click();
   await page.getByRole('button', { name: /Archiwum/ }).click();
-  await page.getByText('Zadanie w archiwum').waitFor({ state: 'visible', timeout: 10000 });
-  await page.getByRole('button', { name: /Przywróć/ }).click();
+  const archivedTaskTitles = page.getByText('Zadanie w archiwum');
+  await archivedTaskTitles.first().waitFor({ state: 'visible', timeout: 10000 });
+  assert.strictEqual(await archivedTaskTitles.count(), 2, 'archive view should show both matching archived tasks');
+  const restoreMatchingButtons = page.getByRole('button', { name: /U wszystkich/ });
+  assert.strictEqual(await restoreMatchingButtons.count(), 2, 'archive view should offer matching restore on both task copies');
+  await restoreMatchingButtons.first().click();
   await page.getByRole('button', { name: /^Aktywne$/ }).click();
-  await page.getByText('Zadanie w archiwum').waitFor({ state: 'visible', timeout: 10000 });
-  assert.strictEqual(restoreCalled, true, 'restore endpoint should be called');
+  const activeTaskTitles = page.getByText('Zadanie w archiwum');
+  await activeTaskTitles.first().waitFor({ state: 'visible', timeout: 10000 });
+  assert.strictEqual(await activeTaskTitles.count(), 2, 'active view should show both restored matching tasks');
+  await page.getByText('Ignacy').waitFor({ state: 'visible', timeout: 10000 });
+  assert.strictEqual(restoreCalled, false, 'single restore endpoint should not be called for matching restore');
+  assert.strictEqual(restoreMatchingCalled, true, 'restore-matching endpoint should be called');
   await page.screenshot({ path: 'tmp/task-restore-archive-check.png', fullPage: true });
   await browser.close();
 };
 
 (async () => {
   runLogicCheck();
+  const apiChecked = await runApiCheck();
   await runUiCheck();
   await prisma.$disconnect();
   if (staticServer) staticServer.close();
   console.log('Task restore logic OK: archived interval remains inactive after restore');
-  console.log('Task restore UI OK: parent restores archived task from archive view');
+  console.log(
+    apiChecked
+      ? 'Task restore API OK: matching archived task definitions restore together'
+      : 'Task restore API SKIPPED locally: database unavailable',
+  );
+  console.log('Task restore UI OK: parent restores matching archived tasks with one button');
   console.log('Screenshot: tmp/task-restore-archive-check.png');
 })().catch(async (error) => {
   console.error(error);

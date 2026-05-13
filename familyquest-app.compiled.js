@@ -1300,9 +1300,11 @@ const App = () => {
       alert(error.message || 'Nie udało się zarchiwizować zadania');
     }
   };
-  const restoreTask = async taskId => {
+  const restoreTask = async (taskId, {
+    matching = false
+  } = {}) => {
     try {
-      await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}/restore`, {
+      await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}/${matching ? 'restore-matching' : 'restore'}`, {
         method: 'POST'
       });
       await loadData({
@@ -2501,6 +2503,7 @@ const App = () => {
         }
       }, child.avatar, " ", child.name), childTasks.map(task => {
         const matchingActiveCount = tasks.filter(item => item.active !== false && getTaskArchiveFingerprint(item) === getTaskArchiveFingerprint(task)).length;
+        const matchingArchivedCount = tasks.filter(item => item.active === false && getTaskArchiveFingerprint(item) === getTaskArchiveFingerprint(task)).length;
         return React.createElement("div", {
         key: task.id,
         className: "task-item"
@@ -2557,7 +2560,17 @@ const App = () => {
             await restoreTask(task.id);
           }
         }
-      }, "\u267B\uFE0F Przywr\xF3\u0107"));
+      }, "\u267B\uFE0F Przywr\xF3\u0107"), task.active === false && matchingArchivedCount > 1 && React.createElement("button", {
+        className: "btn btn-success",
+        title: "Przywróć to samo zadanie u wszystkich dzieci",
+        onClick: async () => {
+          if (confirm(`Przywrócić zadanie "${task.title}" u wszystkich dzieci, które mają tę samą definicję? (${matchingArchivedCount} zadań)`)) {
+            await restoreTask(task.id, {
+              matching: true
+            });
+          }
+        }
+      }, "\u267B\uFE0F U wszystkich"));
       }));
     }).filter(Boolean), taskListMode === 'archive' && tasks.every(task => task.active !== false) && React.createElement("div", {
       className: "empty-state"

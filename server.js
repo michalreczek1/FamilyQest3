@@ -2509,6 +2509,52 @@ app.post('/api/tasks/:id/restore', authMiddleware, requireParent, async (req, re
   }
 });
 
+app.post('/api/tasks/:id/restore-matching', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const taskId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const sourceTask = data.tasks.find((item) => item.id === taskId);
+    if (!sourceTask) {
+      res.status(404).json({ error: 'Zadanie nie istnieje' });
+      return;
+    }
+
+    const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
+    const now = new Date().toISOString();
+    const restoredTaskIds = [];
+    data.tasks.forEach((task) => {
+      if (task.active !== false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
+      task.active = true;
+      task.restoredAt = now;
+      task.updatedAt = now;
+      restoredTaskIds.push(task.id);
+    });
+
+    if (restoredTaskIds.length === 0) {
+      res.status(409).json({ error: 'Nie znaleziono zarchiwizowanych pasujących zadań do przywrócenia' });
+      return;
+    }
+
+    recomputePointsAndGrants(data);
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASKS_MATCHING', 'TASK', taskId, {
+      restoredTaskIds,
+      restoredCount: restoredTaskIds.length,
+      title: sourceTask.title,
+      tier: sourceTask.tier,
+      restoredAt: now,
+    });
+    await saveStateData(state, data);
+    res.json({ ok: true, restoredTaskIds, restoredCount: restoredTaskIds.length, restoredAt: now });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Matching task restore error:', error);
+    res.status(500).json({ error: 'Nie udało się przywrócić pasujących zadań' });
+  }
+});
+
 app.get('/api/completions', authMiddleware, async (req, res) => {
   try {
     const childId = typeof req.query.childId === 'string' ? req.query.childId : null;

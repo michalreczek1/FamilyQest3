@@ -38,6 +38,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano backendowy endpoint `POST /api/tasks/:id/archive-matching`, ktory archiwizuje wszystkie aktywne zadania o tej samej definicji u dzieci.
 - Panel rodzica w zakladce `Zadania` pokazuje przycisk `U wszystkich`, gdy istnieje wiecej niz jedna aktywna kopia tego samego zadania.
 - Panel rodzica ma widok `Archiwum` zadan oraz przycisk `Przywroc`. Przywrocenie zapisuje `restoredAt`, wiec okres miedzy `archivedAt` i `restoredAt` pozostaje historycznie nieaktywny.
+- Dodano backendowy endpoint `POST /api/tasks/:id/restore-matching` i przycisk `U wszystkich` w archiwum, ktory przywraca wszystkie zarchiwizowane kopie tej samej definicji zadania.
 - Panel rodzica ma teraz modal `Edytuj zadanie` zamiast systemowych `prompt()`. Edycja obejmuje dziecko, nazwe, typ `MIN/PLUS/WEEKLY`, punkty, dni tygodnia i opis.
 - Uporzadkowano zrodlo frontendu: aktualnym i jedynym browser-loaded zrodlem jest `familyquest-app.compiled.js`; stary `familyquest-app.jsx` zostal usuniety jako legacy/localStorage.
 - Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu frontendu, braku legacy JSX i aktualnej polityki PWA bez offline cache.
@@ -58,7 +59,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
 - `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
 - `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
-- `npm run test:task-restore` - OK, test sprawdzil, ze okres archiwum pozostaje nieaktywny po przywroceniu oraz Playwrightowo przejscie `Archiwum -> Przywroc -> Aktywne`.
+- `npm run test:task-restore` - OK, test sprawdzil, ze okres archiwum pozostaje nieaktywny po przywroceniu, API przywraca pasujace zarchiwizowane zadania zbiorczo oraz Playwrightowo przejscie `Archiwum -> U wszystkich -> Aktywne`.
 - `npm run test:task-edit` - OK, Playwright sprawdzil modal edycji zadania, zmiane nazwy, typu, punktow, opisu i dni tygodnia oraz payload `PUT /api/tasks/:id`.
 - `npm run test:frontend-source` - OK, test potwierdza `familyquest-app.compiled.js` jako entrypoint, brak legacy JSX oraz service worker cleanup.
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
@@ -73,8 +74,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Archiwizacja/przywracanie zadan jest wdrozone, ale nie ma jeszcze zbiorczego przywracania wszystkich pasujacych kopii.
-3. Zakres testow API warto rozszerzyc o polityke dat, `WEEKLY` i brak zadan MIN.
+2. Zakres testow API warto rozszerzyc o polityke dat, `WEEKLY` i brak zadan MIN.
+3. Semantyka nagrod po spadku punktow nadal wymaga decyzji produktowej.
 
 ## Rekomendowany Nastepny Pakiet
 
@@ -174,7 +175,7 @@ Priorytet: P2.
 
 ### 6. Archiwizacja Zadan
 
-Status: wdrozone w wariancie bulk archive + pojedyncze restore.
+Status: wdrozone w wariancie bulk archive + bulk restore.
 
 Rodzic moze archiwizowac pojedyncze zadanie albo jednym przyciskiem `U wszystkich` zarchiwizowac wszystkie aktywne kopie o tej samej definicji: tytul, typ, punkty, opis i dni tygodnia. Archiwizacja ustawia `active: false` i `archivedAt`. Widok `Archiwum` pokazuje zarchiwizowane zadania i pozwala je przywrocic.
 
@@ -183,12 +184,12 @@ Wazna zasada logiki:
 - zadania zarchiwizowane nie pokazuja sie dzieciom i nie sa wymagane od daty archiwizacji,
 - zatwierdzone wykonania sprzed `archivedAt` nadal licza sie w `pointLedger`, `points`, dniu zaliczonym i passie historycznej,
 - nowe wykonania dla zarchiwizowanego zadania sa blokowane,
-- przywrocenie ustawia `restoredAt`; okres `archivedAt` -> `restoredAt` pozostaje historycznie nieaktywny.
+- przywrocenie pojedyncze i zbiorcze ustawia `restoredAt`; okres `archivedAt` -> `restoredAt` pozostaje historycznie nieaktywny.
 
 Co zostaje dalej:
 
-1. Opcjonalnie dodac zbiorcze przywracanie wszystkich pasujacych kopii zadania.
-2. Po stabilizacji testowej bazy dodac pelny test API bez pomijania lokalnego `DATABASE_URL`.
+1. Ewentualnie dopracowac teksty/potwierdzenia, jesli przy rodzinie z wieloma dziecmi lista bedzie zbyt dluga.
+2. Dopisac dodatkowe przypadki brzegowe do testow API, jesli pojawi sie edycja definicji po archiwizacji.
 
 Priorytet: zrealizowane, rozszerzenia P3.
 
@@ -263,14 +264,13 @@ Rekomendowana kolejność od teraz:
 1. Backendowa walidacja harmonogramu zadania i polityki dat dla completion oraz extra task.
 2. Poprawic semantyke `WEEKLY` z tygodniowym kluczem naliczania punktow.
 3. Ustalic zasade dla aktywnego dnia bez zadan MIN.
-4. Opcjonalnie dodac zbiorcze przywracanie pasujacych zadan.
-5. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
+4. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
 - Pakiet A: stabilna lokalna baza testowa.
-- Pakiet B: zbiorcze przywracanie pasujacych zadan.
+- Pakiet B: decyzja o semantyce nagrod po spadku punktow.
 - Pakiet C: logowanie dziecka z kodem rodziny.
 - Pakiet D: rozszerzony widok ledgeru dla rodzica.
