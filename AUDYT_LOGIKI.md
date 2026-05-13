@@ -53,7 +53,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
 - `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
 - `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
-- `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
+- Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
+- Lokalny `.env` nie powinien wskazywac starej bazy Railway. Do testow API potrzebna jest osobna lokalna baza testowa albo swiadomie ustawiony `DATABASE_URL`.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
 
@@ -233,7 +234,7 @@ Priorytet: P3.
 
 Status: otwarte.
 
-Testy API wymagaja poprawnego `DATABASE_URL`. Obecny `.env` lokalnie wskazuje baze z niewaznymi danymi, wiec `npm test` pada na rejestracji.
+Testy API wymagaja poprawnego `DATABASE_URL`. Stare odniesienia do Railway zostaly usuniete, ale lokalnie nadal trzeba przygotowac osobna baze testowa, zeby `npm test` uruchamial integracje zamiast je pomijac.
 
 Co zrobic dalej:
 

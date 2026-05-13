@@ -315,6 +315,10 @@ pct exec 100 -- sysctl net.ipv4.ip_forward
 - URL: `https://fq.familyos.pl`
 - backend app: `CT 103`
 - baza: `CT 102`
+- katalog aplikacji: `/opt/familyquest`
+- service: `familyquest`
+- dokument deployu aplikacji: `PROXMOX_DEPLOY.md`
+- konfiguracja runtime: `/opt/familyquest/.env` w `CT 103`; `DATABASE_URL` wskazuje PostgreSQL w `CT 102`, nie Railway
 
 ### Komponenty
 
@@ -322,6 +326,8 @@ pct exec 100 -- sysctl net.ipv4.ip_forward
   - `http://192.168.33.122:3000/health`
 - reverse proxy:
   - `CT 101 caddy`
+- publiczny healthcheck:
+  - `https://fq.familyos.pl/health`
 
 ## FamilyOS home
 
