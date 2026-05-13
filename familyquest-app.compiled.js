@@ -182,6 +182,15 @@ const isTaskScheduledForDate = (task, dateInput) => {
   if (!Array.isArray(task?.daysOfWeek) || task.daysOfWeek.length === 0) return true;
   return task.daysOfWeek.includes(getDayNumber(dateInput));
 };
+const normalizeTaskArchiveText = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl');
+const normalizeTaskArchiveDays = days => Array.isArray(days) ? [...new Set(days.map(day => Number(day)).filter(day => Number.isInteger(day) && day >= 1 && day <= 7))].sort((a, b) => a - b) : [];
+const getTaskArchiveFingerprint = task => JSON.stringify({
+  title: normalizeTaskArchiveText(task?.title),
+  tier: task?.tier || '',
+  points: Number(task?.points || 0),
+  description: normalizeTaskArchiveText(task?.description),
+  daysOfWeek: normalizeTaskArchiveDays(task?.daysOfWeek)
+});
 const getWeekStart = dateInput => {
   const date = parseDateInput(dateInput);
   const day = date.getDay();
@@ -1246,10 +1255,21 @@ const App = () => {
     } : task));
     addAuditLog('UPDATE_TASK', 'TASK', taskId, updates);
   };
-  const archiveTask = taskId => {
-    updateTask(taskId, {
-      active: false
-    });
+  const archiveTask = async (taskId, {
+    matching = false
+  } = {}) => {
+    try {
+      await apiRequest(matching ? `/api/tasks/${encodeURIComponent(taskId)}/archive-matching` : `/api/tasks/${encodeURIComponent(taskId)}`, {
+        method: matching ? 'POST' : 'DELETE'
+      });
+      await loadData({
+        preserveView: true,
+        silent: true,
+        skipNextAutoSave: true
+      });
+    } catch (error) {
+      alert(error.message || 'Nie udało się zarchiwizować zadania');
+    }
   };
   const claimReward = unlockId => {
     setRewardUnlocks(prev => prev.map(u => u.id === unlockId ? {
@@ -2465,7 +2485,9 @@ const App = () => {
         style: {
           marginBottom: '1rem'
         }
-      }, child.avatar, " ", child.name), childTasks.map(task => React.createElement("div", {
+      }, child.avatar, " ", child.name), childTasks.map(task => {
+        const matchingActiveCount = tasks.filter(item => item.active !== false && getTaskArchiveFingerprint(item) === getTaskArchiveFingerprint(task)).length;
+        return React.createElement("div", {
         key: task.id,
         className: "task-item"
       }, React.createElement("div", {
@@ -2504,12 +2526,24 @@ const App = () => {
         }
       }, "\u270F\uFE0F"), React.createElement("button", {
         className: "btn btn-danger",
-        onClick: () => {
-          if (confirm('Archiwizować zadanie?')) {
-            archiveTask(task.id);
+        title: "Archiwizuj tylko u tego dziecka",
+        onClick: async () => {
+          if (confirm(`Archiwizować zadanie "${task.title}" tylko u ${child.name}?`)) {
+            await archiveTask(task.id);
           }
         }
-      }, "\uD83D\uDDC3\uFE0F"))));
+      }, "\uD83D\uDDC3\uFE0F"), matchingActiveCount > 1 && React.createElement("button", {
+        className: "btn btn-danger",
+        title: "Archiwizuj to samo zadanie u wszystkich dzieci",
+        onClick: async () => {
+          if (confirm(`Archiwizować zadanie "${task.title}" u wszystkich dzieci, które mają tę samą definicję? (${matchingActiveCount} zadań)`)) {
+            await archiveTask(task.id, {
+              matching: true
+            });
+          }
+        }
+      }, "\uD83D\uDDC3\uFE0F U wszystkich"));
+      }));
     })), parentTab === 'rewards' && React.createElement(React.Fragment, null, React.createElement("div", {
       className: "header"
     }, React.createElement("h2", null, "Katalog nagr\xF3d"), React.createElement("button", {

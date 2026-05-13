@@ -34,6 +34,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `recomputePointsAndGrants` generuje ledger z zatwierdzonych zadan, zaliczonych dni, idealnych tygodni, extra taskow oraz premii/kar/cofniec.
 - Saldo `points` jest teraz cachem wynikajacym z tych samych wpisow zrodlowych co ledger, a nie osobna prawda biznesowa.
 - Dziecko moze kliknac liczbe punktow i zobaczyc przewijalny popup `Historia punktow` z deltami, opisem, data i saldem po operacji.
+- Dodano bezpieczna archiwizacje zadan: zadanie dostaje `archivedAt`, a historyczne zatwierdzenia sprzed archiwizacji nadal zostaja w punktach i ledgerze.
+- Dodano backendowy endpoint `POST /api/tasks/:id/archive-matching`, ktory archiwizuje wszystkie aktywne zadania o tej samej definicji u dzieci.
+- Panel rodzica w zakladce `Zadania` pokazuje przycisk `U wszystkich`, gdy istnieje wiecej niz jedna aktywna kopia tego samego zadania.
 
 ## Weryfikacja Wykonana
 
@@ -49,6 +52,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:state-version` - OK, test zasymulowal dwa rownolegle zapisy i potwierdzil konflikt przy drugim zapisie ze stara wersja.
 - `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
 - `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
+- `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
 - `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
@@ -60,29 +64,29 @@ Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym por
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
 2. Testy API wymagaja stabilnej lokalnej bazy testowej.
 3. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
+4. Archiwizacja zadan ma juz bulk dla identycznej definicji, ale nie ma jeszcze widoku archiwum ani przywracania zadania z UI.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po wersjonowaniu: **globalne kolizje kodow dzieci**.
+Najbardziej sensowny kolejny pakiet po archiwizacji: **uporzadkowanie zrodla frontendu i README/PWA**.
 
 Dlaczego ten pakiet teraz:
 
-- Logowanie dziecka nadal szuka `accessCode` globalnie po wszystkich rodzinach.
-- Dwie rodziny z tym samym kodem dziecka moga dostac konflikt przy logowaniu.
-- To jest mniejsze i bardziej domkniete niz pelny ledger punktow.
-- Da sie zweryfikowac testem fixture: dwie rodziny, ten sam kod dziecka, logowanie przez kod rodziny + kod dziecka.
+- Globalne kolizje kodow dzieci zostaly swiadomie odlozone na koniec, bo obecnie jest jedna rodzina.
+- Coraz wiecej zmian UI trafia do `familyquest-app.compiled.js`, a `familyquest-app.jsx` jest legacy/stary.
+- To zwieksza ryzyko, ze przyszla zmiana zostanie naprawiona w niewlasciwym pliku.
+- README/PWA nadal nie opisuje precyzyjnie aktualnego trybu bez offline cache.
 
 Minimalny zakres wdrozenia:
 
-1. Dodac rodzinny kod logowania albo jawny identyfikator rodziny dla dziecka.
-2. Zmienic UI logowania dziecka: kod rodziny + kod dziecka.
-3. Zmienic `/api/auth/login-child`, zeby najpierw zawęzal rodzine, a dopiero potem szukal dziecka.
-4. Zachowac migracyjnie stary tryb tylko wtedy, gdy kod dziecka jest globalnie unikalny.
-5. Dodac test na dwie rodziny z tym samym kodem dziecka.
+1. Oznaczyc `familyquest-app.jsx` jako legacy albo przywrocic build z JSX do compiled.
+2. Dodac skrypt build/sprawdzenie, ktore blokuje przypadkowa edycje zlego pliku.
+3. Zaktualizowac README o realny sposob uruchamiania, deploy na Proxmox i CSP.
+4. Zaktualizowac dokumentacje PWA: manifest/install dziala, ale service worker nie robi offline cache.
 
 Ryzyko/decyzja przed implementacja:
 
-- Trzeba wybrac format kodu rodziny. Rekomendacja: krotki, czytelny kod 4-6 znakow przypisany rodzinie, a nie email rodzica w logowaniu dziecka.
+- Trzeba zdecydowac, czy inwestujemy w prawdziwy build JSX teraz, czy tylko jasno oznaczamy obecny compiled jako jedyne zrodlo prawdy na najblizszy etap.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -150,7 +154,7 @@ Priorytet: zrealizowane, retry/test DB P3.
 
 ### 5. Globalne Kolizje Kodow Dzieci
 
-Status: otwarte.
+Status: otwarte, celowo odlozone na koniec.
 
 Kody dzieci sa unikalne tylko w rodzinie, ale logowanie dziecka szuka kodu globalnie po wszystkich rodzinach. Dwie rodziny z tym samym kodem dziecka wywoluja konflikt.
 
@@ -163,7 +167,27 @@ Co zrobic dalej:
 
 Priorytet: P2.
 
-### 6. Semantyka Nagród Po Spadku Punktow
+### 6. Archiwizacja Zadan
+
+Status: wdrozone w wariancie bulk dla tej samej definicji.
+
+Rodzic moze archiwizowac pojedyncze zadanie albo jednym przyciskiem `U wszystkich` zarchiwizowac wszystkie aktywne kopie o tej samej definicji: tytul, typ, punkty, opis i dni tygodnia. Archiwizacja ustawia `active: false` i `archivedAt`.
+
+Wazna zasada logiki:
+
+- zadania zarchiwizowane nie pokazuja sie dzieciom i nie sa wymagane od daty archiwizacji,
+- zatwierdzone wykonania sprzed `archivedAt` nadal licza sie w `pointLedger`, `points`, dniu zaliczonym i passie historycznej,
+- nowe wykonania dla zarchiwizowanego zadania sa blokowane.
+
+Co zostaje dalej:
+
+1. Dodac widok archiwum zadan w panelu rodzica.
+2. Dodac przywracanie zadania z archiwum.
+3. Po stabilizacji testowej bazy dodac pelny test API bez pomijania lokalnego `DATABASE_URL`.
+
+Priorytet: zrealizowane, rozszerzenia P3.
+
+### 7. Semantyka Nagród Po Spadku Punktow
 
 Status: otwarte/decyzja produktowa.
 
@@ -177,7 +201,7 @@ Co zrobic dalej:
 
 Priorytet: P3/P2.
 
-### 7. Zrodlo Frontendu I Build
+### 8. Zrodlo Frontendu I Build
 
 Status: otwarte.
 
@@ -192,7 +216,7 @@ Co zrobic dalej:
 
 Priorytet: P3, ale wazne operacyjnie.
 
-### 8. Dokumentacja PWA I Service Worker
+### 9. Dokumentacja PWA I Service Worker
 
 Status: otwarte.
 
@@ -205,7 +229,7 @@ Co zrobic dalej:
 
 Priorytet: P3.
 
-### 9. Stabilne Testy Integracyjne
+### 10. Stabilne Testy Integracyjne
 
 Status: otwarte.
 
@@ -221,7 +245,8 @@ Co zrobic dalej:
    - walidacji harmonogramu i dat,
    - `WEEKLY` naliczanego raz na tydzien,
    - `NO_REQUIRED_TASKS`,
-   - restore backup, gdy powstanie endpoint.
+   - restore backup,
+   - bulk archive zadan z zachowaniem historii punktow.
 
 Priorytet: P2/P3.
 
@@ -229,14 +254,16 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Rozwiazac globalne kolizje kodow dzieci.
-2. Uporzadkowac zrodlo frontendu i README/PWA.
-3. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica po porzadkowaniu frontendu.
+1. Uporzadkowac zrodlo frontendu i README/PWA.
+2. Dodac widok archiwum/przywracanie zadan, jesli bedzie potrzebne w codziennym uzyciu.
+3. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
+4. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica po porzadkowaniu frontendu.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: logowanie dziecka z kodem rodziny.
-- Pakiet B: porzadkowanie frontendu/build/docs.
-- Pakiet C: rozszerzony widok ledgeru dla rodzica.
+- Pakiet A: porzadkowanie frontendu/build/docs.
+- Pakiet B: archiwum/przywracanie zadan.
+- Pakiet C: logowanie dziecka z kodem rodziny.
+- Pakiet D: rozszerzony widok ledgeru dla rodzica.

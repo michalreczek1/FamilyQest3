@@ -535,6 +535,46 @@ const isTaskScheduledForDate = (task, dateInput) => {
   return task.daysOfWeek.includes(getDayNumber(dateInput));
 };
 
+const getTaskArchiveDate = (task) => {
+  if (!task || task.active !== false) return null;
+  const archivedAt = task.archivedAt || task.updatedAt || null;
+  if (!archivedAt) return null;
+  const archivedDate = toDateString(archivedAt);
+  return isValidDateString(archivedDate) ? archivedDate : null;
+};
+
+const isTaskActiveForDate = (task, dateInput) => {
+  if (!task) return false;
+  const date = toDateString(dateInput);
+  const createdDate = getEntityCreatedDate(task);
+  if (createdDate && date < createdDate) return false;
+  if (task.active !== false) return true;
+  const archivedDate = getTaskArchiveDate(task);
+  return Boolean(archivedDate && date < archivedDate);
+};
+
+const normalizeTaskArchiveText = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl');
+
+const getTaskArchiveFingerprint = (task) =>
+  JSON.stringify({
+    title: normalizeTaskArchiveText(task?.title),
+    tier: task?.tier || '',
+    points: Number(task?.points || 0),
+    description: normalizeTaskArchiveText(task?.description),
+    daysOfWeek: normalizeTaskDaysOfWeek(task?.daysOfWeek),
+  });
+
+const isApprovedCompletionBeforeArchive = (task, completion) => {
+  if (!task || task.active !== false) return true;
+  const archivedAtMs = Date.parse(task.archivedAt || task.updatedAt || 0);
+  const completionMs = getCompletionTimestamp(completion);
+  if (Number.isFinite(archivedAtMs) && archivedAtMs > 0 && completionMs > 0) {
+    return completionMs <= archivedAtMs;
+  }
+  const archivedDate = getTaskArchiveDate(task);
+  return Boolean(archivedDate && completion?.date < archivedDate);
+};
+
 const getWeekStart = (dateInput) => {
   const date = parseDateInput(dateInput);
   const day = date.getDay();
@@ -683,7 +723,7 @@ const evaluateDayForData = (data, childId, date) => {
     (task) =>
       task.childId === childId &&
       task.tier === 'MIN' &&
-      task.active !== false &&
+      isTaskActiveForDate(task, date) &&
       isTaskScheduledForDate(task, date),
   );
   if (minTasks.length === 0) return 'NO_REQUIRED_TASKS';
@@ -923,7 +963,7 @@ const recomputePointsAndGrants = (data) => {
     .forEach((completion) => {
       const child = childrenById.get(completion.childId);
       const task = tasksById.get(completion.taskId);
-      if (!child || !task || task.active === false || validateTaskCompletionDate(child, task, completion.date)) return;
+      if (!child || !task || !isApprovedCompletionBeforeArchive(task, completion) || validateTaskCompletionDate(child, task, completion.date)) return;
 
       const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
       if (Number(task.points || 0) > 0 && !taskPointGrants[taskPointKey]) {
@@ -1099,6 +1139,16 @@ const applyApprovalEffects = (data, completion, actorUserId, now = new Date().to
     return false;
   }
 
+  const child = data.children.find((item) => item.id === completion.childId && !item.archived);
+  const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
+  if (!child || !task || !isTaskActiveForDate(task, completion.date)) {
+    return false;
+  }
+  const completionDateError = validateTaskCompletionDate(child, task, completion.date);
+  if (completionDateError) {
+    return false;
+  }
+
   const previousStatus = evaluateDayForData(data, completion.childId, completion.date);
   completion.doneByChild = true;
   completion.approvedByParent = true;
@@ -1107,7 +1157,6 @@ const applyApprovalEffects = (data, completion, actorUserId, now = new Date().to
   completion.rejectedAt = null;
   completion.updatedAt = now;
 
-  const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
   const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
   if (task && Number(task.points || 0) > 0 && !data.taskPointGrants[taskPointKey]) {
     data.taskPointGrants = { ...data.taskPointGrants, [taskPointKey]: true };
@@ -2290,10 +2339,18 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
     if (parsed.data.daysOfWeek !== undefined) {
       next.daysOfWeek = normalizeTaskDaysOfWeek(parsed.data.daysOfWeek);
     }
-    if (typeof parsed.data.active === 'boolean') next.active = parsed.data.active;
+    if (typeof parsed.data.active === 'boolean') {
+      next.active = parsed.data.active;
+      if (parsed.data.active) {
+        next.archivedAt = null;
+      } else if (!next.archivedAt) {
+        next.archivedAt = new Date().toISOString();
+      }
+    }
     next.updatedAt = new Date().toISOString();
 
     data.tasks[index] = next;
+    recomputePointsAndGrants(data);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);
     await saveStateData(state, data);
     res.json({ task: next });
@@ -2317,11 +2374,18 @@ app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => 
       return;
     }
 
+    const now = new Date().toISOString();
     task.active = false;
-    task.updatedAt = new Date().toISOString();
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId);
+    task.archivedAt = task.archivedAt || now;
+    task.updatedAt = now;
+    recomputePointsAndGrants(data);
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId, {
+      childId: task.childId,
+      title: task.title,
+      archivedAt: task.archivedAt,
+    });
     await saveStateData(state, data);
-    res.json({ ok: true });
+    res.json({ ok: true, archivedTaskIds: [task.id], archivedCount: 1, archivedAt: task.archivedAt });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2329,6 +2393,52 @@ app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => 
     }
     console.error('Task archive error:', error);
     res.status(500).json({ error: 'Nie udało się zarchiwizować zadania' });
+  }
+});
+
+app.post('/api/tasks/:id/archive-matching', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const taskId = String(req.params.id || '');
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const sourceTask = data.tasks.find((item) => item.id === taskId);
+    if (!sourceTask) {
+      res.status(404).json({ error: 'Zadanie nie istnieje' });
+      return;
+    }
+
+    const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
+    const now = new Date().toISOString();
+    const archivedTaskIds = [];
+    data.tasks.forEach((task) => {
+      if (task.active === false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
+      task.active = false;
+      task.archivedAt = task.archivedAt || now;
+      task.updatedAt = now;
+      archivedTaskIds.push(task.id);
+    });
+
+    if (archivedTaskIds.length === 0) {
+      res.status(409).json({ error: 'Nie znaleziono aktywnych pasujących zadań do archiwizacji' });
+      return;
+    }
+
+    recomputePointsAndGrants(data);
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASKS_MATCHING', 'TASK', taskId, {
+      archivedTaskIds,
+      archivedCount: archivedTaskIds.length,
+      title: sourceTask.title,
+      tier: sourceTask.tier,
+      archivedAt: now,
+    });
+    await saveStateData(state, data);
+    res.json({ ok: true, archivedTaskIds, archivedCount: archivedTaskIds.length, archivedAt: now });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Matching task archive error:', error);
+    res.status(500).json({ error: 'Nie udało się zarchiwizować pasujących zadań' });
   }
 });
 
@@ -2382,7 +2492,7 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
       return;
     }
     const task = data.tasks.find((item) => item.id === parsed.data.taskId && item.childId === parsed.data.childId);
-    if (!task || task.active === false) {
+    if (!task || !isTaskActiveForDate(task, parsed.data.date)) {
       res.status(404).json({ error: 'Zadanie nie istnieje lub jest nieaktywne' });
       return;
     }
@@ -2506,7 +2616,10 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
     }
 
     const now = new Date().toISOString();
-    applyApprovalEffects(data, completion, req.auth.user.id, now);
+    if (!applyApprovalEffects(data, completion, req.auth.user.id, now)) {
+      res.status(409).json({ error: 'Nie można zatwierdzić nieaktywnego lub niepoprawnego zadania' });
+      return;
+    }
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASK', 'COMPLETION', completionId, {
       childId: completion.childId,
@@ -2542,7 +2655,7 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
     }
     const child = data.children.find((item) => item.id === completion.childId && !item.archived);
     const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
-    if (!child || !task || task.active === false) {
+    if (!child || !task || !isTaskActiveForDate(task, completion.date)) {
       res.status(404).json({ error: 'Zadanie lub dziecko nie istnieje' });
       return;
     }

@@ -19,6 +19,7 @@
     "test:restore-backup": "node scripts/check-restore-backup.js",
     "test:state-version": "node scripts/check-family-state-versioning.js",
     "test:point-ledger": "node scripts/check-point-ledger-history.js",
+    "test:task-archive": "node scripts/check-task-archive-matching.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
     "lint": "eslint .",
     "format": "prettier --write ."
