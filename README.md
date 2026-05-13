@@ -339,6 +339,14 @@ pct exec 100 -- sysctl net.ipv4.ip_forward
 - PWA: `manifest.json`, ikony i przycisk instalacji pozostaja aktywne
 - offline cache: celowo wylaczony; `service-worker.js` czysci stare cache i wyrejestrowuje service worker, zeby urzadzenia dostawaly swiezy JS po deployu
 
+### Testy API
+
+- lokalne testy API uzywaja osobnej bazy `familyquest_test` w `CT 102`, nie produkcyjnej bazy `familyquest`
+- konfiguracja startowa: `.env.test.example`
+- przygotowanie bazy i reguly Proxmox/pg_hba: `npm run test:db:setup`
+- pelny test API na prawdziwej bazie: `npm run test:api`
+- `test:api` resetuje tylko `familyquest_test`, tuneluje PostgreSQL przez `ssh proxmox`, wykonuje `prisma db push` i odpala Jest z coverage
+
 ## FamilyOS home
 
 ### Aplikacja

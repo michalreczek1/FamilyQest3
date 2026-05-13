@@ -13,6 +13,8 @@
     "postinstall": "prisma generate",
     "db:studio": "prisma studio",
     "test": "jest --coverage --runInBand",
+    "test:db:setup": "node scripts/setup-test-db.js",
+    "test:api": "node scripts/run-api-tests.js",
     "test:smoke": "node scripts/smoke-e2e.js",
     "test:ranking": "node scripts/check-ranking-order.js",
     "test:reverse-approval": "node scripts/check-reverse-approval.js",

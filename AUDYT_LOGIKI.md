@@ -62,8 +62,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:task-edit` - OK, Playwright sprawdzil modal edycji zadania, zmiane nazwy, typu, punktow, opisu i dni tygodnia oraz payload `PUT /api/tasks/:id`.
 - `npm run test:frontend-source` - OK, test potwierdza `familyquest-app.compiled.js` jako entrypoint, brak legacy JSX oraz service worker cleanup.
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
-- Lokalny `.env` nie powinien wskazywac starej bazy Railway. Do testow API potrzebna jest osobna lokalna baza testowa albo swiadomie ustawiony `DATABASE_URL`.
-- `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
+- Lokalny `.env` nie powinien wskazywac starej bazy Railway. Testy API maja teraz osobny profil `.env.test.example` i baze `familyquest_test` w `CT 102`.
+- `npm run test:api` - OK, runner resetuje tylko baze `familyquest_test`, tuneluje PostgreSQL przez `ssh proxmox`, wykonuje `prisma db push` i pelne testy Jest na prawdziwej bazie.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
 
 ## Co Nadal Jest Do Zrobienia
@@ -71,28 +71,25 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Testy API wymagaja stabilnej lokalnej bazy testowej.
-3. Archiwizacja/przywracanie zadan jest wdrozone, ale nie ma jeszcze zbiorczego przywracania wszystkich pasujacych kopii.
+2. Archiwizacja/przywracanie zadan jest wdrozone, ale nie ma jeszcze zbiorczego przywracania wszystkich pasujacych kopii.
+3. Zakres testow API warto rozszerzyc o polityke dat, `WEEKLY` i brak zadan MIN.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po archiwum zadan: **stabilna lokalna baza testowa**.
+Najbardziej sensowny kolejny pakiet po stabilizacji bazy testowej: **backendowa walidacja harmonogramu i polityki dat**.
 
 Dlaczego ten pakiet teraz:
 
 - Globalne kolizje kodow dzieci nadal sa odlozone na koniec, bo obecnie jest jedna rodzina.
-- Lokalny `npm test` pomija integracje bez bazy testowej, wiec regresje API nadal sa slabiej pokryte lokalnie.
-- Endpointy zadan, punktow i restore maja juz sporo logiki domenowej, wiec testy API na prawdziwej bazie zaczynaja byc coraz bardziej potrzebne.
+- `npm run test:api` daje juz prawdziwa baze i moze wykryc regresje endpointow.
+- Harmonogram zadania i polityka dat nadal sa miejscem, gdzie backend powinien byc silniejszy niz frontend.
+- To bezposrednio chroni passy, punkty dzienne i tygodniowe przed completionami z niewlasciwego dnia albo zadania.
 
 Minimalny zakres wdrozenia:
 
-1. Dodac `.env.test.example`.
-2. Dodac skrypt przygotowania lokalnej bazy testowej.
-3. Uruchamiac integracje bez zaleznosci od produkcji.
-
-Ryzyko/decyzja przed implementacja:
-
-- Trzeba wybrac, czy lokalna baza testowa ma byc Docker/Postgres, czy baza w istniejacym CT uzywana tylko do testow.
+1. Backend odrzuca completion, jesli data nie pasuje do harmonogramu aktywnego zadania.
+2. Extra task ma jawna polityke dat: bez przyszlosci albo z limitem, zaleznym od decyzji produktowej.
+3. Testy API pokrywaja poprawny dzien, zly dzien, przyszla date i historyczna date.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -236,22 +233,24 @@ Priorytet: zrealizowane, offline cache P3.
 
 ### 10. Stabilne Testy Integracyjne
 
-Status: otwarte.
+Status: wdrozone.
 
-Testy API wymagaja poprawnego `DATABASE_URL`. Stare odniesienia do Railway zostaly usuniete, ale lokalnie nadal trzeba przygotowac osobna baze testowa, zeby `npm test` uruchamial integracje zamiast je pomijac.
+Testy API nie uzywaja juz produkcji ani Railway. Dodano:
 
-Co zrobic dalej:
+- `.env.test.example` z `DATABASE_URL` do `familyquest_test`,
+- `npm run test:db:setup`, ktory przygotowuje role, baze, `pg_hba.conf` i regule firewalla CT 102 dla tunelu z hosta Proxmox,
+- `npm run test:api`, ktory resetuje wylacznie `familyquest_test`, otwiera tunel SSH do PostgreSQL, uruchamia `prisma db push` i pelne testy Jest.
 
-1. Dodac `.env.test.example`.
-2. Opisac lokalna baze testowa w README.
-3. Rozwazyc skrypt `test:db:setup`.
-4. Dodac testy integracyjne dla:
-   - blokady cofania zatwierdzonego completion,
-   - walidacji harmonogramu i dat,
-   - `WEEKLY` naliczanego raz na tydzien,
-   - `NO_REQUIRED_TASKS`,
-   - restore backup,
-   - bulk archive zadan z zachowaniem historii punktow.
+Weryfikacja:
+
+- `npm run test:api` - OK, 2/2 testy API przechodza na prawdziwej bazie PostgreSQL.
+
+Co rozszerzyc dalej:
+
+1. Dodac testy integracyjne dla walidacji harmonogramu i dat.
+2. Dodac testy integracyjne dla `WEEKLY` naliczanego raz na tydzien.
+3. Dodac testy integracyjne dla `NO_REQUIRED_TASKS`.
+4. Dopiac dodatkowe przypadki restore backup i bulk archive zadan z zachowaniem historii punktow.
 
 Priorytet: P2/P3.
 
@@ -259,10 +258,11 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Przygotowac stabilna lokalna baze testowa.
-2. Opcjonalnie dodac zbiorcze przywracanie pasujacych zadan.
-3. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
-4. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica.
+1. Backendowa walidacja harmonogramu zadania i polityki dat dla completion oraz extra task.
+2. Poprawic semantyke `WEEKLY` z tygodniowym kluczem naliczania punktow.
+3. Ustalic zasade dla aktywnego dnia bez zadan MIN.
+4. Opcjonalnie dodac zbiorcze przywracanie pasujacych zadan.
+5. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
 
 ## Uwaga O Limicie I Zakresie
 

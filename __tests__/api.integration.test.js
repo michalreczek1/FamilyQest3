@@ -265,7 +265,7 @@ maybeDescribe('FamilyQuest API integration', () => {
     const duplicateApproveRes = await request(app)
       .post(`/api/completions/${completionId}/approve`)
       .set('Authorization', `Bearer ${parentToken}`);
-    expect(duplicateApproveRes.status).toBe(200);
+    expect(duplicateApproveRes.status).toBe(409);
 
     const pointsAfterDuplicateApproveRes = await request(app)
       .get('/api/storage/get/points')

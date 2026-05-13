@@ -103,4 +103,11 @@ $env:POINT_LEDGER_BASE_URL='https://fq.familyos.pl'; npm run test:point-ledger; 
 $env:TASK_ARCHIVE_BASE_URL='https://fq.familyos.pl'; npm run test:task-archive; Remove-Item Env:TASK_ARCHIVE_BASE_URL
 ```
 
-Lokalne testy integracyjne API wymagaja osobnej lokalnej bazy testowej. Nie nalezy podpinac lokalnego `.env` do starej bazy Railway.
+Lokalne testy integracyjne API uzywaja osobnej bazy `familyquest_test` w `CT 102`, a nie produkcyjnej bazy `familyquest`:
+
+```powershell
+npm run test:db:setup
+npm run test:api
+```
+
+`test:api` resetuje wylacznie baze `familyquest_test`, otwiera tunel SSH przez `proxmox`, wykonuje `prisma db push` i uruchamia pelne testy Jest. Nie nalezy podpinac lokalnego `.env` do starej bazy Railway ani do produkcyjnego `familyquest`.
