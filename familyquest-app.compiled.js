@@ -219,6 +219,7 @@ const App = () => {
   const [completions, setCompletions] = useState([]);
   const [extraTasks, setExtraTasks] = useState([]);
   const [pointAdjustments, setPointAdjustments] = useState([]);
+  const [pointLedger, setPointLedger] = useState([]);
   const [rewards, setRewards] = useState([]);
   const [streaks, setStreaks] = useState({});
   const [points, setPoints] = useState({});
@@ -257,6 +258,7 @@ const App = () => {
   const [extraTaskTitle, setExtraTaskTitle] = useState('');
   const [childApprovalNotice, setChildApprovalNotice] = useState(null);
   const [showChildRewards, setShowChildRewards] = useState(false);
+  const [showPointHistory, setShowPointHistory] = useState(false);
   const [pointAdjustmentModal, setPointAdjustmentModal] = useState(null);
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
@@ -269,6 +271,7 @@ const App = () => {
     setCompletions([]);
     setExtraTasks([]);
     setPointAdjustments([]);
+    setPointLedger([]);
     setRewards([]);
     setStreaks({});
     setPoints({});
@@ -299,6 +302,7 @@ const App = () => {
     setExtraTaskTitle('');
     setChildApprovalNotice(null);
     setShowChildRewards(false);
+    setShowPointHistory(false);
     setPointAdjustmentModal(null);
   };
   useEffect(() => {
@@ -358,7 +362,7 @@ const App = () => {
         skipAutoSaveUntilRef.current = Date.now() + 2000;
       }
       setUser(session.user);
-      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
+      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedPointLedger, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('pointLedger'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
       const rawChildren = savedChildren || [];
       const loadedChildren = rawChildren.map(child => ({
         ...child
@@ -373,6 +377,7 @@ const App = () => {
       setCompletions(savedCompletions || []);
       setExtraTasks(savedExtraTasks || []);
       setPointAdjustments(savedPointAdjustments || []);
+      setPointLedger(savedPointLedger || []);
       setRewards(savedRewards || []);
       setStreaks(savedStreaks || {});
       setPoints(savedPoints || {});
@@ -487,6 +492,7 @@ const App = () => {
         completions,
         extraTasks,
         pointAdjustments,
+        pointLedger,
         rewards,
         streaks,
         points,
@@ -500,7 +506,7 @@ const App = () => {
       saveRequestedRef.current = true;
       flushSaveQueue();
     }
-  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, pointAdjustments, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
+  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, pointAdjustments, pointLedger, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
   useEffect(() => {
     if (!user || !hasLoadedSnapshot || view !== 'parent' && view !== 'child') {
       return undefined;
@@ -1319,6 +1325,7 @@ const App = () => {
         completions,
         extraTasks,
         pointAdjustments,
+        pointLedger,
         rewards,
         streaks,
         points,
@@ -1408,6 +1415,7 @@ const App = () => {
       best: 0
     };
     const childPoints = points[selectedChild.id] || 0;
+    const childPointLedger = pointLedger.filter(entry => entry.childId === selectedChild.id).sort((a, b) => Date.parse(b.occurredAt || 0) - Date.parse(a.occurredAt || 0));
     const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id);
     const childUnlockedRewardIds = new Set(childRewardUnlocks.map(unlock => unlock.rewardId));
     const childEarnedRewards = childRewardUnlocks.map(unlock => ({
@@ -1454,8 +1462,11 @@ const App = () => {
       className: "child-hero-avatar"
     }, selectedChild.avatar), React.createElement("span", null, selectedChild.name)), React.createElement("div", {
       className: "hero-metrics"
-    }, React.createElement("div", {
-      className: "hero-metric points"
+    }, React.createElement("button", {
+      type: "button",
+      className: "hero-metric points",
+      onClick: () => setShowPointHistory(true),
+      title: "Pokaż historię punktów"
     }, React.createElement("div", {
       className: "hero-metric-icon"
     }, "\u26A1"), React.createElement("div", null, React.createElement("div", {
@@ -1552,7 +1563,101 @@ const App = () => {
       style: {
         width: '100%'
       }
-    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showChildRewards && React.createElement("div", {
+    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showPointHistory && React.createElement("div", {
+      className: "modal",
+      style: {
+        alignItems: 'flex-start',
+        paddingTop: 'clamp(1rem, 7vh, 4.5rem)',
+        paddingBottom: '1rem',
+        overflowY: 'auto'
+      },
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "child-points-title"
+    }, React.createElement("div", {
+      className: "modal-content",
+      style: {
+        maxWidth: '640px',
+        maxHeight: 'calc(100vh - 2rem)',
+        display: 'flex',
+        flexDirection: 'column'
+      }
+    }, React.createElement("div", {
+      style: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '1rem',
+        alignItems: 'center',
+        marginBottom: '1rem'
+      }
+    }, React.createElement("h2", {
+      id: "child-points-title",
+      style: {
+        margin: 0
+      }
+    }, "\u26A1 Historia punkt\xF3w"), React.createElement("button", {
+      className: "btn btn-secondary",
+      onClick: () => setShowPointHistory(false),
+      title: "Zamknij"
+    }, "\u2715")), React.createElement("div", {
+      className: "glass-card",
+      style: {
+        marginBottom: '1rem',
+        background: 'rgba(254, 200, 75, 0.14)',
+        borderColor: 'rgba(254, 200, 75, 0.4)'
+      }
+    }, React.createElement("div", {
+      className: "stat-value"
+    }, childPoints), React.createElement("div", {
+      className: "stat-label"
+    }, "aktualnych punkt\xF3w")), React.createElement("div", {
+      style: {
+        overflowY: 'auto',
+        paddingRight: '0.25rem',
+        display: 'grid',
+        gap: '0.75rem'
+      }
+    }, childPointLedger.length === 0 ? React.createElement("div", {
+      className: "empty-state"
+    }, "Nie ma jeszcze historii punkt\xF3w") : childPointLedger.map(entry => {
+      const delta = Number(entry.delta || 0);
+      const isNegative = delta < 0;
+      const when = entry.date || (entry.occurredAt ? entry.occurredAt.slice(0, 10) : '');
+      const typeLabel = entry.type === 'TASK_APPROVED' ? 'Zadanie' : entry.type === 'DAY_PASSED' ? 'Dzie\u0144' : entry.type === 'WEEK_IDEAL' ? 'Tydzie\u0144' : entry.type === 'EXTRA_TASK' ? 'Extra' : entry.type === 'PENALTY' ? 'Kara' : entry.type === 'REVERSAL' ? 'Cofni\u0119cie' : 'Premia';
+      return React.createElement("div", {
+        key: entry.id,
+        className: "task-item",
+        style: {
+          alignItems: 'flex-start'
+        }
+      }, React.createElement("div", {
+        className: `badge ${isNegative ? 'badge-min' : 'badge-points'}`,
+        style: {
+          minWidth: '4.5rem',
+          textAlign: 'center'
+        }
+      }, delta > 0 ? '+' : '', delta, " pkt"), React.createElement("div", {
+        style: {
+          flex: 1
+        }
+      }, React.createElement("div", {
+        style: {
+          fontWeight: 800
+        }
+      }, entry.title || typeLabel), React.createElement("div", {
+        style: {
+          fontSize: '0.84rem',
+          opacity: 0.72,
+          marginTop: '0.2rem'
+        }
+      }, typeLabel, when ? ` • ${when}` : '', Number.isFinite(Number(entry.newPoints)) ? ` • saldo: ${entry.newPoints}` : ''), entry.note && entry.note !== entry.title && React.createElement("div", {
+        style: {
+          fontSize: '0.82rem',
+          opacity: 0.72,
+          marginTop: '0.2rem'
+        }
+      }, entry.note)));
+    })))), showChildRewards && React.createElement("div", {
       className: "modal",
       style: {
         alignItems: 'flex-start',

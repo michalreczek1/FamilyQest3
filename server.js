@@ -44,6 +44,7 @@ const DEFAULT_FAMILY_STATE = {
   completions: [],
   extraTasks: [],
   pointAdjustments: [],
+  pointLedger: [],
   rewards: [],
   streaks: {},
   points: {},
@@ -550,6 +551,7 @@ const normalizeStateData = (value) => {
     completions: Array.isArray(input.completions) ? input.completions : [],
     extraTasks: Array.isArray(input.extraTasks) ? input.extraTasks : [],
     pointAdjustments: Array.isArray(input.pointAdjustments) ? input.pointAdjustments : [],
+    pointLedger: Array.isArray(input.pointLedger) ? input.pointLedger : [],
     rewards: Array.isArray(input.rewards) ? input.rewards : [],
     streaks: isObjectRecord(input.streaks) ? input.streaks : {},
     points: isObjectRecord(input.points) ? input.points : {},
@@ -848,11 +850,15 @@ const getCompletionTimestamp = (completion) =>
 
 const getAdjustmentTimestamp = (adjustment) => Date.parse(adjustment?.createdAt || 0) || 0;
 
+const getLedgerTimestamp = (item) =>
+  Date.parse(item?.occurredAt || item?.approvedAt || item?.createdAt || item?.updatedAt || 0) || 0;
+
 const recomputePointsAndGrants = (data) => {
   const nextPoints = {};
   const taskPointGrants = {};
   const dayPointGrants = {};
   const weekBonusGrants = {};
+  const pointLedger = [];
   const relevantDayKeys = new Set();
   const relevantWeekKeys = new Set();
   const childrenById = new Map(data.children.filter((child) => !child.archived).map((child) => [child.id, child]));
@@ -862,9 +868,53 @@ const recomputePointsAndGrants = (data) => {
     nextPoints[child.id] = 0;
   });
 
-  const add = (childId, amount) => {
-    if (!childrenById.has(childId) || !Number.isFinite(amount) || amount <= 0) return;
-    nextPoints[childId] = Number(nextPoints[childId] || 0) + amount;
+  const addLedgerEntry = ({
+    id,
+    childId,
+    type,
+    delta,
+    title,
+    note = '',
+    sourceType = null,
+    sourceId = null,
+    date = null,
+    occurredAt = null,
+    affectsBalance = true,
+    previousPoints = null,
+    newPoints = null,
+  }) => {
+    if (!childrenById.has(childId)) return null;
+    const appliedDelta = Number(delta || 0);
+    if (!Number.isFinite(appliedDelta) || appliedDelta === 0) return null;
+    const hasPreviousPoints = previousPoints !== null && previousPoints !== undefined && Number.isFinite(Number(previousPoints));
+    const hasNewPoints = newPoints !== null && newPoints !== undefined && Number.isFinite(Number(newPoints));
+    const previous = hasPreviousPoints ? Number(previousPoints) : Number(nextPoints[childId] || 0);
+    const next = hasNewPoints
+      ? Number(newPoints)
+      : affectsBalance === false
+        ? previous
+        : Math.max(0, previous + appliedDelta);
+    const entry = {
+      id: id || createEntityId('ledger'),
+      childId,
+      type,
+      delta: appliedDelta,
+      points: Math.abs(appliedDelta),
+      previousPoints: previous,
+      newPoints: next,
+      title: title || 'Zmiana punktów',
+      note: note || '',
+      sourceType,
+      sourceId,
+      date,
+      occurredAt: occurredAt || new Date().toISOString(),
+      affectsBalance,
+    };
+    pointLedger.push(entry);
+    if (affectsBalance !== false) {
+      nextPoints[childId] = next;
+    }
+    return entry;
   };
 
   data.completions
@@ -878,7 +928,17 @@ const recomputePointsAndGrants = (data) => {
       const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
       if (Number(task.points || 0) > 0 && !taskPointGrants[taskPointKey]) {
         taskPointGrants[taskPointKey] = true;
-        add(completion.childId, Number(task.points || 0));
+        addLedgerEntry({
+          id: `task:${taskPointKey}`,
+          childId: completion.childId,
+          type: 'TASK_APPROVED',
+          delta: Number(task.points || 0),
+          title: task.title || 'Zatwierdzone zadanie',
+          sourceType: 'COMPLETION',
+          sourceId: completion.id,
+          date: completion.date,
+          occurredAt: completion.approvedAt || completion.updatedAt || completion.createdAt,
+        });
       }
 
       relevantDayKeys.add(getDayPointKey(completion.childId, completion.date));
@@ -889,26 +949,57 @@ const recomputePointsAndGrants = (data) => {
     const [childId, date] = dayKey.split(':');
     if (evaluateDayForData(data, childId, date) !== 'PASSED') return;
     dayPointGrants[dayKey] = true;
-    add(childId, POINTS_PER_PASSED_DAY);
+    addLedgerEntry({
+      id: `day:${dayKey}`,
+      childId,
+      type: 'DAY_PASSED',
+      delta: POINTS_PER_PASSED_DAY,
+      title: 'Zaliczony dzień',
+      sourceType: 'DAY',
+      sourceId: dayKey,
+      date,
+      occurredAt: `${date}T23:59:00.000Z`,
+    });
   });
 
   [...relevantWeekKeys].sort().forEach((weekKey) => {
     const [childId, weekStart] = weekKey.split(':');
     if (evaluateWeekForData(data, childId, weekStart) !== 'IDEAL') return;
     weekBonusGrants[weekKey] = true;
-    add(childId, IDEAL_WEEK_BONUS);
+    addLedgerEntry({
+      id: `week:${weekKey}`,
+      childId,
+      type: 'WEEK_IDEAL',
+      delta: IDEAL_WEEK_BONUS,
+      title: 'Idealny tydzień',
+      sourceType: 'WEEK',
+      sourceId: weekKey,
+      date: weekStart,
+      occurredAt: `${weekStart}T23:59:30.000Z`,
+    });
   });
 
   data.extraTasks
     .filter((task) => task.status === 'APPROVED')
     .sort((a, b) => Date.parse(a.approvedAt || a.updatedAt || a.createdAt || 0) - Date.parse(b.approvedAt || b.updatedAt || b.createdAt || 0))
-    .forEach((task) => add(task.childId, Number(task.points || 0)));
+    .forEach((task) =>
+      addLedgerEntry({
+        id: `extra:${task.id}`,
+        childId: task.childId,
+        type: 'EXTRA_TASK',
+        delta: Number(task.points || 0),
+        title: task.title || 'Zadanie dodatkowe',
+        sourceType: 'EXTRA_TASK',
+        sourceId: task.id,
+        date: task.date || null,
+        occurredAt: task.approvedAt || task.updatedAt || task.createdAt,
+      }),
+    );
 
   data.pointAdjustments
     .slice()
     .sort((a, b) => getAdjustmentTimestamp(a) - getAdjustmentTimestamp(b))
     .forEach((adjustment) => {
-      if (adjustment.affectsBalance === false) return;
       if (!childrenById.has(adjustment.childId)) return;
       const delta =
         typeof adjustment.delta === 'number'
@@ -917,13 +1008,41 @@ const recomputePointsAndGrants = (data) => {
             ? -Number(adjustment.points || 0)
             : Number(adjustment.points || 0);
       if (!Number.isFinite(delta) || delta === 0) return;
-      nextPoints[adjustment.childId] = Math.max(0, Number(nextPoints[adjustment.childId] || 0) + delta);
+      const affectsBalance = adjustment.affectsBalance !== false;
+      const previousPoints = Number(nextPoints[adjustment.childId] || 0);
+      const newPoints = affectsBalance
+        ? Math.max(0, previousPoints + delta)
+        : Number.isFinite(Number(adjustment.newPoints))
+          ? Number(adjustment.newPoints)
+          : previousPoints;
+      addLedgerEntry({
+        id: `adjustment:${adjustment.id}`,
+        childId: adjustment.childId,
+        type: adjustment.type || (delta < 0 ? 'PENALTY' : 'BONUS'),
+        delta: affectsBalance ? newPoints - previousPoints : delta,
+        title:
+          adjustment.note ||
+          (adjustment.type === 'REVERSAL'
+            ? 'Cofnięcie zatwierdzenia'
+            : adjustment.type === 'PENALTY'
+              ? 'Kara punktowa'
+              : 'Premia punktowa'),
+        note: adjustment.note || '',
+        sourceType: 'POINT_ADJUSTMENT',
+        sourceId: adjustment.id,
+        date: adjustment.sourceDate || null,
+        occurredAt: adjustment.createdAt || adjustment.updatedAt,
+        affectsBalance,
+        previousPoints: affectsBalance ? previousPoints : adjustment.previousPoints,
+        newPoints: affectsBalance ? newPoints : adjustment.newPoints,
+      });
     });
 
   data.points = nextPoints;
   data.taskPointGrants = taskPointGrants;
   data.dayPointGrants = dayPointGrants;
   data.weekBonusGrants = weekBonusGrants;
+  data.pointLedger = pointLedger.sort((a, b) => getLedgerTimestamp(b) - getLedgerTimestamp(a));
   refreshAllStreaks(data);
   return data;
 };
@@ -1138,6 +1257,8 @@ const filterStorageValueForUser = (key, data, user) => {
       return data.extraTasks.filter((task) => task.childId === childId);
     case 'pointAdjustments':
       return data.pointAdjustments.filter((adjustment) => adjustment.childId === childId);
+    case 'pointLedger':
+      return data.pointLedger.filter((entry) => entry.childId === childId);
     case 'streaks':
       return pickChildMapValue(data.streaks, childId);
     case 'points':
@@ -1304,6 +1425,7 @@ const mergeParentStorageValues = (data, values) => {
   // bonuses and penalties, not by client storage snapshots. Accepting snapshot
   // points can resurrect stale values after a penalty.
   nextData.points = data.points;
+  nextData.pointLedger = data.pointLedger;
   if (Object.prototype.hasOwnProperty.call(values, 'streaks')) {
     nextData.streaks = mergeObjectMap(data.streaks, values.streaks);
   }
@@ -1349,6 +1471,7 @@ const CHILD_STORAGE_KEYS = new Set([
   'completions',
   'extraTasks',
   'pointAdjustments',
+  'pointLedger',
   'rewards',
   'streaks',
   'points',
@@ -3071,7 +3194,7 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
 
   try {
     const { state, data } = await loadStateData(req.auth.user.familyId);
-    if (['points', 'streaks', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
+    if (['points', 'streaks', 'pointLedger', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
       recomputePointsAndGrants(data);
       await saveStateData(state, data, { skipOnConflict: true });
     }

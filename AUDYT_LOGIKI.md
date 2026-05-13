@@ -30,6 +30,10 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano wersjonowanie `FamilyState` jako osobne pole Prisma `version`.
 - `saveStateData` zapisuje warunkowo po `id + version` i podbija wersje po kazdym udanym zapisie.
 - Staly zapis ze starej wersji zwraca konflikt `FAMILY_STATE_VERSION_CONFLICT` zamiast cicho nadpisac nowsze dane.
+- Dodano `pointLedger` do stanu rodziny jako serwerowy cache historii punktow.
+- `recomputePointsAndGrants` generuje ledger z zatwierdzonych zadan, zaliczonych dni, idealnych tygodni, extra taskow oraz premii/kar/cofniec.
+- Saldo `points` jest teraz cachem wynikajacym z tych samych wpisow zrodlowych co ledger, a nie osobna prawda biznesowa.
+- Dziecko moze kliknac liczbe punktow i zobaczyc przewijalny popup `Historia punktow` z deltami, opisem, data i saldem po operacji.
 
 ## Weryfikacja Wykonana
 
@@ -44,6 +48,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:restore-backup` - OK, test sprawdzil przeliczenie punktow ze snapshotu `999 -> 7`, zastapienie danych rodziny i brak uzycia `storage/merge` podczas importu.
 - `npm run test:state-version` - OK, test zasymulowal dwa rownolegle zapisy i potwierdzil konflikt przy drugim zapisie ze stara wersja.
 - `npx prisma validate` - OK, schema z `FamilyState.version` jest poprawna.
+- `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
 - `npm test` z aktualnym `.env` nadal nie jest wiarygodne lokalnie, bo `DATABASE_URL` wskazuje baze Railway z niewaznymi danymi logowania.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
@@ -52,10 +57,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
-1. Brak pelnego ledgeru punktow, czyli historii transakcji punktowych.
-2. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-3. Testy API wymagaja stabilnej lokalnej bazy testowej.
-4. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
+1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
+2. Testy API wymagaja stabilnej lokalnej bazy testowej.
+3. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
 
 ## Rekomendowany Nastepny Pakiet
 
@@ -84,7 +88,7 @@ Ryzyko/decyzja przed implementacja:
 
 ### 1. Punktowy Ledger Zamiast Samego Salda
 
-Status: czesciowo poprawione przez `recomputePointsAndGrants`, ale ledger nadal nie istnieje.
+Status: wdrozone w wersji serwerowego ledgeru wyliczanego ze zrodel prawdy.
 
 Obecnie saldo `data.points` jest przeliczane z:
 
@@ -94,16 +98,15 @@ Obecnie saldo `data.points` jest przeliczane z:
 - zatwierdzonych extra taskow,
 - premii i kar z `pointAdjustments`.
 
-To daje praktyczny mechanizm naprawczy, ale nie jest pelnym ledgerem. Nadal brakuje jawnej listy transakcji punktowych z powodami i mozliwoscia audytu.
+To daje praktyczny ledger audytowy. `data.points` pozostaje cachem do szybkiego wyswietlania, ale jest przeliczany razem z `pointLedger`.
 
-Co zrobic dalej:
+Co zostaje dalej:
 
-1. Dodac `pointLedger` do `FamilyState.data`.
-2. Kazde naliczenie punktow zapisywac jako wpis ledgeru: `TASK_APPROVED`, `DAY_PASSED`, `WEEK_IDEAL`, `EXTRA_TASK`, `BONUS`, `PENALTY`, `MANUAL_CORRECTION`.
-3. Ustalic, czy `data.points` jest cachem wyliczanym z ledgeru, czy autorytatywnym saldem walidowanym przeciw ledgerowi.
-4. Dodac widok historii punktow dla rodzica i dziecka.
+1. Dodac opcjonalny widok historii punktow w panelu rodzica.
+2. Po uporzadkowaniu frontendu przeniesc popup historii punktow do komponentu z prawdziwego zrodla JSX.
+3. Jesli kiedys powstanie osobna tabela ledgeru, migrowac `pointLedger` z JSON-a do DB.
 
-Priorytet: P1/P2.
+Priorytet: zrealizowane, rozszerzenia P3.
 
 ### 2. Jawna Korekta Punktow Dla Cofania Zatwierdzen
 
@@ -228,7 +231,7 @@ Rekomendowana kolejność od teraz:
 
 1. Rozwiazac globalne kolizje kodow dzieci.
 2. Uporzadkowac zrodlo frontendu i README/PWA.
-3. Dopiero potem projektowac pelny `pointLedger`.
+3. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica po porzadkowaniu frontendu.
 
 ## Uwaga O Limicie I Zakresie
 
@@ -236,4 +239,4 @@ Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbez
 
 - Pakiet A: logowanie dziecka z kodem rodziny.
 - Pakiet B: porzadkowanie frontendu/build/docs.
-- Pakiet C: pelny ledger punktow.
+- Pakiet C: rozszerzony widok ledgeru dla rodzica.
