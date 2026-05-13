@@ -47,7 +47,7 @@ cd /opt/familyquest
 BACKUP_DIR="/opt/familyquest/.deploy-backups/local-before-pull-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
-for file in familyquest-app.compiled.js familyquest-app.jsx index.html server.js service-worker.js package.json AUDYT_LOGIKI.md prisma/schema.prisma; do
+for file in familyquest-app.compiled.js index.html server.js service-worker.js package.json AUDYT_LOGIKI.md prisma/schema.prisma; do
   if [ -e "$file" ]; then cp -a "$file" "$BACKUP_DIR/"; fi
 done
 git pull --ff-only
@@ -84,6 +84,14 @@ pct exec 103 -- systemctl restart familyquest
 ```
 
 W przegladarce wykonaj twarde odswiezenie: `Ctrl + F5`.
+
+## Frontend I PWA
+
+Aktualnym zrodlem prawdy frontendu jest `familyquest-app.compiled.js`, ladowany przez `index.html`.
+
+Nie ma obecnie build step z JSX. Stary `familyquest-app.jsx` byl nieaktualna aplikacja localStorage i zostal usuniety, zeby nie naprawiac przypadkiem zlego pliku. Przed wiekszymi zmianami frontendowymi warto docelowo wprowadzic prawdziwy build pipeline, ale do tego czasu zmiany UI trafiaja do `familyquest-app.compiled.js`.
+
+PWA dziala w trybie instalowalnej aplikacji przez `manifest.json` i przycisk instalacji. Offline cache jest celowo wylaczony: `service-worker.js` czysci stare cache, wyrejestrowuje service worker i przepuszcza requesty do sieci. To chroni przed sytuacja, w ktorej telefon trzyma stary JS po deployu.
 
 ## Testy Po Wdrozeniu
 

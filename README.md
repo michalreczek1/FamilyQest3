@@ -329,6 +329,16 @@ pct exec 100 -- sysctl net.ipv4.ip_forward
 - publiczny healthcheck:
   - `https://fq.familyos.pl/health`
 
+### Frontend i PWA
+
+- zrodlo prawdy frontendu: `familyquest-app.compiled.js`
+- entrypoint: `index.html` laduje `familyquest-app.compiled.js` z cache-busterem
+- stary `familyquest-app.jsx` byl legacy/localStorage i zostal usuniety z repo
+- nie ma obecnie build step z JSX; do czasu wprowadzenia bundlera zmiany UI trafiaja do `familyquest-app.compiled.js`
+- straznik repo: `npm run test:frontend-source`
+- PWA: `manifest.json`, ikony i przycisk instalacji pozostaja aktywne
+- offline cache: celowo wylaczony; `service-worker.js` czysci stare cache i wyrejestrowuje service worker, zeby urzadzenia dostawaly swiezy JS po deployu
+
 ## FamilyOS home
 
 ### Aplikacja

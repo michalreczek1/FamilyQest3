@@ -1,3 +1,6 @@
+// FamilyQuest frontend source of truth.
+// This file is the browser-loaded frontend used in production by index.html.
+// There is currently no JSX build step; keep UI changes here until a real build pipeline replaces it.
 const {
   useState,
   useEffect,

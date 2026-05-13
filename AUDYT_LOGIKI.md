@@ -38,6 +38,9 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano backendowy endpoint `POST /api/tasks/:id/archive-matching`, ktory archiwizuje wszystkie aktywne zadania o tej samej definicji u dzieci.
 - Panel rodzica w zakladce `Zadania` pokazuje przycisk `U wszystkich`, gdy istnieje wiecej niz jedna aktywna kopia tego samego zadania.
 - Panel rodzica ma teraz modal `Edytuj zadanie` zamiast systemowych `prompt()`. Edycja obejmuje dziecko, nazwe, typ `MIN/PLUS/WEEKLY`, punkty, dni tygodnia i opis.
+- Uporzadkowano zrodlo frontendu: aktualnym i jedynym browser-loaded zrodlem jest `familyquest-app.compiled.js`; stary `familyquest-app.jsx` zostal usuniety jako legacy/localStorage.
+- Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu frontendu, braku legacy JSX i aktualnej polityki PWA bez offline cache.
+- README i `PROXMOX_DEPLOY.md` opisuja teraz tryb PWA: manifest/install dziala, a service worker celowo czysci stare cache i wyrejestrowuje sie.
 
 ## Weryfikacja Wykonana
 
@@ -55,6 +58,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:point-ledger` - OK, test sprawdzil wpisy ledgeru `TASK_APPROVED`, `DAY_PASSED`, `EXTRA_TASK`, `BONUS` oraz popup historii punktow dziecka.
 - `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
 - `npm run test:task-edit` - OK, Playwright sprawdzil modal edycji zadania, zmiane nazwy, typu, punktow, opisu i dni tygodnia oraz payload `PUT /api/tasks/:id`.
+- `npm run test:frontend-source` - OK, test potwierdza `familyquest-app.compiled.js` jako entrypoint, brak legacy JSX oraz service worker cleanup.
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
 - Lokalny `.env` nie powinien wskazywac starej bazy Railway. Do testow API potrzebna jest osobna lokalna baza testowa albo swiadomie ustawiony `DATABASE_URL`.
 - `DATABASE_URL='' npm test -- --runInBand` przechodzi, ale test suite jest wtedy pominiety, bo testy integracyjne wymagaja bazy.
@@ -66,30 +70,35 @@ Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym por
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
 2. Testy API wymagaja stabilnej lokalnej bazy testowej.
-3. Frontend nadal ma nieuporzadkowane zrodlo prawdy: uruchamiany jest `familyquest-app.compiled.js`, a `familyquest-app.jsx` wyglada na legacy.
-4. Archiwizacja zadan ma juz bulk dla identycznej definicji, ale nie ma jeszcze widoku archiwum ani przywracania zadania z UI.
+3. Archiwizacja zadan ma juz bulk dla identycznej definicji, ale nie ma jeszcze widoku archiwum ani przywracania zadania z UI.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po archiwizacji: **uporzadkowanie zrodla frontendu i README/PWA**.
+Najbardziej sensowny kolejny pakiet po uporzadkowaniu frontendu: **archiwum/przywracanie zadan albo stabilna lokalna baza testowa**.
 
 Dlaczego ten pakiet teraz:
 
-- Globalne kolizje kodow dzieci zostaly swiadomie odlozone na koniec, bo obecnie jest jedna rodzina.
-- Coraz wiecej zmian UI trafia do `familyquest-app.compiled.js`, a `familyquest-app.jsx` jest legacy/stary.
-- To zwieksza ryzyko, ze przyszla zmiana zostanie naprawiona w niewlasciwym pliku.
-- README/PWA nadal nie opisuje precyzyjnie aktualnego trybu bez offline cache.
+- Globalne kolizje kodow dzieci nadal sa odlozone na koniec, bo obecnie jest jedna rodzina.
+- Bulk archiwizacja jest wdrozona, ale nie ma jeszcze wygodnego widoku archiwum ani przywracania.
+- Lokalny `npm test` pomija integracje bez bazy testowej, wiec regresje API nadal sa slabiej pokryte lokalnie.
 
 Minimalny zakres wdrozenia:
 
-1. Oznaczyc `familyquest-app.jsx` jako legacy albo przywrocic build z JSX do compiled.
-2. Dodac skrypt build/sprawdzenie, ktore blokuje przypadkowa edycje zlego pliku.
-3. Zaktualizowac README o realny sposob uruchamiania, deploy na Proxmox i CSP.
-4. Zaktualizowac dokumentacje PWA: manifest/install dziala, ale service worker nie robi offline cache.
+Opcja A - archiwum/przywracanie:
+
+1. Dodac filtr/widok zarchiwizowanych zadan w panelu rodzica.
+2. Dodac endpoint i przycisk przywracania zadania.
+3. Sprawdzic, ze `archivedAt` nie kasuje historii punktow po restore.
+
+Opcja B - stabilna lokalna baza testowa:
+
+1. Dodac `.env.test.example`.
+2. Dodac skrypt przygotowania lokalnej bazy testowej.
+3. Uruchamiac integracje bez zaleznosci od produkcji.
 
 Ryzyko/decyzja przed implementacja:
 
-- Trzeba zdecydowac, czy inwestujemy w prawdziwy build JSX teraz, czy tylko jasno oznaczamy obecny compiled jako jedyne zrodlo prawdy na najblizszy etap.
+- Trzeba wybrac, czy nastepny ruch ma byc bardziej produktowy dla rodzica, czy techniczny pod testy.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -206,31 +215,30 @@ Priorytet: P3/P2.
 
 ### 8. Zrodlo Frontendu I Build
 
-Status: otwarte.
+Status: uporzadkowane operacyjnie.
 
-Uruchamiana aplikacja laduje `familyquest-app.compiled.js`. Plik `familyquest-app.jsx` wyglada na nieuzywany/stary. To jest ryzyko, bo latwo naprawic niewlasciwy plik.
+Uruchamiana aplikacja laduje `familyquest-app.compiled.js`. Stary `familyquest-app.jsx` byl legacy/localStorage i zostal usuniety z repo, zeby nie sugerowal nieprawdziwego zrodla prawdy.
 
 Co zrobic dalej:
 
-1. Ustalic jedno zrodlo prawdy.
-2. Dodac skrypt build z JSX do compiled albo usunac/oznaczyc stary JSX jako legacy.
-3. Zaktualizowac README.
-4. Dopiero potem przenosic wieksze zmiany frontendowe.
+1. Przy wiekszej przebudowie UI wprowadzic realny build pipeline JSX/React.
+2. Do tego czasu pilnowac `npm run test:frontend-source`.
+3. Trzymac zmiany UI w `familyquest-app.compiled.js`.
 
-Priorytet: P3, ale wazne operacyjnie.
+Priorytet: zrealizowane operacyjnie, docelowy bundler P3.
 
 ### 9. Dokumentacja PWA I Service Worker
 
-Status: otwarte.
+Status: uporzadkowane.
 
-`service-worker.js` usuwa cache i wyrejestrowuje SW. README nadal sugeruje PWA + Service Worker, co moze byc mylace.
+`service-worker.js` usuwa cache i wyrejestrowuje SW. README oraz `PROXMOX_DEPLOY.md` opisuja teraz, ze PWA oznacza manifest/install bez offline cache.
 
 Co zrobic dalej:
 
-1. Zaktualizowac README: aplikacja ma manifest/install, ale bez offline cache.
-2. Albo przywrocic kontrolowany cache z wersjonowaniem assetow.
+1. Jesli kiedys potrzebny bedzie offline mode, przywrocic kontrolowany cache z wersjonowaniem assetow.
+2. Pilnowac, by service worker nie trzymal starego JS po deployu.
 
-Priorytet: P3.
+Priorytet: zrealizowane, offline cache P3.
 
 ### 10. Stabilne Testy Integracyjne
 
@@ -257,16 +265,16 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Uporzadkowac zrodlo frontendu i README/PWA.
-2. Dodac widok archiwum/przywracanie zadan, jesli bedzie potrzebne w codziennym uzyciu.
+1. Dodac widok archiwum/przywracanie zadan, jesli bedzie potrzebne w codziennym uzyciu.
+2. Przygotowac stabilna lokalna baze testowa.
 3. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
-4. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica po porzadkowaniu frontendu.
+4. Uporzadkowac/rozszerzyc widoki historii punktow dla rodzica.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: porzadkowanie frontendu/build/docs.
-- Pakiet B: archiwum/przywracanie zadan.
+- Pakiet A: archiwum/przywracanie zadan.
+- Pakiet B: stabilna lokalna baza testowa.
 - Pakiet C: logowanie dziecka z kodem rodziny.
 - Pakiet D: rozszerzony widok ledgeru dla rodzica.

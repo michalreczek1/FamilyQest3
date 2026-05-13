@@ -21,6 +21,7 @@
     "test:point-ledger": "node scripts/check-point-ledger-history.js",
     "test:task-archive": "node scripts/check-task-archive-matching.js",
     "test:task-edit": "node scripts/check-task-edit-modal.js",
+    "test:frontend-source": "node scripts/check-frontend-source.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
     "lint": "eslint .",
     "format": "prettier --write ."
