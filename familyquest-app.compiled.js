@@ -11,6 +11,10 @@ const {
 const LEGACY_AUTH_TOKEN_KEY = 'fq_auth_token';
 const API_BASE_KEY = 'fq_api_base';
 const CHILD_SESSION_KEY = 'fq_child_session_active';
+const ModalOverlay = ({
+  children,
+  ...props
+}) => ReactDOM.createPortal(React.createElement("div", props, children), document.body);
 const normalizeApiBase = value => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -1567,7 +1571,7 @@ const App = () => {
         opacity: 0.7,
         marginTop: '0.5rem'
       }
-    }, "Punkty i zaliczenie wymagaj\u0105 akceptacji rodzica")), childApprovalNotice && React.createElement("div", {
+    }, "Punkty i zaliczenie wymagaj\u0105 akceptacji rodzica")), childApprovalNotice && React.createElement(ModalOverlay, {
       className: "modal child-approval-modal",
       style: {
         alignItems: 'flex-start',
@@ -1628,7 +1632,7 @@ const App = () => {
       style: {
         width: '100%'
       }
-    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showPointHistory && React.createElement("div", {
+    }, childApprovalNotice.encouragement ? "Super!" : "Rozumiem"))), showPointHistory && React.createElement(ModalOverlay, {
       className: "modal",
       style: {
         alignItems: 'flex-start',
@@ -1681,7 +1685,7 @@ const App = () => {
       }, typeLabel, when ? ` • ${when}` : '', Number.isFinite(Number(entry.newPoints)) ? ` • saldo: ${entry.newPoints}` : ''), entry.note && entry.note !== entry.title && React.createElement("div", {
         className: "point-history-note"
       }, entry.note)));
-    })))), showChildRewards && React.createElement("div", {
+    })))), showChildRewards && React.createElement(ModalOverlay, {
       className: "modal",
       style: {
         alignItems: 'flex-start',
@@ -2861,7 +2865,7 @@ const PointAdjustmentModal = ({
       setSaving(false);
     }
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal",
     role: "dialog",
     "aria-modal": "true",
@@ -2977,7 +2981,7 @@ const RewardOverlay = ({
   onClose
 }) => {
   if (!reward) return null;
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "reward-overlay",
     onClick: onClose
   }, React.createElement("div", {
@@ -3687,7 +3691,7 @@ const AddChildModal = ({
     }
     onAdd(normalizedName, normalizedAvatar, activeDays);
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal"
   }, React.createElement("div", {
     className: "modal-content"
@@ -3861,7 +3865,7 @@ const EditChildModal = ({
       accessCode: uniqueCode
     });
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal"
   }, React.createElement("div", {
     className: "modal-content"
@@ -4025,7 +4029,7 @@ const AddTaskModal = ({
     if (!childId) return;
     onAdd(childId, title, tier, points, description, daysOfWeek);
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal"
   }, React.createElement("div", {
     className: "modal-content"
@@ -4230,7 +4234,7 @@ const EditTaskModal = ({
       setSaving(false);
     }
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal",
     role: "dialog",
     "aria-modal": "true",
@@ -4404,7 +4408,7 @@ const AddRewardModal = ({
       onAdd(payload.title, payload.description, payload.requiredPoints, payload.requiredStreak, payload.requiredIdealWeeks);
     }
   };
-  return React.createElement("div", {
+  return React.createElement(ModalOverlay, {
     className: "modal"
   }, React.createElement("div", {
     className: "modal-content"
