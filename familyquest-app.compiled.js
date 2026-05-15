@@ -3167,7 +3167,7 @@ const ExtraTaskApprovalCard = ({
   onApprove,
   onReject
 }) => {
-  const [pointsValue, setPointsValue] = useState('3');
+  const [pointsValue, setPointsValue] = useState(String(Number.isFinite(Number(extraTask?.points)) ? extraTask.points : 1));
   if (!extraTask || !child) return null;
   return React.createElement("div", {
     className: "task-item"

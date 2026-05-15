@@ -440,7 +440,7 @@ const extraTaskSchema = z.object({
 });
 
 const approveExtraTaskSchema = z.object({
-  points: z.number().int().min(0).max(1000),
+  points: z.number().int().min(0).max(1000).default(1),
 });
 
 const pointAdjustmentSchema = z.object({
@@ -3015,7 +3015,7 @@ app.post('/api/extra-tasks', authMiddleware, async (req, res) => {
       title: parsed.data.title.trim(),
       date: extraTaskDate,
       status: 'PENDING',
-      points: null,
+      points: 1,
       approvedByParent: false,
       approvedAt: null,
       rejectedAt: null,

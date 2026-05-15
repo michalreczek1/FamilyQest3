@@ -283,6 +283,7 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(extraTaskRes.status).toBe(201);
     expect(extraTaskRes.body.extraTask.status).toBe('PENDING');
+    expect(extraTaskRes.body.extraTask.points).toBe(1);
 
     const childExtraTasksRes = await request(app)
       .get('/api/storage/get/extraTasks')
