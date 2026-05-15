@@ -616,11 +616,56 @@ const normalizeStateData = (value) => {
   };
 };
 
+const FAMILY_STATE_CONFLICT_BASE_DATA = Symbol('familyStateConflictBaseData');
+
+const cloneStateDataForStorage = (value) => JSON.parse(JSON.stringify(normalizeStateData(value)));
+
+const attachStateDataConflictBase = (target, data) => {
+  if (!isObjectRecord(target)) return target;
+  Object.defineProperty(target, FAMILY_STATE_CONFLICT_BASE_DATA, {
+    value: cloneStateDataForStorage(data),
+    enumerable: false,
+    configurable: true,
+  });
+  return target;
+};
+
+const getStateDataConflictBase = (state, data) => {
+  if (isObjectRecord(data) && data[FAMILY_STATE_CONFLICT_BASE_DATA]) {
+    return data[FAMILY_STATE_CONFLICT_BASE_DATA];
+  }
+  if (isObjectRecord(state) && state[FAMILY_STATE_CONFLICT_BASE_DATA]) {
+    return state[FAMILY_STATE_CONFLICT_BASE_DATA];
+  }
+  return null;
+};
+
+const getConflictComparableStateData = (value) => {
+  const data = normalizeStateData(value);
+  return {
+    children: data.children,
+    tasks: data.tasks,
+    completions: data.completions,
+    extraTasks: data.extraTasks,
+    pointAdjustments: data.pointAdjustments,
+    rewards: data.rewards,
+    rewardUnlocks: data.rewardUnlocks,
+    familyGoal: data.familyGoal,
+  };
+};
+
+const isCompatibleFamilyStateConflict = (baseData, latestData) =>
+  JSON.stringify(getConflictComparableStateData(baseData)) ===
+  JSON.stringify(getConflictComparableStateData(latestData));
+
 const loadStateData = async (familyId) => {
   const state = await getOrCreateState(familyId);
+  const data = normalizeStateData(state.data);
+  attachStateDataConflictBase(state, data);
+  attachStateDataConflictBase(data, data);
   return {
     state,
-    data: normalizeStateData(state.data),
+    data,
   };
 };
 
@@ -634,12 +679,13 @@ const createSaveStateData = (familyStateClient) => async (state, data, options =
   if (!stateId) {
     throw new Error('Brak identyfikatora stanu rodziny');
   }
+  const nextData = cloneStateDataForStorage(data);
 
   if (!isObjectRecord(state)) {
     return familyStateClient.update({
       where: { id: stateId },
       data: {
-        data,
+        data: nextData,
         version: { increment: 1 },
       },
     });
@@ -652,13 +698,32 @@ const createSaveStateData = (familyStateClient) => async (state, data, options =
       version: expectedVersion,
     },
     data: {
-      data,
+      data: nextData,
       version: { increment: 1 },
     },
   });
 
   if (result.count !== 1) {
     if (options.skipOnConflict) return null;
+    const baseData = getStateDataConflictBase(state, data);
+    if (options.retryOnCompatibleConflict !== false && baseData) {
+      const latestState = await familyStateClient.findUnique({ where: { id: stateId } });
+      if (latestState && isCompatibleFamilyStateConflict(baseData, latestState.data)) {
+        const retryResult = await familyStateClient.updateMany({
+          where: {
+            id: stateId,
+            version: getFamilyStateVersion(latestState),
+          },
+          data: {
+            data: nextData,
+            version: { increment: 1 },
+          },
+        });
+        if (retryResult.count === 1) {
+          return familyStateClient.findUnique({ where: { id: stateId } });
+        }
+      }
+    }
     throw new FamilyStateConflictError();
   }
 
@@ -3621,6 +3686,7 @@ module.exports = {
     normalizeRestoredBackupData,
     reverseApprovalEffects,
     createSaveStateData,
+    attachStateDataConflictBase,
     FamilyStateConflictError,
     isFamilyStateConflict,
   },
