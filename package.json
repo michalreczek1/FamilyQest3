@@ -23,6 +23,7 @@
     "test:point-ledger": "node scripts/check-point-ledger-history.js",
     "test:task-archive": "node scripts/check-task-archive-matching.js",
     "test:task-restore": "node scripts/check-task-restore-archive.js",
+    "test:extra-task-resubmit": "node scripts/check-extra-task-resubmit.js",
     "test:task-edit": "node scripts/check-task-edit-modal.js",
     "test:frontend-source": "node scripts/check-frontend-source.js",
     "test:child-actions": "node scripts/check-child-actions-layout.js",

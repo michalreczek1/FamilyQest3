@@ -991,6 +991,10 @@ const App = () => {
       alert(e.message || 'Nie udało się zgłosić zadania dodatkowego');
     }
   };
+  const resubmitExtraTask = async task => {
+    if (!task || task.status === 'PENDING') return;
+    await submitExtraTask(task.title);
+  };
   const approveExtraTask = async (extraTask, pointsValue) => {
     if (!extraTask || extraTask.status === 'APPROVED') return;
     const pointsToGrant = Number.parseInt(pointsValue, 10);
@@ -1971,6 +1975,7 @@ const App = () => {
         marginTop: '0.75rem'
       }
     }, "Zg\u0142o\u015B rodzicowi")), childExtraTasks.length > 0 && React.createElement("div", {
+      className: "extra-task-history-list",
       style: {
         marginTop: '1rem',
         display: 'grid',
@@ -2003,7 +2008,12 @@ const App = () => {
       }
     }, "Odrzucone") : React.createElement("div", {
       className: "badge badge-pending"
-    }, "Czeka"))))), React.createElement("div", {
+    }, "Czeka"), task.status !== 'PENDING' && React.createElement("button", {
+      type: "button",
+      className: "btn btn-secondary extra-task-resubmit-btn",
+      onClick: () => resubmitExtraTask(task),
+      title: `Zg\u0142o\u015B ponownie: ${task.title}`
+    }, "\u21BB Zg\u0142o\u015B ponownie"))))), React.createElement("div", {
       className: "glass-card",
       style: {
         marginTop: '1.5rem'
