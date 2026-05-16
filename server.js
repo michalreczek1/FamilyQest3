@@ -969,12 +969,25 @@ const getAdjustmentTimestamp = (adjustment) => Date.parse(adjustment?.createdAt 
 const getLedgerTimestamp = (item) =>
   Date.parse(item?.occurredAt || item?.approvedAt || item?.createdAt || item?.updatedAt || 0) || 0;
 
+const compareLedgerEventsAscending = (a, b) => {
+  const timeDiff = getLedgerTimestamp(a) - getLedgerTimestamp(b);
+  if (timeDiff !== 0) return timeDiff;
+  return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''), 'pl');
+};
+
+const compareLedgerEventsDescending = (a, b) => {
+  const timeDiff = getLedgerTimestamp(b) - getLedgerTimestamp(a);
+  if (timeDiff !== 0) return timeDiff;
+  return String(b.id || b.sourceId || '').localeCompare(String(a.id || a.sourceId || ''), 'pl');
+};
+
 const recomputePointsAndGrants = (data) => {
   const nextPoints = {};
   const taskPointGrants = {};
   const dayPointGrants = {};
   const weekBonusGrants = {};
   const pointLedger = [];
+  const ledgerEvents = [];
   const relevantDayKeys = new Set();
   const relevantWeekKeys = new Set();
   const childrenById = new Map(data.children.filter((child) => !child.archived).map((child) => [child.id, child]));
@@ -984,7 +997,7 @@ const recomputePointsAndGrants = (data) => {
     nextPoints[child.id] = 0;
   });
 
-  const addLedgerEntry = ({
+  const queueLedgerEntry = ({
     id,
     childId,
     type,
@@ -1002,22 +1015,14 @@ const recomputePointsAndGrants = (data) => {
     if (!childrenById.has(childId)) return null;
     const appliedDelta = Number(delta || 0);
     if (!Number.isFinite(appliedDelta) || appliedDelta === 0) return null;
-    const hasPreviousPoints = previousPoints !== null && previousPoints !== undefined && Number.isFinite(Number(previousPoints));
-    const hasNewPoints = newPoints !== null && newPoints !== undefined && Number.isFinite(Number(newPoints));
-    const previous = hasPreviousPoints ? Number(previousPoints) : Number(nextPoints[childId] || 0);
-    const next = hasNewPoints
-      ? Number(newPoints)
-      : affectsBalance === false
-        ? previous
-        : Math.max(0, previous + appliedDelta);
-    const entry = {
+    const event = {
       id: id || createEntityId('ledger'),
       childId,
       type,
       delta: appliedDelta,
       points: Math.abs(appliedDelta),
-      previousPoints: previous,
-      newPoints: next,
+      previousPoints,
+      newPoints,
       title: title || 'Zmiana punktów',
       note: note || '',
       sourceType,
@@ -1026,11 +1031,8 @@ const recomputePointsAndGrants = (data) => {
       occurredAt: occurredAt || new Date().toISOString(),
       affectsBalance,
     };
-    pointLedger.push(entry);
-    if (affectsBalance !== false) {
-      nextPoints[childId] = next;
-    }
-    return entry;
+    ledgerEvents.push(event);
+    return event;
   };
 
   data.completions
@@ -1044,7 +1046,7 @@ const recomputePointsAndGrants = (data) => {
       const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
       if (Number(task.points || 0) > 0 && !taskPointGrants[taskPointKey]) {
         taskPointGrants[taskPointKey] = true;
-        addLedgerEntry({
+        queueLedgerEntry({
           id: `task:${taskPointKey}`,
           childId: completion.childId,
           type: 'TASK_APPROVED',
@@ -1065,7 +1067,7 @@ const recomputePointsAndGrants = (data) => {
     const [childId, date] = dayKey.split(':');
     if (evaluateDayForData(data, childId, date) !== 'PASSED') return;
     dayPointGrants[dayKey] = true;
-    addLedgerEntry({
+    queueLedgerEntry({
       id: `day:${dayKey}`,
       childId,
       type: 'DAY_PASSED',
@@ -1082,7 +1084,7 @@ const recomputePointsAndGrants = (data) => {
     const [childId, weekStart] = weekKey.split(':');
     if (evaluateWeekForData(data, childId, weekStart) !== 'IDEAL') return;
     weekBonusGrants[weekKey] = true;
-    addLedgerEntry({
+    queueLedgerEntry({
       id: `week:${weekKey}`,
       childId,
       type: 'WEEK_IDEAL',
@@ -1099,7 +1101,7 @@ const recomputePointsAndGrants = (data) => {
     .filter((task) => task.status === 'APPROVED')
     .sort((a, b) => Date.parse(a.approvedAt || a.updatedAt || a.createdAt || 0) - Date.parse(b.approvedAt || b.updatedAt || b.createdAt || 0))
     .forEach((task) =>
-      addLedgerEntry({
+      queueLedgerEntry({
         id: `extra:${task.id}`,
         childId: task.childId,
         type: 'EXTRA_TASK',
@@ -1125,17 +1127,11 @@ const recomputePointsAndGrants = (data) => {
             : Number(adjustment.points || 0);
       if (!Number.isFinite(delta) || delta === 0) return;
       const affectsBalance = adjustment.affectsBalance !== false;
-      const previousPoints = Number(nextPoints[adjustment.childId] || 0);
-      const newPoints = affectsBalance
-        ? Math.max(0, previousPoints + delta)
-        : Number.isFinite(Number(adjustment.newPoints))
-          ? Number(adjustment.newPoints)
-          : previousPoints;
-      addLedgerEntry({
+      queueLedgerEntry({
         id: `adjustment:${adjustment.id}`,
         childId: adjustment.childId,
         type: adjustment.type || (delta < 0 ? 'PENALTY' : 'BONUS'),
-        delta: affectsBalance ? newPoints - previousPoints : delta,
+        delta,
         title:
           adjustment.note ||
           (adjustment.type === 'REVERSAL'
@@ -1149,16 +1145,42 @@ const recomputePointsAndGrants = (data) => {
         date: adjustment.sourceDate || null,
         occurredAt: adjustment.createdAt || adjustment.updatedAt,
         affectsBalance,
-        previousPoints: affectsBalance ? previousPoints : adjustment.previousPoints,
-        newPoints: affectsBalance ? newPoints : adjustment.newPoints,
+        previousPoints: affectsBalance ? null : adjustment.previousPoints,
+        newPoints: affectsBalance ? null : adjustment.newPoints,
       });
+    });
+
+  ledgerEvents
+    .sort(compareLedgerEventsAscending)
+    .forEach((event) => {
+      const hasPreviousPoints =
+        event.previousPoints !== null && event.previousPoints !== undefined && Number.isFinite(Number(event.previousPoints));
+      const hasNewPoints = event.newPoints !== null && event.newPoints !== undefined && Number.isFinite(Number(event.newPoints));
+      const previous = hasPreviousPoints ? Number(event.previousPoints) : Number(nextPoints[event.childId] || 0);
+      const next = hasNewPoints
+        ? Number(event.newPoints)
+        : event.affectsBalance === false
+          ? previous
+          : Math.max(0, previous + Number(event.delta || 0));
+      const actualDelta = event.affectsBalance === false ? Number(event.delta || 0) : next - previous;
+      const entry = {
+        ...event,
+        delta: actualDelta,
+        points: Math.abs(actualDelta),
+        previousPoints: previous,
+        newPoints: next,
+      };
+      pointLedger.push(entry);
+      if (event.affectsBalance !== false) {
+        nextPoints[event.childId] = next;
+      }
     });
 
   data.points = nextPoints;
   data.taskPointGrants = taskPointGrants;
   data.dayPointGrants = dayPointGrants;
   data.weekBonusGrants = weekBonusGrants;
-  data.pointLedger = pointLedger.sort((a, b) => getLedgerTimestamp(b) - getLedgerTimestamp(a));
+  data.pointLedger = pointLedger.sort(compareLedgerEventsDescending);
   refreshAllStreaks(data);
   return data;
 };

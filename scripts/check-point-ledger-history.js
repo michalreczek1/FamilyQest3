@@ -148,6 +148,61 @@ const runLogicCheck = () => {
   assert(types.includes('EXTRA_TASK'), 'ledger should include approved extra task');
   assert(types.includes('BONUS'), 'ledger should include manual bonus');
   assert(storageValues.pointLedger.every((entry) => typeof entry.newPoints === 'number'));
+
+  const mixedTimelineState = makeState();
+  mixedTimelineState.pointAdjustments = [
+    {
+      id: 'ledger-penalty-before-extra',
+      childId: child.id,
+      type: 'PENALTY',
+      points: 5,
+      delta: -5,
+      note: 'Korekta przed późniejszym zadaniem dodatkowym',
+      createdAt: `${today}T09:30:00.000Z`,
+      updatedAt: `${today}T09:30:00.000Z`,
+    },
+  ];
+  __test.recomputePointsAndGrants(mixedTimelineState);
+  const latestEntry = mixedTimelineState.pointLedger[0];
+  assert.strictEqual(
+    latestEntry.newPoints,
+    mixedTimelineState.points[child.id],
+    'latest visible ledger entry must match current point balance',
+  );
+
+  const sameTimestampState = makeState();
+  sameTimestampState.completions = [
+    {
+      id: 'same-time-completion-a',
+      childId: child.id,
+      taskId: tasks[0].id,
+      date: today,
+      status: 'DONE',
+      approvedByParent: true,
+      approvedAt: `${today}T08:00:00.000Z`,
+      createdAt: `${today}T08:00:00.000Z`,
+      updatedAt: `${today}T08:00:00.000Z`,
+    },
+  ];
+  sameTimestampState.extraTasks = [
+    {
+      id: 'same-time-extra-b',
+      childId: child.id,
+      title: 'Dodatkowe w tej samej sekundzie',
+      points: 4,
+      status: 'APPROVED',
+      date: today,
+      approvedAt: `${today}T08:00:00.000Z`,
+      createdAt: `${today}T08:00:00.000Z`,
+      updatedAt: `${today}T08:00:00.000Z`,
+    },
+  ];
+  __test.recomputePointsAndGrants(sameTimestampState);
+  assert.strictEqual(
+    sameTimestampState.pointLedger[0].newPoints,
+    sameTimestampState.points[child.id],
+    'latest visible ledger entry must match current balance when entries share a timestamp',
+  );
 };
 
 const runUiCheck = async () => {
