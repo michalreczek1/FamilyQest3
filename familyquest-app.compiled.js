@@ -1071,16 +1071,30 @@ const App = () => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
     try {
-      for (const item of queue) {
-        await apiRequest(`/api/completions/${encodeURIComponent(item.id)}/approve`, {
-          method: 'POST'
-        });
+      const bulkRequest = {
+        ids: queue.map(item => item.id).filter(Boolean)
+      };
+      if (approvalFilterChildId !== 'ALL') {
+        bulkRequest.childId = approvalFilterChildId;
       }
-      showConfetti();
+      if (approvalFilterDate) {
+        bulkRequest.date = approvalFilterDate;
+      }
+      const result = await apiRequest('/api/completions/approve-bulk', {
+        method: 'POST',
+        body: bulkRequest
+      });
+      const approvedCount = Number(result?.approvedCount || 0);
       await loadData({
         preserveView: true,
-        silent: true
+        silent: true,
+        skipNextAutoSave: true
       });
+      if (approvedCount === 0) {
+        alert('Nie zatwierdzono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
+        return;
+      }
+      showConfetti();
     } catch (e) {
       alert(e.message || 'Nie udało się zatwierdzić zadań');
     }

@@ -249,6 +249,12 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(bulkApproveRes.status).toBe(200);
     expect(bulkApproveRes.body.approvedCount).toBeGreaterThanOrEqual(1);
 
+    const pendingAfterBulkApproveRes = await request(app)
+      .get(`/api/completions/pending?childId=${encodeURIComponent(child.id)}&date=${encodeURIComponent(today)}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pendingAfterBulkApproveRes.status).toBe(200);
+    expect(pendingAfterBulkApproveRes.body.completions.some((item) => item.id === completionId)).toBe(false);
+
     const pointsAfterApproveRes = await request(app)
       .get('/api/storage/get/points')
       .set('Authorization', `Bearer ${parentToken}`);

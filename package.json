@@ -20,6 +20,7 @@
     "test:reverse-approval": "node scripts/check-reverse-approval.js",
     "test:restore-backup": "node scripts/check-restore-backup.js",
     "test:state-version": "node scripts/check-family-state-versioning.js",
+    "test:bulk-approve": "node scripts/check-bulk-approve-filter.js",
     "test:point-ledger": "node scripts/check-point-ledger-history.js",
     "test:task-archive": "node scripts/check-task-archive-matching.js",
     "test:task-restore": "node scripts/check-task-restore-archive.js",

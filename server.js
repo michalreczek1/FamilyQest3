@@ -457,6 +457,7 @@ const reverseApprovalSchema = z.object({
 const bulkApproveSchema = z.object({
   childId: z.string().min(1).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  ids: z.array(z.string().min(1)).min(1).max(500).optional(),
 });
 
 const rewardSchema = z.object({
@@ -2918,9 +2919,13 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
     const { state, data } = await loadStateData(req.auth.user.familyId);
     const now = new Date().toISOString();
     const approvedIds = [];
+    const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
 
     data.completions.forEach((completion) => {
       if (!completion.doneByChild || completion.approvedByParent) {
+        return;
+      }
+      if (requestedIds && !requestedIds.has(completion.id)) {
         return;
       }
       if (parsed.data.childId && completion.childId !== parsed.data.childId) {
@@ -2937,6 +2942,7 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASKS_BULK', 'COMPLETION', 'bulk', {
       approvedCount: approvedIds.length,
+      requestedCount: requestedIds ? requestedIds.size : null,
       childId: parsed.data.childId || null,
       date: parsed.data.date || null,
     });
