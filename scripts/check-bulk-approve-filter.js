@@ -4,8 +4,9 @@ const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
 
-const rootDir = path.join(__dirname, '..');
-const outDir = path.join(rootDir, 'tmp', 'bulk-approve-filter');
+const projectRootDir = path.join(__dirname, '..');
+const rootDir = path.join(projectRootDir, 'dist');
+const outDir = path.join(projectRootDir, 'tmp', 'bulk-approve-filter');
 const today = '2026-05-15';
 const child = {
   id: 'bulk-child',

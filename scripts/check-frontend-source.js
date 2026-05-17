@@ -7,21 +7,34 @@ const read = (file) => fs.readFileSync(path.join(rootDir, file), 'utf8');
 const exists = (file) => fs.existsSync(path.join(rootDir, file));
 
 const indexHtml = read('index.html');
-const compiled = read('familyquest-app.compiled.js');
-const serviceWorker = read('service-worker.js');
+const appSource = read('src/App.jsx');
+const mainSource = read('src/main.jsx');
+const serviceWorker = read('public/service-worker.js');
 const packageJson = JSON.parse(read('package.json'));
 
 assert(
-  indexHtml.includes('/familyquest-app.compiled.js'),
-  'index.html must load familyquest-app.compiled.js as the frontend entrypoint',
+  indexHtml.includes('<script type="module" src="/src/main.jsx"></script>'),
+  'index.html must load src/main.jsx as the Vite frontend entrypoint',
 );
 assert(
-  !exists('familyquest-app.jsx'),
-  'familyquest-app.jsx was legacy localStorage UI and must not be reintroduced without a real build step',
+  !indexHtml.includes('unpkg.com') && !indexHtml.includes('document.createElement'),
+  'index.html must not load React from CDN or inject a cache-busted compiled script',
 );
 assert(
-  compiled.startsWith('// FamilyQuest frontend source of truth.'),
-  'familyquest-app.compiled.js must declare itself as the current frontend source of truth',
+  exists('src/App.jsx') && exists('src/main.jsx') && exists('src/styles.css'),
+  'Vite frontend source must live in src/App.jsx, src/main.jsx and src/styles.css',
+);
+assert(
+  appSource.includes('export default App'),
+  'src/App.jsx must export the React application',
+);
+assert(
+  mainSource.includes("import App from './App.jsx'") && mainSource.includes("import './styles.css'"),
+  'src/main.jsx must import App and src/styles.css',
+);
+assert(
+  !exists('familyquest-app.jsx') && !exists('familyquest-app.compiled.js'),
+  'legacy browser-loaded frontend files must not be reintroduced after the Vite migration',
 );
 assert(
   serviceWorker.includes('self.registration.unregister()'),
@@ -32,13 +45,15 @@ assert(
   'service-worker.js must clear old caches while offline caching is disabled',
 );
 assert(
-  indexHtml.includes('<link rel="manifest" href="/manifest.json">'),
-  'index.html must keep the web app manifest link for installability',
+  exists('public/manifest.json') && exists('public/service-worker.js') && exists('public/icons/icon-192.png'),
+  'PWA public assets must live in public/',
 );
 assert.strictEqual(
   packageJson.scripts['test:frontend-source'],
   'node scripts/check-frontend-source.js',
   'package.json must expose the frontend source guard',
 );
+assert.strictEqual(packageJson.scripts['frontend:build'], 'vite build', 'package.json must expose Vite build');
+assert.strictEqual(packageJson.scripts['frontend:dev'], 'vite', 'package.json must expose Vite dev server');
 
-console.log('Frontend source OK: compiled JS is explicit entrypoint, legacy JSX is absent, PWA cache cleanup is documented in code');
+console.log('Frontend source OK: Vite src/ entrypoint, public PWA assets and cleanup-only service worker are in place');

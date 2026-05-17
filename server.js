@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
@@ -101,7 +102,7 @@ app.use(
       useDefaults: true,
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com'],
+        scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:'],
@@ -3766,8 +3767,11 @@ app.get('/api/storage/list', authMiddleware, async (req, res) => {
   }
 });
 
+const frontendDistPath = path.join(__dirname, 'dist');
+const frontendStaticPath = fs.existsSync(path.join(frontendDistPath, 'index.html')) ? frontendDistPath : __dirname;
+
 app.use(
-  express.static(path.join(__dirname), {
+  express.static(frontendStaticPath, {
     setHeaders: (res, filePath) => {
       if (/\.(html|js|css)$/i.test(filePath) || filePath.endsWith('service-worker.js')) {
         res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -3781,7 +3785,7 @@ app.get('*', (req, res, next) => {
     next();
     return;
   }
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(frontendStaticPath, 'index.html'));
 });
 
 app.use((err, req, res, next) => {

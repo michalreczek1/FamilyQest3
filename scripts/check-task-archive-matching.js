@@ -6,7 +6,7 @@ const request = require('supertest');
 const { chromium } = require('playwright');
 const { app, __test, prisma } = require('../server');
 
-const rootDir = path.join(__dirname, '..');
+const rootDir = path.join(__dirname, '..', 'dist');
 let staticServer = null;
 
 const contentTypes = {

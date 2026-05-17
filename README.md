@@ -331,13 +331,14 @@ pct exec 100 -- sysctl net.ipv4.ip_forward
 
 ### Frontend i PWA
 
-- zrodlo prawdy frontendu: `familyquest-app.compiled.js`
-- entrypoint: `index.html` laduje `familyquest-app.compiled.js` z cache-busterem
-- stary `familyquest-app.jsx` byl legacy/localStorage i zostal usuniety z repo
-- nie ma obecnie build step z JSX; do czasu wprowadzenia bundlera zmiany UI trafiaja do `familyquest-app.compiled.js`
+- zrodlo prawdy frontendu: `src/App.jsx`, `src/main.jsx` i `src/styles.css`
+- entrypoint developerski: `index.html` laduje `/src/main.jsx` przez Vite
+- build produkcyjny: `npm run frontend:build` generuje `dist/`, ktore serwuje Express
+- stary `familyquest-app.compiled.js` i legacy `familyquest-app.jsx` nie sa juz zrodlem frontendu
+- lokalny dev frontendu: `npm run frontend:dev`; backend API moze dzialac osobno przez `npm run dev`
 - straznik repo: `npm run test:frontend-source`
-- PWA: `manifest.json`, ikony i przycisk instalacji pozostaja aktywne
-- offline cache: celowo wylaczony; `service-worker.js` czysci stare cache i wyrejestrowuje service worker, zeby urzadzenia dostawaly swiezy JS po deployu
+- PWA: `public/manifest.json`, `public/icons/` i przycisk instalacji pozostaja aktywne
+- offline cache: celowo wylaczony; `public/service-worker.js` czysci stare cache i wyrejestrowuje service worker, zeby urzadzenia dostawaly swiezy JS po deployu
 
 ### Testy API
 

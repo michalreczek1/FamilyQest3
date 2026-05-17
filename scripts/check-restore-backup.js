@@ -5,8 +5,9 @@ const path = require('path');
 const { chromium } = require('playwright');
 const { __test, prisma } = require('../server');
 
-const rootDir = path.join(__dirname, '..');
-const tmpDir = path.join(rootDir, 'tmp');
+const projectRootDir = path.join(__dirname, '..');
+const rootDir = path.join(projectRootDir, 'dist');
+const tmpDir = path.join(projectRootDir, 'tmp');
 let staticServer = null;
 
 const contentTypes = {

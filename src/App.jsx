@@ -1,20 +1,13 @@
-// FamilyQuest frontend source of truth.
-// This file is the browser-loaded frontend used in production by index.html.
-// There is currently no JSX build step; keep UI changes here until a real build pipeline replaces it.
-const {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo
-} = React;
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
 const LEGACY_AUTH_TOKEN_KEY = 'fq_auth_token';
 const API_BASE_KEY = 'fq_api_base';
 const CHILD_SESSION_KEY = 'fq_child_session_active';
 const ModalOverlay = ({
   children,
   ...props
-}) => ReactDOM.createPortal(React.createElement("div", props, children), document.body);
+}) => createPortal(React.createElement("div", props, children), document.body);
 const normalizeApiBase = value => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -23,11 +16,6 @@ const normalizeApiBase = value => {
 const getApiBase = () => {
   const manualBase = normalizeApiBase(localStorage.getItem(API_BASE_KEY));
   if (manualBase) return manualBase;
-  const host = window.location.hostname;
-  const isLocalHost = host === 'localhost' || host === '127.0.0.1';
-  if (isLocalHost && window.location.port !== '3010') {
-    return 'http://localhost:3010';
-  }
   return '';
 };
 const buildApiUrl = path => {
@@ -4578,44 +4566,5 @@ const AddRewardModal = ({
     }
   }, isEditing ? "Zapisz" : "Dodaj nagrod\u0119")))));
 };
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
-let deferredInstallPrompt = null;
-const installButton = document.getElementById('install-app-btn');
-const hideInstallButton = () => {
-  installButton.style.display = 'none';
-  installButton.disabled = false;
-};
-const showInstallButton = () => {
-  installButton.style.display = 'block';
-};
-installButton.addEventListener('click', async () => {
-  if (!deferredInstallPrompt) return;
-  installButton.disabled = true;
-  deferredInstallPrompt.prompt();
-  const choiceResult = await deferredInstallPrompt.userChoice;
-  if (choiceResult.outcome !== 'accepted') {
-    installButton.disabled = false;
-  }
-  deferredInstallPrompt = null;
-  hideInstallButton();
-});
-window.addEventListener('beforeinstallprompt', event => {
-  event.preventDefault();
-  deferredInstallPrompt = event;
-  showInstallButton();
-});
-window.addEventListener('appinstalled', () => {
-  deferredInstallPrompt = null;
-  hideInstallButton();
-});
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      registrations.forEach(registration => registration.unregister());
-    }).catch(err => {
-      console.warn('Service worker cleanup failed:', err);
-    });
-  });
-}
-console.log('🏆 FamilyQuest - Pełna wersja produkcyjna');
-console.log('✨ Funkcje: konto rodzica, Postgres, zarządzanie dziećmi i zadaniami, passa, punkty, ranking, nagrody');
+
+export default App;

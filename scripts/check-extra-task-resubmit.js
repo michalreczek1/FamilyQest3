@@ -4,8 +4,9 @@ const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
 
-const rootDir = path.join(__dirname, '..');
-const outDir = path.join(rootDir, 'tmp', 'extra-task-resubmit');
+const projectRootDir = path.join(__dirname, '..');
+const rootDir = path.join(projectRootDir, 'dist');
+const outDir = path.join(projectRootDir, 'tmp', 'extra-task-resubmit');
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',

@@ -4,7 +4,7 @@ const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
 
-const rootDir = path.join(__dirname, '..');
+const rootDir = path.join(__dirname, '..', 'dist');
 let staticServer = null;
 
 const contentTypes = {

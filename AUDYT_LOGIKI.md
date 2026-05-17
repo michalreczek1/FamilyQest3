@@ -3,7 +3,7 @@
 Data audytu: 2026-05-09  
 Ostatnia aktualizacja: 2026-05-17
 
-Zakres: backend `server.js`, uruchamiany frontend `familyquest-app.compiled.js`, `index.html`, `prisma/schema.prisma`, testy integracyjne, smoke, Playwrightowy test rankingu i wdrozenie na Proxmox.
+Zakres: backend `server.js`, frontend Vite/React w `src/`, `index.html`, `prisma/schema.prisma`, testy integracyjne, smoke, Playwrightowy test rankingu i wdrozenie na Proxmox.
 
 ## Status Po Ostatnich Zmianach
 
@@ -20,7 +20,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `WEEKLY` dostal tygodniowy klucz naliczania punktow, wiec to samo zadanie tygodniowe nie powinno naliczac punktow codziennie.
 - Aktywny dzien bez zadan `MIN` nie jest juz automatycznie `PASSED`, tylko `NO_REQUIRED_TASKS`.
 - Produkcja `https://fq.familyos.pl` zostala zaktualizowana do `c5a0a81`.
-- CSP na produkcji zawiera `script-src 'self' 'unsafe-inline' https://unpkg.com`, wiec frontend nie powinien zatrzymywac sie na ekranie `Ladowanie FamilyQuest...` z powodu blokady inline script.
+- CSP na produkcji nie wymaga juz `https://unpkg.com`; Vite buduje lokalny JS, a `script-src` moze zostac ograniczony do `'self'`.
 - Dodano jawne cofniecie zatwierdzenia zadania przez rodzica: `POST /api/completions/:id/reverse-approval`.
 - Cofniecie zatwierdzenia przelicza punkty i passe ze zrodel prawdy, zapisuje jawny wpis `REVERSAL` w `pointAdjustments` i nie nalicza tej korekty drugi raz przy kolejnym `recomputePointsAndGrants`.
 - Panel rodzica pokazuje przycisk `Cofnij` przy zatwierdzonym zadaniu na wybrany dzien i wyswietla realny efekt punktowy po operacji.
@@ -40,14 +40,14 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Panel rodzica ma widok `Archiwum` zadan oraz przycisk `Przywroc`. Przywrocenie zapisuje `restoredAt`, wiec okres miedzy `archivedAt` i `restoredAt` pozostaje historycznie nieaktywny.
 - Dodano backendowy endpoint `POST /api/tasks/:id/restore-matching` i przycisk `U wszystkich` w archiwum, ktory przywraca wszystkie zarchiwizowane kopie tej samej definicji zadania.
 - Panel rodzica ma teraz modal `Edytuj zadanie` zamiast systemowych `prompt()`. Edycja obejmuje dziecko, nazwe, typ `MIN/PLUS/WEEKLY`, punkty, dni tygodnia i opis.
-- Uporzadkowano zrodlo frontendu: aktualnym i jedynym browser-loaded zrodlem jest `familyquest-app.compiled.js`; stary `familyquest-app.jsx` zostal usuniety jako legacy/localStorage.
-- Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu frontendu, braku legacy JSX i aktualnej polityki PWA bez offline cache.
+- Uporzadkowano zrodlo frontendu: aktualnym zrodlem jest Vite/React w `src/`, a produkcyjny frontend powstaje przez `npm run frontend:build` do `dist/`.
+- Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu Vite, braku legacy compiled JS i aktualnej polityki PWA bez offline cache.
 - README i `PROXMOX_DEPLOY.md` opisuja teraz tryb PWA: manifest/install dziala, a service worker celowo czysci stare cache i wyrejestrowuje sie.
 
 ## Weryfikacja Wykonana
 
 - `node --check server.js` - OK.
-- `node --check familyquest-app.compiled.js` - OK.
+- `npm run frontend:build` - OK, Vite generuje `dist/`.
 - `npm run test:ranking` - OK, Playwright sprawdzil realny DOM i zapisal screenshot do `tmp/ranking-order-check.png`.
 - `RANKING_BASE_URL=https://fq.familyos.pl npm run test:ranking` - OK po wdrozeniu, Playwright sprawdzil publicznie serwowany HTML/JS z kontrolowanymi danymi API.
 - `https://fq.familyos.pl/health` - OK, backend i baza odpowiadaja.
@@ -61,7 +61,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:task-archive` - OK, test sprawdzil logike zachowania historycznych punktow po `archivedAt` oraz Playwrightowo przycisk `U wszystkich` i efekt ukrycia go po archiwizacji; lokalny test API zostal pominiety, bo lokalny `DATABASE_URL` jest niedostepny.
 - `npm run test:task-restore` - OK, test sprawdzil, ze okres archiwum pozostaje nieaktywny po przywroceniu, API przywraca pasujace zarchiwizowane zadania zbiorczo oraz Playwrightowo przejscie `Archiwum -> U wszystkich -> Aktywne`.
 - `npm run test:task-edit` - OK, Playwright sprawdzil modal edycji zadania, zmiane nazwy, typu, punktow, opisu i dni tygodnia oraz payload `PUT /api/tasks/:id`.
-- `npm run test:frontend-source` - OK, test potwierdza `familyquest-app.compiled.js` jako entrypoint, brak legacy JSX oraz service worker cleanup.
+- `npm run test:frontend-source` - OK, test potwierdza Vite entrypoint, `src/`, `public/` oraz service worker cleanup.
 - Repo zostalo oczyszczone z konfiguracji Railway: usunieto `railway.json` i `RAILWAY_DEPLOY.md`, dodano `PROXMOX_DEPLOY.md`, a `.env.example` wskazuje aktualny deploy Proxmox.
 - Lokalny `.env` nie powinien wskazywac starej bazy Railway. Testy API maja teraz osobny profil `.env.test.example` i baze `familyquest_test` w `CT 102`.
 - `npm run test:api` - OK, runner resetuje tylko baze `familyquest_test`, tuneluje PostgreSQL przez `ssh proxmox`, wykonuje `prisma db push` i pelne testy Jest na prawdziwej bazie.
@@ -212,23 +212,23 @@ Priorytet: zrealizowane, ewentualne rozszerzenia UI P3.
 
 ### 8. Zrodlo Frontendu I Build
 
-Status: uporzadkowane operacyjnie.
+Status: wdrozone.
 
-Uruchamiana aplikacja laduje `familyquest-app.compiled.js`. Stary `familyquest-app.jsx` byl legacy/localStorage i zostal usuniety z repo, zeby nie sugerowal nieprawdziwego zrodla prawdy.
+Uruchamiana aplikacja ma teraz prawdziwy build pipeline Vite + React bez TypeScriptu. Zrodlem prawdy sa `src/main.jsx`, `src/App.jsx` i `src/styles.css`. `index.html` laduje `/src/main.jsx` w dev, a produkcyjnie Express serwuje `dist/` wygenerowane przez `npm run frontend:build`. Stary `familyquest-app.compiled.js` zostal usuniety.
 
 Co zrobic dalej:
 
-1. Przy wiekszej przebudowie UI wprowadzic realny build pipeline JSX/React.
-2. Do tego czasu pilnowac `npm run test:frontend-source`.
-3. Trzymac zmiany UI w `familyquest-app.compiled.js`.
+1. Rozbijac `src/App.jsx` na mniejsze komponenty: child view, parent panel, modale, task/reward/admin sections.
+2. Do tego czasu pilnowac `npm run test:frontend-source` i `npm run frontend:build`.
+3. Nie przywracac recznie utrzymywanego compiled JS.
 
-Priorytet: zrealizowane operacyjnie, docelowy bundler P3.
+Priorytet: zrealizowane, refaktor komponentow P3.
 
 ### 9. Dokumentacja PWA I Service Worker
 
 Status: uporzadkowane.
 
-`service-worker.js` usuwa cache i wyrejestrowuje SW. README oraz `PROXMOX_DEPLOY.md` opisuja teraz, ze PWA oznacza manifest/install bez offline cache.
+`public/service-worker.js` usuwa cache i wyrejestrowuje SW. README oraz `PROXMOX_DEPLOY.md` opisuja teraz, ze PWA oznacza manifest/install bez offline cache.
 
 Co zrobic dalej:
 
@@ -264,7 +264,7 @@ Rekomendowana kolejność od teraz:
 
 1. Rozwiazac globalne kolizje kodow dzieci.
 2. Dodac ewentualny widok statusow nagrod cofniętych/przywroconych w panelu rodzica.
-3. Przy wiekszej przebudowie UI wprowadzic realny build pipeline JSX/React.
+3. Rozbijac duzy `src/App.jsx` na komponenty, gdy bedziemy robic nastepny wiekszy pakiet UI.
 
 ## Uwaga O Limicie I Zakresie
 
