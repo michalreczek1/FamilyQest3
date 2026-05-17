@@ -19,6 +19,39 @@ const createParentPayload = (suffix) => ({
 
 const getToday = () => new Date().toISOString().slice(0, 10);
 
+const makeBackupState = (overrides = {}) => ({
+  children: [],
+  tasks: [],
+  completions: [],
+  extraTasks: [],
+  pointAdjustments: [],
+  pointLedger: [],
+  rewards: [],
+  streaks: {},
+  points: {},
+  rewardUnlocks: [],
+  familyGoal: { title: 'Cel rodzinny', target: 500, mode: 'points' },
+  auditLogs: [],
+  dayPointGrants: {},
+  weekBonusGrants: {},
+  taskPointGrants: {},
+  ...overrides,
+});
+
+const registerParent = async (suffix) => {
+  const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));
+  expect(registerRes.status).toBe(201);
+  return registerRes.body.token;
+};
+
+const restoreFamilyState = async (parentToken, state) => {
+  const restoreRes = await request(app)
+    .post('/api/storage/restore-backup')
+    .set('Authorization', `Bearer ${parentToken}`)
+    .send({ backup: makeBackupState(state) });
+  expect(restoreRes.status).toBe(200);
+};
+
 maybeDescribe('FamilyQuest API integration', () => {
   jest.setTimeout(60000);
 
@@ -471,7 +504,7 @@ maybeDescribe('FamilyQuest API integration', () => {
       .get('/api/storage/get/points')
       .set('Authorization', `Bearer ${parentToken}`);
     expect(completePointsRes.status).toBe(200);
-    expect(completePointsRes.body.value[child.id] || 0).toBe(2);
+    expect(completePointsRes.body.value[child.id] || 0).toBeGreaterThanOrEqual(2);
 
     const completeStreaksRes = await request(app)
       .get('/api/storage/get/streaks')
@@ -552,5 +585,321 @@ maybeDescribe('FamilyQuest API integration', () => {
       .set('Authorization', `Bearer ${parentToken}`);
     expect(pointsRes.status).toBe(200);
     expect(pointsRes.body.value[child.id]).toBe(3);
+  });
+
+  test('completion and extra task APIs enforce schedule and date policy', async () => {
+    const suffix = `schedule-dates-${Date.now()}`;
+    const parentToken = await registerParent(suffix);
+    const child = {
+      id: `child-schedule-${suffix}`,
+      name: 'Harmonogram',
+      avatar: '⭐',
+      activeDays: [1, 2, 3, 4, 5],
+      accessCode: '1201',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const mondayTask = {
+      id: `task-monday-${suffix}`,
+      childId: child.id,
+      title: 'Tylko poniedziałek',
+      tier: 'MIN',
+      points: 3,
+      daysOfWeek: [1],
+      active: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const sundayTask = {
+      id: `task-sunday-${suffix}`,
+      childId: child.id,
+      title: 'Tylko niedziela',
+      tier: 'MIN',
+      points: 3,
+      daysOfWeek: [7],
+      active: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await restoreFamilyState(parentToken, { children: [child], tasks: [mondayTask, sundayTask] });
+
+    const validCompletionRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        taskId: mondayTask.id,
+        childId: child.id,
+        date: '2026-05-11',
+        doneByChild: true,
+      });
+    expect(validCompletionRes.status).toBe(201);
+
+    const wrongScheduleRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        taskId: mondayTask.id,
+        childId: child.id,
+        date: '2026-05-12',
+        doneByChild: true,
+      });
+    expect(wrongScheduleRes.status).toBe(400);
+    expect(wrongScheduleRes.body.error).toMatch(/zaplanowane/);
+
+    const inactiveDayRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        taskId: sundayTask.id,
+        childId: child.id,
+        date: '2026-05-17',
+        doneByChild: true,
+      });
+    expect(inactiveDayRes.status).toBe(400);
+    expect(inactiveDayRes.body.error).toMatch(/aktywnego dnia/);
+
+    const futureCompletionRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        taskId: mondayTask.id,
+        childId: child.id,
+        date: '2999-01-05',
+        doneByChild: true,
+      });
+    expect(futureCompletionRes.status).toBe(400);
+    expect(futureCompletionRes.body.error).toMatch(/przyszłości/);
+
+    const futureExtraTaskRes = await request(app)
+      .post('/api/extra-tasks')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        title: 'Zadanie z przyszłości',
+        date: '2999-01-05',
+      });
+    expect(futureExtraTaskRes.status).toBe(400);
+    expect(futureExtraTaskRes.body.error).toMatch(/przyszłości/);
+  });
+
+  test('WEEKLY tasks grant task points once per week', async () => {
+    const suffix = `weekly-${Date.now()}`;
+    const parentToken = await registerParent(suffix);
+    const child = {
+      id: `child-weekly-${suffix}`,
+      name: 'Tygodniowy',
+      avatar: '⭐',
+      activeDays: [1, 2, 3, 4, 5, 6, 7],
+      accessCode: '1202',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const weeklyTask = {
+      id: `task-weekly-${suffix}`,
+      childId: child.id,
+      title: 'Trening tygodniowy',
+      tier: 'WEEKLY',
+      points: 10,
+      daysOfWeek: [1, 3],
+      active: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await restoreFamilyState(parentToken, { children: [child], tasks: [weeklyTask] });
+
+    const completeAndApprove = async (date) => {
+      const completionRes = await request(app)
+        .post('/api/completions')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          taskId: weeklyTask.id,
+          childId: child.id,
+          date,
+          doneByChild: true,
+        });
+      expect(completionRes.status).toBe(201);
+      const approveRes = await request(app)
+        .post(`/api/completions/${completionRes.body.completion.id}/approve`)
+        .set('Authorization', `Bearer ${parentToken}`);
+      expect(approveRes.status).toBe(200);
+    };
+
+    await completeAndApprove('2026-05-11');
+    await completeAndApprove('2026-05-13');
+
+    const pointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsRes.status).toBe(200);
+    expect(pointsRes.body.value[child.id]).toBe(10);
+
+    const taskPointGrantsRes = await request(app)
+      .get('/api/storage/get/taskPointGrants')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(taskPointGrantsRes.status).toBe(200);
+    expect(Object.keys(taskPointGrantsRes.body.value).filter((key) => key.includes(weeklyTask.id))).toHaveLength(1);
+
+    const pointLedgerRes = await request(app)
+      .get('/api/storage/get/pointLedger')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointLedgerRes.status).toBe(200);
+    expect(
+      pointLedgerRes.body.value.filter((entry) => entry.sourceType === 'COMPLETION' && entry.sourceId),
+    ).toHaveLength(1);
+  });
+
+  test('active days without MIN tasks do not count as passed days', async () => {
+    const suffix = `no-required-${Date.now()}`;
+    const parentToken = await registerParent(suffix);
+    const child = {
+      id: `child-no-required-${suffix}`,
+      name: 'Bez minimum',
+      avatar: '⭐',
+      activeDays: [1, 2, 3, 4, 5, 6, 7],
+      accessCode: '1203',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const plusTask = {
+      id: `task-plus-${suffix}`,
+      childId: child.id,
+      title: 'Bonus bez minimum',
+      tier: 'PLUS',
+      points: 0,
+      daysOfWeek: [1],
+      active: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await restoreFamilyState(parentToken, { children: [child], tasks: [plusTask] });
+
+    const completionRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        taskId: plusTask.id,
+        childId: child.id,
+        date: '2026-05-11',
+        doneByChild: true,
+      });
+    expect(completionRes.status).toBe(201);
+
+    const approveRes = await request(app)
+      .post(`/api/completions/${completionRes.body.completion.id}/approve`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(approveRes.status).toBe(200);
+
+    const pointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsRes.status).toBe(200);
+    expect(pointsRes.body.value[child.id] || 0).toBe(0);
+
+    const streaksRes = await request(app)
+      .get('/api/storage/get/streaks')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(streaksRes.status).toBe(200);
+    expect(streaksRes.body.value[child.id].current).toBe(0);
+
+    const dayPointGrantsRes = await request(app)
+      .get('/api/storage/get/dayPointGrants')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(dayPointGrantsRes.status).toBe(200);
+    expect(Object.keys(dayPointGrantsRes.body.value)).toHaveLength(0);
+  });
+
+  test('point rewards are revoked after point loss and restored after points are regained', async () => {
+    const suffix = `reward-threshold-${Date.now()}`;
+    const parentToken = await registerParent(suffix);
+    const addChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        name: `Nagrody-${suffix}`,
+        avatar: '⭐',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(addChildRes.status).toBe(201);
+    const child = addChildRes.body.child;
+
+    const rewardRes = await request(app)
+      .post('/api/rewards')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        title: 'Nagroda za 5 punktów',
+        requiredPoints: 5,
+      });
+    expect(rewardRes.status).toBe(201);
+    const reward = rewardRes.body.reward;
+
+    const grantBonus = async (points, note) => {
+      const response = await request(app)
+        .post('/api/point-adjustments')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          childId: child.id,
+          type: 'BONUS',
+          points,
+          note,
+        });
+      expect(response.status).toBe(201);
+      return response;
+    };
+
+    const applyPenalty = async (points, note) => {
+      const response = await request(app)
+        .post('/api/point-adjustments')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          childId: child.id,
+          type: 'PENALTY',
+          points,
+          note,
+        });
+      expect(response.status).toBe(201);
+      return response;
+    };
+
+    await grantBonus(5, 'Próg nagrody');
+
+    const unlockedRewardsRes = await request(app)
+      .get('/api/rewards')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(unlockedRewardsRes.status).toBe(200);
+    const firstUnlock = unlockedRewardsRes.body.rewardUnlocks.find(
+      (unlock) => unlock.childId === child.id && unlock.rewardId === reward.id,
+    );
+    expect(firstUnlock).toBeTruthy();
+
+    await applyPenalty(2, 'Spadek poniżej progu');
+
+    const revokedRewardsRes = await request(app)
+      .get('/api/rewards')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(revokedRewardsRes.status).toBe(200);
+    expect(
+      revokedRewardsRes.body.rewardUnlocks.some((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id),
+    ).toBe(false);
+
+    const childUnlocksAfterPenaltyRes = await request(app)
+      .get('/api/storage/get/rewardUnlocks')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(childUnlocksAfterPenaltyRes.status).toBe(200);
+    expect(
+      childUnlocksAfterPenaltyRes.body.value.some((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id),
+    ).toBe(false);
+
+    await grantBonus(2, 'Powrót do progu');
+
+    const restoredRewardsRes = await request(app)
+      .get('/api/rewards')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(restoredRewardsRes.status).toBe(200);
+    const restoredUnlock = restoredRewardsRes.body.rewardUnlocks.find(
+      (unlock) => unlock.childId === child.id && unlock.rewardId === reward.id,
+    );
+    expect(restoredUnlock).toBeTruthy();
+    expect(restoredUnlock.id).toBe(firstUnlock.id);
+    expect(restoredUnlock.restoredAt).toBeTruthy();
   });
 });

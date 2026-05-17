@@ -1222,20 +1222,61 @@ const addPoints = (data, childId, amount) => {
   return adjustPoints(data, childId, amount);
 };
 
-const unlockEligibleRewards = (data, childId, actorUserId) => {
+const isRewardUnlockVisible = (unlock) => !unlock?.revokedAt;
+
+const getVisibleRewardUnlocks = (unlocks) =>
+  (Array.isArray(unlocks) ? unlocks : []).filter(isRewardUnlockVisible);
+
+const isRewardEligibleForChild = (data, reward, childId) => {
   const childPoints = Number(data.points[childId] || 0);
   const childStreak = data.streaks[childId] || { current: 0, idealWeeksInRow: 0 };
-  const now = new Date().toISOString();
+  const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
+  const streakOk = !reward.requiredStreak || Number(childStreak.current || 0) >= reward.requiredStreak;
+  const idealOk = !reward.requiredIdealWeeks || Number(childStreak.idealWeeksInRow || 0) >= reward.requiredIdealWeeks;
+  return pointsOk && streakOk && idealOk;
+};
+
+const reconcileRewardUnlocksForChild = (data, childId, actorUserId, now = new Date().toISOString()) => {
+  const child = data.children.find((item) => item.id === childId && !item.archived);
+  if (!child) return;
 
   data.rewards.forEach((reward) => {
     if (reward.active === false) return;
-    const already = data.rewardUnlocks.find((item) => item.childId === childId && item.rewardId === reward.id);
-    if (already) return;
+    const unlocksForReward = data.rewardUnlocks.filter((item) => item.childId === childId && item.rewardId === reward.id);
+    const activeUnlock = unlocksForReward.find((item) => !item.revokedAt);
+    const revokedUnlock = unlocksForReward.find((item) => item.revokedAt && !item.claimedAt);
+    const eligible = isRewardEligibleForChild(data, reward, childId);
 
-    const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
-    const streakOk = !reward.requiredStreak || Number(childStreak.current || 0) >= reward.requiredStreak;
-    const idealOk = !reward.requiredIdealWeeks || Number(childStreak.idealWeeksInRow || 0) >= reward.requiredIdealWeeks;
-    if (!pointsOk || !streakOk || !idealOk) return;
+    if (!eligible) {
+      const requiredPoints = Number(reward.requiredPoints || 0);
+      const childPoints = Number(data.points[childId] || 0);
+      if (requiredPoints > 0 && childPoints < requiredPoints && activeUnlock && !activeUnlock.claimedAt) {
+        activeUnlock.revokedAt = now;
+        activeUnlock.revokedReason = 'POINTS_BELOW_THRESHOLD';
+        activeUnlock.updatedAt = now;
+        data.auditLogs = addAuditLogEntry(data, actorUserId, 'REVOKE_REWARD_UNLOCK', 'REWARD_UNLOCK', activeUnlock.id, {
+          childId,
+          rewardId: reward.id,
+          requiredPoints,
+          childPoints,
+        });
+      }
+      return;
+    }
+
+    if (activeUnlock) return;
+
+    if (revokedUnlock) {
+      revokedUnlock.revokedAt = null;
+      revokedUnlock.revokedReason = null;
+      revokedUnlock.restoredAt = now;
+      revokedUnlock.updatedAt = now;
+      data.auditLogs = addAuditLogEntry(data, actorUserId, 'RESTORE_REWARD_UNLOCK', 'REWARD_UNLOCK', revokedUnlock.id, {
+        childId,
+        rewardId: reward.id,
+      });
+      return;
+    }
 
     const unlock = {
       id: createEntityId('unlock'),
@@ -1244,10 +1285,24 @@ const unlockEligibleRewards = (data, childId, actorUserId) => {
       unlockedAt: now,
       claimedAt: null,
       shownAt: null,
+      revokedAt: null,
+      revokedReason: null,
+      restoredAt: null,
+      updatedAt: now,
     };
     data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
     data.auditLogs = addAuditLogEntry(data, actorUserId, 'UNLOCK_REWARD', 'REWARD', reward.id, { childId });
   });
+};
+
+const unlockEligibleRewards = (data, childId, actorUserId, now = new Date().toISOString()) => {
+  reconcileRewardUnlocksForChild(data, childId, actorUserId, now);
+};
+
+const reconcileRewardUnlocksForAllChildren = (data, actorUserId, now = new Date().toISOString()) => {
+  data.children
+    .filter((child) => !child.archived)
+    .forEach((child) => reconcileRewardUnlocksForChild(data, child.id, actorUserId, now));
 };
 
 const applyApprovalEffects = (data, completion, actorUserId, now = new Date().toISOString()) => {
@@ -1346,6 +1401,7 @@ const reverseApprovalEffects = (data, completion, actorUserId, reason = '', now 
   };
 
   data.pointAdjustments = [adjustment, ...data.pointAdjustments];
+  reconcileRewardUnlocksForChild(data, childId, actorUserId, now);
   data.auditLogs = addAuditLogEntry(data, actorUserId, 'REVERSE_TASK_APPROVAL', 'COMPLETION', completion.id, {
     childId,
     childName: child?.name || null,
@@ -1387,6 +1443,7 @@ const normalizeRestoredBackupData = (backup, actorUserId, now = new Date().toISO
     accessCode: ensureUniqueChildAccessCode(nextData.children, child.accessCode, child.id) || child.accessCode || null,
   }));
   recomputePointsAndGrants(nextData);
+  reconcileRewardUnlocksForAllChildren(nextData, actorUserId, now);
   nextData.auditLogs = addAuditLogEntry(nextData, actorUserId, 'RESTORE_BACKUP', 'BACKUP', 'family', {
     restoredAt: now,
     childrenCount: nextData.children.length,
@@ -1406,6 +1463,11 @@ const pickChildMapValue = (source, childId) => {
 };
 
 const filterStorageValueForUser = (key, data, user) => {
+  if (key === 'rewardUnlocks') {
+    const visibleUnlocks = getVisibleRewardUnlocks(data.rewardUnlocks);
+    return user.role === 'CHILD' ? visibleUnlocks.filter((unlock) => unlock.childId === user.childId) : visibleUnlocks;
+  }
+
   if (user.role !== 'CHILD') {
     return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null;
   }
@@ -1429,7 +1491,7 @@ const filterStorageValueForUser = (key, data, user) => {
     case 'points':
       return pickChildMapValue(data.points, childId);
     case 'rewardUnlocks':
-      return data.rewardUnlocks.filter((unlock) => unlock.childId === childId);
+      return getVisibleRewardUnlocks(data.rewardUnlocks).filter((unlock) => unlock.childId === childId);
     case 'rewards':
       return data.rewards;
     case 'familyGoal':
@@ -2469,6 +2531,7 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
 
     data.tasks[index] = next;
     recomputePointsAndGrants(data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);
     await saveStateData(state, data);
     res.json({ task: next });
@@ -2497,6 +2560,7 @@ app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => 
     task.archivedAt = task.archivedAt || now;
     task.updatedAt = now;
     recomputePointsAndGrants(data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId, {
       childId: task.childId,
       title: task.title,
@@ -2541,6 +2605,7 @@ app.post('/api/tasks/:id/archive-matching', authMiddleware, requireParent, async
     }
 
     recomputePointsAndGrants(data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASKS_MATCHING', 'TASK', taskId, {
       archivedTaskIds,
       archivedCount: archivedTaskIds.length,
@@ -2579,6 +2644,7 @@ app.post('/api/tasks/:id/restore', authMiddleware, requireParent, async (req, re
     task.restoredAt = now;
     task.updatedAt = now;
     recomputePointsAndGrants(data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASK', 'TASK', taskId, {
       childId: task.childId,
       title: task.title,
@@ -2624,6 +2690,7 @@ app.post('/api/tasks/:id/restore-matching', authMiddleware, requireParent, async
     }
 
     recomputePointsAndGrants(data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASKS_MATCHING', 'TASK', taskId, {
       restoredTaskIds,
       restoredCount: restoredTaskIds.length,
@@ -3208,10 +3275,6 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
         res.status(409).json({ error: 'Dziecko nie ma punktów do odjęcia' });
         return;
       }
-      if (result.appliedDelta > 0) {
-        unlockEligibleRewards(data, parsed.data.childId, req.auth.user.id);
-      }
-
       const now = new Date().toISOString();
       const adjustment = {
         id: createEntityId('points'),
@@ -3244,6 +3307,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
         },
       );
       recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForChild(data, parsed.data.childId, req.auth.user.id, now);
 
       await saveStateData(state, data);
       res.status(201).json({ pointAdjustment: adjustment, points: data.points });
@@ -3265,11 +3329,17 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
 
 app.get('/api/rewards', authMiddleware, async (req, res) => {
   try {
-    const { data } = await loadStateData(req.auth.user.familyId);
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+    if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
+      await saveStateData(state, data, { skipOnConflict: true });
+    }
+    const visibleUnlocks = getVisibleRewardUnlocks(data.rewardUnlocks);
     const unlocks =
       req.auth.user.role === 'CHILD'
-        ? data.rewardUnlocks.filter((item) => item.childId === req.auth.user.childId)
-        : data.rewardUnlocks;
+        ? visibleUnlocks.filter((item) => item.childId === req.auth.user.childId)
+        : visibleUnlocks;
 
     res.json({
       rewards: data.rewards,
@@ -3312,6 +3382,7 @@ app.post('/api/rewards', authMiddleware, requireParent, async (req, res) => {
       requiredIdealWeeks: reward.requiredIdealWeeks,
     });
 
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
     await saveStateData(state, data);
     res.status(201).json({ reward });
   } catch (error) {
@@ -3357,6 +3428,7 @@ app.put('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
     reward.updatedAt = new Date().toISOString();
 
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_REWARD', 'REWARD', rewardId, parsed.data);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
     await saveStateData(state, data);
     res.json({ reward });
   } catch (error) {
@@ -3416,10 +3488,27 @@ app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, r
     }
 
     const exists = data.rewardUnlocks.find(
-      (item) => item.childId === parsed.data.childId && item.rewardId === rewardId,
+      (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && !item.revokedAt,
     );
     if (exists) {
       res.json({ unlock: exists, created: false });
+      return;
+    }
+    const revoked = data.rewardUnlocks.find(
+      (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && item.revokedAt && !item.claimedAt,
+    );
+    if (revoked) {
+      revoked.revokedAt = null;
+      revoked.revokedReason = null;
+      revoked.restoredAt = new Date().toISOString();
+      revoked.updatedAt = revoked.restoredAt;
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_REWARD_UNLOCK', 'REWARD_UNLOCK', revoked.id, {
+        childId: parsed.data.childId,
+        rewardId,
+        manual: true,
+      });
+      await saveStateData(state, data);
+      res.json({ unlock: revoked, created: false, restored: true });
       return;
     }
 
@@ -3430,6 +3519,10 @@ app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, r
       unlockedAt: new Date().toISOString(),
       claimedAt: null,
       shownAt: null,
+      revokedAt: null,
+      revokedReason: null,
+      restoredAt: null,
+      updatedAt: new Date().toISOString(),
     };
     data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UNLOCK_REWARD', 'REWARD', rewardId, {
@@ -3454,6 +3547,10 @@ app.post('/api/rewards/unlocks/:unlockId/claim', authMiddleware, requireParent, 
     const unlock = data.rewardUnlocks.find((item) => item.id === unlockId);
     if (!unlock) {
       res.status(404).json({ error: 'Odblokowanie nagrody nie istnieje' });
+      return;
+    }
+    if (unlock.revokedAt) {
+      res.status(409).json({ error: 'Nagroda została utracona i nie jest teraz dostępna do wydania' });
       return;
     }
 
@@ -3525,6 +3622,13 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
     const { state, data } = await loadStateData(req.auth.user.familyId);
     if (['points', 'streaks', 'pointLedger', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
       if (recomputePointsAndGrantsIfChanged(data)) {
+        await saveStateData(state, data, { skipOnConflict: true });
+      }
+    }
+    if (key === 'rewardUnlocks') {
+      const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+      if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
         await saveStateData(state, data, { skipOnConflict: true });
       }
     }

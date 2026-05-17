@@ -686,19 +686,45 @@ const App = () => {
     const now = new Date().toISOString();
     rewards.forEach(reward => {
       if (reward.active === false) return;
-      const already = rewardUnlocks.find(r => r.childId === childId && r.rewardId === reward.id);
-      if (already) return;
       const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
       const streakOk = !reward.requiredStreak || childStreak.current >= reward.requiredStreak;
       const idealOk = !reward.requiredIdealWeeks || childStreak.idealWeeksInRow >= reward.requiredIdealWeeks;
+      const activeUnlock = rewardUnlocks.find(r => r.childId === childId && r.rewardId === reward.id && !r.revokedAt);
+      const revokedUnlock = rewardUnlocks.find(r => r.childId === childId && r.rewardId === reward.id && r.revokedAt && !r.claimedAt);
+      if (!pointsOk) {
+        if (activeUnlock && !activeUnlock.claimedAt && Number(reward.requiredPoints || 0) > 0) {
+          setRewardUnlocks(prev => prev.map(unlock => unlock.id === activeUnlock.id ? {
+            ...unlock,
+            revokedAt: now,
+            revokedReason: 'POINTS_BELOW_THRESHOLD',
+            updatedAt: now
+          } : unlock));
+        }
+        return;
+      }
+      if (activeUnlock) return;
       if (pointsOk && streakOk && idealOk) {
+        if (revokedUnlock) {
+          setRewardUnlocks(prev => prev.map(unlock => unlock.id === revokedUnlock.id ? {
+            ...unlock,
+            revokedAt: null,
+            revokedReason: null,
+            restoredAt: now,
+            updatedAt: now
+          } : unlock));
+          return;
+        }
         const unlock = {
           id: `unlock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           childId,
           rewardId: reward.id,
           unlockedAt: now,
           claimedAt: null,
-          shownAt: null
+          shownAt: null,
+          revokedAt: null,
+          revokedReason: null,
+          restoredAt: null,
+          updatedAt: now
         };
         setRewardUnlocks(prev => [unlock, ...prev]);
         setShowRewardOverlay({
@@ -1503,7 +1529,7 @@ const App = () => {
     };
     const childPoints = points[selectedChild.id] || 0;
     const childPointLedger = pointLedger.filter(entry => entry.childId === selectedChild.id).sort((a, b) => Date.parse(b.occurredAt || 0) - Date.parse(a.occurredAt || 0));
-    const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id);
+    const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id && !unlock.revokedAt);
     const childUnlockedRewardIds = new Set(childRewardUnlocks.map(unlock => unlock.rewardId));
     const childEarnedRewards = childRewardUnlocks.map(unlock => ({
       unlock,
@@ -2648,9 +2674,9 @@ const App = () => {
       style: {
         marginBottom: '0.75rem'
       }
-    }, "Odblokowane nagrody"), rewardUnlocks.length === 0 ? React.createElement("div", {
+    }, "Odblokowane nagrody"), rewardUnlocks.filter(unlock => !unlock.revokedAt).length === 0 ? React.createElement("div", {
       className: "empty-state"
-    }, "Brak odblokowanych nagr\xF3d") : rewardUnlocks.map(unlock => {
+    }, "Brak odblokowanych nagr\xF3d") : rewardUnlocks.filter(unlock => !unlock.revokedAt).map(unlock => {
       const reward = rewards.find(r => r.id === unlock.rewardId);
       const child = children.find(c => c.id === unlock.childId);
       if (!reward || !child) return null;

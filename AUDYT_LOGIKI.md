@@ -1,7 +1,7 @@
 # Audyt logiki aplikacji FamilyQuest
 
 Data audytu: 2026-05-09  
-Ostatnia aktualizacja: 2026-05-13
+Ostatnia aktualizacja: 2026-05-17
 
 Zakres: backend `server.js`, uruchamiany frontend `familyquest-app.compiled.js`, `index.html`, `prisma/schema.prisma`, testy integracyjne, smoke, Playwrightowy test rankingu i wdrozenie na Proxmox.
 
@@ -67,6 +67,11 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:api` - OK, runner resetuje tylko baze `familyquest_test`, tuneluje PostgreSQL przez `ssh proxmox`, wykonuje `prisma db push` i pelne testy Jest na prawdziwej bazie.
 - Naprawiono falszywe konflikty `FAMILY_STATE_VERSION_CONFLICT` przy zapisach punktow: odczyty zapisujace przeliczone punkty robia zapis tylko, gdy wynik realnie sie zmienil, `storage/merge` nie podbija wersji przy braku zmian, a premia/kara punktowa ponawia zapis raz na swiezym stanie.
 - `npm run test:api` - OK po naprawie konfliktow, dodany test wymusza konflikt wersji przy pierwszym zapisie kary i potwierdza sukces bez drugiego klikniecia.
+- Dopisano pelne testy API dla polityki dat i harmonogramu: poprawny dzien, zly dzien harmonogramu, nieaktywny dzien dziecka, przyszla data completion i przyszla data extra task.
+- Dopisano test API dla `WEEKLY`: dwa zatwierdzenia tego samego zadania w jednym tygodniu daja punkty tylko raz, z jednym tygodniowym wpisem w `taskPointGrants` i ledgerze.
+- Dopisano test API dla `NO_REQUIRED_TASKS`: aktywny dzien bez zadan `MIN` nie daje punktow dziennych ani passy, nawet jesli zatwierdzono zadanie `PLUS`.
+- Wdrożono polityke nagrod po spadku punktow: niewydana nagroda punktowa jest ukrywana/cofana, gdy saldo spada ponizej progu, a wraca na konto dziecka po ponownym zdobyciu wymaganego salda.
+- Widoki `/api/rewards` i `storage/get/rewardUnlocks` zwracaja tylko aktywne odblokowania nagrod; cofniecia zostaja w stanie jako historia techniczna `revokedAt`, ale nie sa pokazywane dziecku jako dostepne nagrody.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
 
 ## Co Nadal Jest Do Zrobienia
@@ -74,25 +79,23 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Zakres testow API warto rozszerzyc o polityke dat, `WEEKLY` i brak zadan MIN.
-3. Semantyka nagrod po spadku punktow nadal wymaga decyzji produktowej.
+2. Warto dopracowac UI/historie dla cofniętych i przywroconych nagrod w panelu rodzica, jesli bedziemy chcieli widziec pelny slad produktowy, a nie tylko audit log.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po stabilizacji bazy testowej: **backendowa walidacja harmonogramu i polityki dat**.
+Najbardziej sensowny kolejny pakiet po domknieciu testow dat/WEEKLY/NO_REQUIRED_TASKS i polityki nagrod: **globalne kolizje kodow dzieci**.
 
 Dlaczego ten pakiet teraz:
 
-- Globalne kolizje kodow dzieci nadal sa odlozone na koniec, bo obecnie jest jedna rodzina.
-- `npm run test:api` daje juz prawdziwa baze i moze wykryc regresje endpointow.
-- Harmonogram zadania i polityka dat nadal sa miejscem, gdzie backend powinien byc silniejszy niz frontend.
-- To bezposrednio chroni passy, punkty dzienne i tygodniowe przed completionami z niewlasciwego dnia albo zadania.
+- Testy API dla dat, harmonogramu, `WEEKLY` i `NO_REQUIRED_TASKS` sa juz wdrozone.
+- Polityka nagrod po spadku punktow jest juz wdrozona.
+- Globalne kody dzieci sa ostatnim istotnym ryzykiem logicznym, ktore moze wyjsc dopiero przy drugiej rodzinie.
 
 Minimalny zakres wdrozenia:
 
-1. Backend odrzuca completion, jesli data nie pasuje do harmonogramu aktywnego zadania.
-2. Extra task ma jawna polityke dat: bez przyszlosci albo z limitem, zaleznym od decyzji produktowej.
-3. Testy API pokrywaja poprawny dzien, zly dzien, przyszla date i historyczna date.
+1. Zmienic logowanie dziecka tak, by nie opieralo sie wylacznie na globalnym 4-cyfrowym kodzie.
+2. Dodac kod rodziny albo dluzszy globalnie unikalny kod dziecka.
+3. Dodac test API dla dwoch rodzin z tym samym kodem dziecka.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -195,17 +198,17 @@ Priorytet: zrealizowane, rozszerzenia P3.
 
 ### 7. Semantyka Nagród Po Spadku Punktow
 
-Status: otwarte/decyzja produktowa.
+Status: wdrozone.
 
-Nagrody raz odblokowane zostaja w `rewardUnlocks`, nawet gdy punkty spadna po karze albo rodzic zmieni progi nagrod. To moze byc dobre, jesli nagroda jest jednorazowym osiagnieciem, ale powinno byc jawne.
+Niewydane nagrody punktowe sa teraz traktowane jak dostep do progu punktowego, a nie permanentne osiagniecie. Jesli saldo dziecka spadnie ponizej wymaganego progu, odblokowanie dostaje `revokedAt` i przestaje byc zwracane przez `/api/rewards` oraz `storage/get/rewardUnlocks`. Po ponownym zdobyciu wymaganego salda to samo odblokowanie jest przywracane przez wyczyszczenie `revokedAt` i ustawienie `restoredAt`.
 
-Co zrobic dalej:
+Wazna zasada:
 
-1. Ustalic zasade: nagrody sa stale po odblokowaniu czy moga byc cofane.
-2. Jesli stale, opisac to w UI rodzica.
-3. Jesli cofane, dodac status `revoked` i logike ponownej oceny po karach/edycji progow.
+1. Cofamy tylko nagrody niewydane (`claimedAt` puste).
+2. Nagrody juz oznaczone jako wydane zostaja historia wydania i nie sa automatycznie odbierane.
+3. Polityka jest egzekwowana po premii/karze, cofnieciu zatwierdzenia, zmianach zadan, restore backupu oraz zmianie progow nagrod.
 
-Priorytet: P3/P2.
+Priorytet: zrealizowane, ewentualne rozszerzenia UI P3.
 
 ### 8. Zrodlo Frontendu I Build
 
@@ -250,10 +253,8 @@ Weryfikacja:
 
 Co rozszerzyc dalej:
 
-1. Dodac testy integracyjne dla walidacji harmonogramu i dat.
-2. Dodac testy integracyjne dla `WEEKLY` naliczanego raz na tydzien.
-3. Dodac testy integracyjne dla `NO_REQUIRED_TASKS`.
-4. Dopiac dodatkowe przypadki restore backup i bulk archive zadan z zachowaniem historii punktow.
+1. Dopiac dodatkowe przypadki restore backup i bulk archive zadan z zachowaniem historii punktow, jesli pojawia sie regresje w tych obszarach.
+2. Dodac osobne testy UI dla widoku nagrod po cofnieciu/przywroceniu, jesli panel rodzica ma pokazywac pelna historie statusow.
 
 Priorytet: P2/P3.
 
@@ -261,10 +262,9 @@ Priorytet: P2/P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Backendowa walidacja harmonogramu zadania i polityki dat dla completion oraz extra task.
-2. Poprawic semantyke `WEEKLY` z tygodniowym kluczem naliczania punktow.
-3. Ustalic zasade dla aktywnego dnia bez zadan MIN.
-4. Dopiero pozniej rozwiazac globalne kolizje kodow dzieci.
+1. Rozwiazac globalne kolizje kodow dzieci.
+2. Dodac ewentualny widok statusow nagrod cofniętych/przywroconych w panelu rodzica.
+3. Przy wiekszej przebudowie UI wprowadzic realny build pipeline JSX/React.
 
 ## Uwaga O Limicie I Zakresie
 
