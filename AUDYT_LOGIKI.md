@@ -72,6 +72,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dopisano test API dla `NO_REQUIRED_TASKS`: aktywny dzien bez zadan `MIN` nie daje punktow dziennych ani passy, nawet jesli zatwierdzono zadanie `PLUS`.
 - Wdrożono polityke nagrod po spadku punktow: niewydana nagroda punktowa jest ukrywana/cofana, gdy saldo spada ponizej progu, a wraca na konto dziecka po ponownym zdobyciu wymaganego salda.
 - Widoki `/api/rewards` i `storage/get/rewardUnlocks` zwracaja tylko aktywne odblokowania nagrod; cofniecia zostaja w stanie jako historia techniczna `revokedAt`, ale nie sa pokazywane dziecku jako dostepne nagrody.
+- Dodano rodzicielski widok historii nagrod: `GET /api/rewards/history` zwraca pelny slad odblokowan, cofniec, przywrocen i wydan, a zakladka `Nagrody` pokazuje statusy `Dostepna`, `Cofnieta`, `Przywrocona`, `Wydana`.
 - `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
 
 ## Co Nadal Jest Do Zrobienia
@@ -79,7 +80,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Warto dopracowac UI/historie dla cofniętych i przywroconych nagrod w panelu rodzica, jesli bedziemy chcieli widziec pelny slad produktowy, a nie tylko audit log.
+2. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
 
 ## Rekomendowany Nastepny Pakiet
 
@@ -207,8 +208,9 @@ Wazna zasada:
 1. Cofamy tylko nagrody niewydane (`claimedAt` puste).
 2. Nagrody juz oznaczone jako wydane zostaja historia wydania i nie sa automatycznie odbierane.
 3. Polityka jest egzekwowana po premii/karze, cofnieciu zatwierdzenia, zmianach zadan, restore backupu oraz zmianie progow nagrod.
+4. Panel rodzica pokazuje historie statusow nagrod z osobnego endpointu rodzicielskiego, bez pokazywania cofniętych nagrod dzieciom jako dostepnych.
 
-Priorytet: zrealizowane, ewentualne rozszerzenia UI P3.
+Priorytet: zrealizowane, ewentualne filtrowanie historii P3.
 
 ### 8. Zrodlo Frontendu I Build
 
@@ -263,7 +265,7 @@ Priorytet: P2/P3.
 Rekomendowana kolejność od teraz:
 
 1. Rozwiazac globalne kolizje kodow dzieci.
-2. Dodac ewentualny widok statusow nagrod cofniętych/przywroconych w panelu rodzica.
+2. Dodac ewentualne filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
 3. Rozbijac duzy `src/App.jsx` na komponenty, gdy bedziemy robic nastepny wiekszy pakiet UI.
 
 ## Uwaga O Limicie I Zakresie

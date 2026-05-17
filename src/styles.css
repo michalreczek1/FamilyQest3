@@ -596,6 +596,179 @@ button.hero-metric:hover {
   line-height: 1.25;
 }
 
+.reward-history-card {
+  overflow: hidden;
+}
+
+.reward-history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.reward-history-header h3 {
+  margin: 0;
+}
+
+.reward-history-header p {
+  margin-top: 0.25rem;
+  opacity: 0.72;
+  line-height: 1.35;
+}
+
+.reward-history-count {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-weight: 700;
+}
+
+.reward-history-list {
+  display: grid;
+  gap: 0.75rem;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.reward-history-item {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+  min-width: 0;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.reward-history-item.available {
+  border-color: rgba(18, 183, 106, 0.45);
+}
+
+.reward-history-item.restored {
+  border-color: rgba(14, 165, 233, 0.5);
+}
+
+.reward-history-item.revoked {
+  border-color: rgba(249, 112, 102, 0.55);
+}
+
+.reward-history-item.claimed {
+  border-color: rgba(254, 200, 75, 0.55);
+}
+
+.reward-history-status {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.75rem;
+  text-align: center;
+  font-weight: 800;
+}
+
+.reward-history-status-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.reward-history-main {
+  min-width: 0;
+}
+
+.reward-history-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.reward-history-title-row strong,
+.reward-history-title-row span,
+.reward-history-description {
+  overflow-wrap: anywhere;
+}
+
+.reward-history-title-row span {
+  opacity: 0.78;
+  font-size: 0.9rem;
+  flex: 0 0 auto;
+}
+
+.reward-history-description {
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  opacity: 0.72;
+  line-height: 1.3;
+}
+
+.reward-history-requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.reward-history-requirements:empty {
+  display: none;
+}
+
+.reward-history-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.reward-history-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 0.82rem;
+}
+
+.reward-history-event time {
+  opacity: 0.68;
+  white-space: nowrap;
+}
+
+.reward-history-event-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 999px;
+  background: #FEC84B;
+  flex: 0 0 auto;
+}
+
+.reward-history-event.revoked .reward-history-event-dot {
+  background: #F97066;
+}
+
+.reward-history-event.restored .reward-history-event-dot {
+  background: #0EA5E9;
+}
+
+.reward-history-event.claimed .reward-history-event-dot,
+.reward-history-event.unlocked .reward-history-event-dot {
+  background: #12B76A;
+}
+
 .goal-icon {
   display: inline-block;
   animation: goalIconPulse 1.8s ease-in-out infinite;
@@ -876,6 +1049,42 @@ button.hero-metric:hover {
     max-width: 100%;
     white-space: normal;
     line-height: 1.15;
+  }
+  .reward-history-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .reward-history-count {
+    align-self: flex-start;
+  }
+  .reward-history-list {
+    max-height: none;
+    padding-right: 0;
+  }
+  .reward-history-item {
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+    padding: 0.85rem;
+  }
+  .reward-history-status {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .reward-history-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  .reward-history-event {
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 0.7rem;
+  }
+  .reward-history-event time {
+    margin-left: auto;
+    white-space: normal;
+    text-align: right;
   }
   .reward-overlay {
     padding: 0.75rem;

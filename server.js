@@ -1228,6 +1228,75 @@ const isRewardUnlockVisible = (unlock) => !unlock?.revokedAt;
 const getVisibleRewardUnlocks = (unlocks) =>
   (Array.isArray(unlocks) ? unlocks : []).filter(isRewardUnlockVisible);
 
+const getRewardUnlockHistory = (data) => {
+  const childrenById = new Map(data.children.map((child) => [child.id, child]));
+  const rewardsById = new Map(data.rewards.map((reward) => [reward.id, reward]));
+  const auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
+
+  return (Array.isArray(data.rewardUnlocks) ? data.rewardUnlocks : [])
+    .map((unlock) => {
+      const child = childrenById.get(unlock.childId);
+      const reward = rewardsById.get(unlock.rewardId);
+      if (!child || !reward) return null;
+
+      const events = [];
+      const addEvent = (type, at, source, details = {}) => {
+        if (!at) return;
+        const exists = events.some((event) => event.type === type && event.at === at);
+        if (!exists) {
+          events.push({ type, at, source, details });
+        }
+      };
+
+      addEvent('UNLOCKED', unlock.unlockedAt || unlock.createdAt, 'unlock');
+      addEvent('REVOKED', unlock.revokedAt, 'unlock', { reason: unlock.revokedReason || null });
+      addEvent('RESTORED', unlock.restoredAt, 'unlock');
+      addEvent('CLAIMED', unlock.claimedAt, 'unlock');
+
+      auditLogs
+        .filter((entry) => entry.entityType === 'REWARD_UNLOCK' && entry.entityId === unlock.id)
+        .forEach((entry) => {
+          if (entry.action === 'REVOKE_REWARD_UNLOCK') {
+            addEvent('REVOKED', entry.createdAt, 'audit', entry.details || {});
+          }
+          if (entry.action === 'RESTORE_REWARD_UNLOCK') {
+            addEvent('RESTORED', entry.createdAt, 'audit', entry.details || {});
+          }
+          if (entry.action === 'CLAIM_REWARD') {
+            addEvent('CLAIMED', entry.createdAt, 'audit', entry.details || {});
+          }
+        });
+
+      events.sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+
+      const status = unlock.claimedAt ? 'CLAIMED' : unlock.revokedAt ? 'REVOKED' : unlock.restoredAt ? 'RESTORED' : 'AVAILABLE';
+      const latestAt =
+        events.length > 0 ? events[events.length - 1].at : unlock.updatedAt || unlock.unlockedAt || unlock.createdAt || null;
+
+      return {
+        id: unlock.id,
+        childId: unlock.childId,
+        childName: child.name,
+        rewardId: unlock.rewardId,
+        rewardTitle: reward.title,
+        rewardDescription: reward.description || '',
+        requiredPoints: reward.requiredPoints ?? null,
+        requiredStreak: reward.requiredStreak ?? null,
+        requiredIdealWeeks: reward.requiredIdealWeeks ?? null,
+        status,
+        unlockedAt: unlock.unlockedAt || null,
+        revokedAt: unlock.revokedAt || null,
+        restoredAt: unlock.restoredAt || null,
+        claimedAt: unlock.claimedAt || null,
+        revokedReason: unlock.revokedReason || null,
+        latestAt,
+        events,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b.latestAt || 0) - Date.parse(a.latestAt || 0));
+};
+
 const isRewardEligibleForChild = (data, reward, childId) => {
   const childPoints = Number(data.points[childId] || 0);
   const childStreak = data.streaks[childId] || { current: 0, idealWeeksInRow: 0 };
@@ -3353,6 +3422,28 @@ app.get('/api/rewards', authMiddleware, async (req, res) => {
     }
     console.error('Rewards list error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać nagród' });
+  }
+});
+
+app.get('/api/rewards/history', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
+    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+    if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
+      await saveStateData(state, data, { skipOnConflict: true });
+    }
+
+    res.json({
+      rewardUnlockHistory: getRewardUnlockHistory(data),
+    });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Reward history error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać historii nagród' });
   }
 });
 
