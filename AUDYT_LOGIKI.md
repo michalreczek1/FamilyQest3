@@ -49,6 +49,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano kolejke akcji rodzica po stronie frontendu. Szybkie klikniecia zatwierdzania, odrzucania, cofania zatwierdzen, premii, kar i mutacji zadan ida sekwencyjnie do API, co usuwa falszywe konflikty wersji FamilyState przy szybkim klikaniu.
 - Po mutacjach serwerowych reload danych uzywa `skipNextAutoSave`, zeby klient nie zapisywal natychmiast starego snapshotu po swiezym stanie z backendu.
 - Dodano zbiorcze odrzucanie wnioskow o zatwierdzenie: backend `POST /api/completions/reject-bulk`, frontendowy przycisk `Odrzuc wg filtra` oraz test UI/API. To przyspiesza czyszczenie wielu wnioskow bez klikania ich po kolei przez kolejke.
+- Dodano stabilny skrypt wdrozenia `scripts/deploy-proxmox.ps1`, ktory automatyzuje snapshot, backup, deploy w CT 103, build Vite, restart uslugi, health/CSP check i produkcyjne testy Playwright.
 
 ## Weryfikacja Wykonana
 
@@ -86,6 +87,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - `npm run test:smoke` - OK na lokalnym backendzie z testowa baza PostgreSQL przez tunel SSH.
 - Po wdrozeniu `7a8c380` produkcja ma `/health` 200, DB `ok`, Vite asset w HTML, brak `unpkg.com` i CSP `script-src 'self'`.
 - Playwright przeciw produkcyjnemu buildowi `https://fq.familyos.pl` - OK dla: `approval-action-queue`, `reverse-approval`, `ranking`, `point-ledger`, `reward-history`, `task-edit`.
+- `powershell -ExecutionPolicy Bypass -File scripts/deploy-proxmox.ps1 -DryRun -SkipTests -SkipPush -SkipSnapshot -AllowDirty` - OK, skrypt poprawnie waliduje lokalny branch i pokazuje plan deployu bez wykonywania zdalnych komend.
 
 ## Co Nadal Jest Do Zrobienia
 
@@ -96,7 +98,7 @@ Po wdrozeniu rankingu, passy, ledgeru, wersjonowania i kolejki akcji rodzica nie
 3. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
 4. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
 5. `npm run lint` przechodzi, ale zostawia warningi legacy.
-6. Deploy na Proxmox dziala, ale warto zamienic reczne komendy na stabilny `scripts/deploy-proxmox.ps1`.
+6. Deploy na Proxmox ma juz stabilny skrypt, ale warto uzywac go przez kilka kolejnych wdrozen i dopiero wtedy usunac z dokumentacji reczna procedure jako glowne zrodlo.
 
 ## Rekomendowany Nastepny Pakiet
 
@@ -104,9 +106,9 @@ Najbardziej sensowny kolejny pakiet zalezy od celu:
 
 - jesli priorytetem jest codzienny komfort uzywania: **UX kolejki zapisow i bulk odrzucanie/cofanie**;
 - jesli priorytetem jest domkniecie audytu logicznego przed druga rodzina: **globalne kolizje kodow dzieci**;
-- jesli priorytetem jest stabilnosc operacyjna: **dedykowany skrypt deployu Proxmox**.
+- jesli priorytetem jest stabilnosc operacyjna: **uzywanie i dopracowanie skryptu deployu Proxmox**.
 
-Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie jest wdrozone, wiec nastepny najbardziej operacyjny pakiet to stabilny skrypt deployu Proxmox.
+Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie i skrypt deployu sa wdrozone, wiec nastepny najbardziej praktyczny pakiet to czysty lint bez warningow.
 
 Dlaczego globalne kody nadal sa wazne:
 
@@ -328,38 +330,34 @@ Priorytet: P3, chyba ze warningi zaczna maskowac nowe problemy.
 
 ### 13. Skrypt Deployu Proxmox
 
-Status: deploy dziala, ale jest zbyt reczny.
+Status: wdrozone jako `scripts/deploy-proxmox.ps1`, do uzywania w kolejnych wdrozeniach.
 
-Obecny deploy jest poprawny operacyjnie: snapshot, backup plikow, `git fetch/reset`, `npm ci`, `npm run frontend:build`, restart `familyquest`, healthcheck i Playwright po wdrozeniu. Problemem jest to, ze diagnostyczne koncowki komend w kontenerze potrafia dawac falszywe bledy skladni albo mieszac stdout/stderr, szczegolnie przy `git status` / `git log`.
+Deploy jest teraz opisany i zautomatyzowany: skrypt robi snapshot CT 103, backup plikow, `git fetch/reset`, `npm ci`, `npm run frontend:build`, restart `familyquest`, lokalny healthcheck, publiczny health/CSP check oraz produkcyjne testy Playwright. Reczna procedura zostaje w `PROXMOX_DEPLOY.md` jako awaryjna.
 
 Co zrobic dalej:
 
-1. Dodac `scripts/deploy-proxmox.ps1` jako jedyne wejscie do deployu.
-2. Parametry: `-Host proxmox`, `-ContainerId 103`, `-AppDir /opt/familyquest`, `-Branch main`, `-SkipSnapshot`, `-SkipTests`.
-3. Kroki: sprawdzic czysty lokalny branch, opcjonalnie push, snapshot CT 103, backup plikow, fetch/reset, `npm ci`, build, restart, healthcheck.
-4. Diagnostyka ma byc odporna: osobne komendy dla `git rev-parse --short HEAD`, `git log -1 --pretty=format:%h:%s`, `systemctl is-active familyquest`.
-5. Po deployu opcjonalnie uruchamiac ustalone testy produkcyjne: ranking, point-ledger, reward-history, task-edit, approval-action-queue.
+1. Uzywac skryptu jako standardowej sciezki deployu przy kolejnych zmianach.
+2. Po kilku udanych deployach ewentualnie dodac tryb `-NoPush`/`-NoVerifyRemote`, jesli pojawi sie realna potrzeba.
+3. Rozwazyc zapis logu deployu do `tmp/deploy-*.log`, jesli bedziemy chcieli latwiej porownywac wdrozenia.
 
-Priorytet: P2, bo zmniejsza ryzyko bledow przy kazdym kolejnym wdrozeniu.
+Priorytet: zrealizowane, dalsze dopracowanie P3.
 
 ## Kolejnosc Następnych Prac
 
 Rekomendowana kolejność od teraz:
 
-1. Dodac `scripts/deploy-proxmox.ps1`, zeby wdrozenia byly powtarzalne i mniej kruche.
-2. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
-3. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
-4. Dopracowac UX pojedynczych akcji w kolejce, jesli nadal beda odczuwalnie wolne.
-5. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
-6. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
+1. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
+2. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
+3. Dopracowac UX pojedynczych akcji w kolejce, jesli nadal beda odczuwalnie wolne.
+4. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
+5. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: stabilny skrypt deployu Proxmox.
-- Pakiet B: czysty lint bez warningow.
-- Pakiet C: dalsze odchudzenie `src/App.jsx`.
-- Pakiet D: dopracowanie UX pojedynczych akcji w kolejce.
-- Pakiet E: logowanie dziecka z kodem rodziny.
-- Pakiet F: rozszerzony widok ledgeru dla rodzica.
+- Pakiet A: czysty lint bez warningow.
+- Pakiet B: dalsze odchudzenie `src/App.jsx`.
+- Pakiet C: dopracowanie UX pojedynczych akcji w kolejce.
+- Pakiet D: logowanie dziecka z kodem rodziny.
+- Pakiet E: rozszerzony widok ledgeru dla rodzica.

@@ -36,7 +36,48 @@ CHILD_LOGIN_FAILED_MAX_ATTEMPTS=40
 
 ## Standardowy Deploy
 
-Deploy robimy przez `git pull` w CT 103, po snapshotcie i backupie aktualnych plikow:
+Standardowo deploy uruchamiamy z lokalnego repo przez skrypt PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/deploy-proxmox.ps1
+```
+
+Skrypt wykonuje:
+
+1. sprawdzenie lokalnego brancha `main` i czystego working tree,
+2. `git push origin main`,
+3. snapshot CT 103,
+4. backup plikow w `/opt/familyquest/.deploy-backups/`,
+5. `git fetch`, `git checkout main`, `git reset --hard origin/main` w CT 103,
+6. `npm ci`,
+7. `npm run frontend:build`,
+8. `systemctl restart familyquest`,
+9. lokalny healthcheck w kontenerze,
+10. publiczny health/CSP check,
+11. produkcyjne Playwrighty: bulk reject, approval queue, reverse approval, ranking, point ledger, reward history, task edit.
+
+Przydatne warianty:
+
+```powershell
+# Pokazuje plan bez dotykania Proxmoxa
+powershell -ExecutionPolicy Bypass -File scripts/deploy-proxmox.ps1 -DryRun -SkipTests -SkipPush -SkipSnapshot -AllowDirty
+
+# Awaryjnie bez testow produkcyjnych po restarcie
+powershell -ExecutionPolicy Bypass -File scripts/deploy-proxmox.ps1 -SkipTests
+
+# Deploy innego brancha, jesli kiedys bedzie potrzebny
+powershell -ExecutionPolicy Bypass -File scripts/deploy-proxmox.ps1 -Branch main
+```
+
+Parametry domyslne:
+
+- `-ProxmoxHost proxmox`
+- `-ContainerId 103`
+- `-AppDir /opt/familyquest`
+- `-Branch main`
+- `-PublicUrl https://fq.familyos.pl`
+
+Ręczny deploy przez `git pull` w CT 103 zostaje tylko procedura awaryjna. Jesli trzeba go wykonac recznie, zachowaj ten sam porzadek: snapshot, backup, pull/reset, install, build, restart, healthcheck.
 
 ```bash
 ssh proxmox
