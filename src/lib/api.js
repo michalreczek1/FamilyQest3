@@ -16,7 +16,7 @@ export const buildApiUrl = path => {
   return `${base}${path}`;
 };
 export const clearLegacyAuthToken = () => localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
-export const apiRequest = async (path, options = {}, withAuth = true) => {
+export const apiRequest = async (path, options = {}) => {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {})

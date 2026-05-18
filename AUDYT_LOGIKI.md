@@ -44,7 +44,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu Vite, braku legacy compiled JS i aktualnej polityki PWA bez offline cache.
 - README i `PROXMOX_DEPLOY.md` opisuja teraz tryb PWA: manifest/install dziala, a service worker celowo czysci stare cache i wyrejestrowuje sie.
 - Rozbito frontend na moduly: `src/App.jsx` jest teraz orkiestratorem stanu i handlerow, a widoki dziecka, panel rodzica, zakladki, modale, helpery i hooki sa w `src/components/`, `src/lib/` i `src/hooks/`.
-- Dodano ESLint i `npm run lint`; lint przechodzi, ale zostawia kilka warningow legacy do posprzatania.
+- Dodano ESLint i `npm run lint`; lint przechodzi czysto bez warningow.
 - Wyodrebniono hooki `useFamilyData`, `useAutosave` i `useRewardUnlocks`.
 - Dodano kolejke akcji rodzica po stronie frontendu. Szybkie klikniecia zatwierdzania, odrzucania, cofania zatwierdzen, premii, kar i mutacji zadan ida sekwencyjnie do API, co usuwa falszywe konflikty wersji FamilyState przy szybkim klikaniu.
 - Po mutacjach serwerowych reload danych uzywa `skipNextAutoSave`, zeby klient nie zapisywal natychmiast starego snapshotu po swiezym stanie z backendu.
@@ -80,7 +80,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Wdrożono polityke nagrod po spadku punktow: niewydana nagroda punktowa jest ukrywana/cofana, gdy saldo spada ponizej progu, a wraca na konto dziecka po ponownym zdobyciu wymaganego salda.
 - Widoki `/api/rewards` i `storage/get/rewardUnlocks` zwracaja tylko aktywne odblokowania nagrod; cofniecia zostaja w stanie jako historia techniczna `revokedAt`, ale nie sa pokazywane dziecku jako dostepne nagrody.
 - Dodano rodzicielski widok historii nagrod: `GET /api/rewards/history` zwraca pelny slad odblokowan, cofniec, przywrocen i wydan, a zakladka `Nagrody` pokazuje statusy `Dostepna`, `Cofnieta`, `Przywrocona`, `Wydana`.
-- `npm run lint` - OK, z ostrzezeniami legacy: `grantDayPointsIfNeeded`, `grantWeekBonusIfNeeded`, `withAuth`, nieuzyty argument w `server.js`, service worker i jeden helper testowy.
+- `npm run lint` - OK, bez warningow po usunieciu martwych helperow punktowych z frontendu, starego parametru `withAuth` i nieuzytych argumentow/helperow.
 - `npm run test:approval-action-queue` - OK, Playwright klika szybko trzy decyzje rodzica i potwierdza, ze do API trafia maksymalnie jeden request naraz oraz nie pojawia sie dialog konfliktu `FAMILY_STATE_VERSION_CONFLICT`.
 - `npm run test:bulk-reject` - OK, Playwright potwierdza, ze przycisk `Odrzuc wg filtra` wysyla jeden request `reject-bulk`, usuwa widoczne wnioski z kolejki i zostawia brak zadan do zatwierdzenia.
 - `npm run frontend:build` - OK po kolejce akcji rodzica.
@@ -97,8 +97,7 @@ Po wdrozeniu rankingu, passy, ledgeru, wersjonowania i kolejki akcji rodzica nie
 2. Szybkie akcje rodzica sa bezpieczne, ale pojedyncze klikniecia nadal ida przez kolejke. Bulk odrzucanie juz istnieje, a do rozważenia zostaje lepszy UX kolejki i ewentualne bulk cofanie.
 3. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
 4. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
-5. `npm run lint` przechodzi, ale zostawia warningi legacy.
-6. Deploy na Proxmox ma juz stabilny skrypt, ale warto uzywac go przez kilka kolejnych wdrozen i dopiero wtedy usunac z dokumentacji reczna procedure jako glowne zrodlo.
+5. Deploy na Proxmox ma juz stabilny skrypt, ale warto uzywac go przez kilka kolejnych wdrozen i dopiero wtedy usunac z dokumentacji reczna procedure jako glowne zrodlo.
 
 ## Rekomendowany Nastepny Pakiet
 
@@ -108,7 +107,7 @@ Najbardziej sensowny kolejny pakiet zalezy od celu:
 - jesli priorytetem jest domkniecie audytu logicznego przed druga rodzina: **globalne kolizje kodow dzieci**;
 - jesli priorytetem jest stabilnosc operacyjna: **uzywanie i dopracowanie skryptu deployu Proxmox**.
 
-Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie i skrypt deployu sa wdrozone, wiec nastepny najbardziej praktyczny pakiet to czysty lint bez warningow.
+Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie, skrypt deployu i czysty lint sa wdrozone, wiec nastepny najbardziej praktyczny pakiet to dalsze odchudzanie `src/App.jsx`.
 
 Dlaczego globalne kody nadal sa wazne:
 
@@ -309,9 +308,9 @@ Priorytet: P2, bo poprawia codzienny komfort bez zmiany reguly punktow.
 
 ### 12. ESLint Warning Cleanup
 
-Status: lint dziala, warningi zostaly.
+Status: zrealizowane.
 
-`npm run lint` przechodzi, ale ostrzega o kilku rzeczach legacy:
+`npm run lint` przechodzi bez warningow. Posprzatano:
 
 - `grantDayPointsIfNeeded` i `grantWeekBonusIfNeeded` w `src/App.jsx`,
 - parametr `withAuth` w `src/lib/api.js`,
@@ -321,12 +320,10 @@ Status: lint dziala, warningi zostaly.
 
 Co zrobic dalej:
 
-1. Usunac lub przeniesc nieuzywane helpery z `App.jsx`, jesli nie sa juz potrzebne po serwerowym recompute.
-2. Usunac `withAuth` albo przywrocic jego realne znaczenie w `apiRequest`.
-3. Zmienic nieuzyte argumenty na `_event` / `_next` albo uproscic sygnatury.
-4. Po zmianie uruchomic `npm run lint`, `npm run frontend:build` i szybkie Playwrighty dotknietych obszarow.
+1. Utrzymywac lint jako czysty sygnal przy kolejnych refaktorach.
+2. Jesli pojawia sie nowe warningi, naprawiac je w tym samym pakiecie zmian, ktory je wprowadza.
 
-Priorytet: P3, chyba ze warningi zaczna maskowac nowe problemy.
+Priorytet: zrealizowane.
 
 ### 13. Skrypt Deployu Proxmox
 
@@ -346,18 +343,16 @@ Priorytet: zrealizowane, dalsze dopracowanie P3.
 
 Rekomendowana kolejność od teraz:
 
-1. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
-2. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
-3. Dopracowac UX pojedynczych akcji w kolejce, jesli nadal beda odczuwalnie wolne.
-4. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
-5. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
+1. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
+2. Dopracowac UX pojedynczych akcji w kolejce, jesli nadal beda odczuwalnie wolne.
+3. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
+4. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: czysty lint bez warningow.
-- Pakiet B: dalsze odchudzenie `src/App.jsx`.
-- Pakiet C: dopracowanie UX pojedynczych akcji w kolejce.
-- Pakiet D: logowanie dziecka z kodem rodziny.
-- Pakiet E: rozszerzony widok ledgeru dla rodzica.
+- Pakiet A: dalsze odchudzenie `src/App.jsx`.
+- Pakiet B: dopracowanie UX pojedynczych akcji w kolejce.
+- Pakiet C: logowanie dziecka z kodem rodziny.
+- Pakiet D: rozszerzony widok ledgeru dla rodzica.

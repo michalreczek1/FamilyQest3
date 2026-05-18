@@ -3949,7 +3949,7 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(frontendStaticPath, 'index.html'));
 });
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

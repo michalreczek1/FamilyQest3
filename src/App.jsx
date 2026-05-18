@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CHILD_SESSION_KEY, HISTORY_DAYS, IDEAL_WEEK_BONUS, POINTS_PER_PASSED_DAY } from './constants.js';
+import { CHILD_SESSION_KEY, HISTORY_DAYS } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, useStorage } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
 import { findAvailableChildAccessCode, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
@@ -292,48 +292,6 @@ const App = () => {
     });
     setStreaks(next);
   }, [children, tasks, completions]);
-  const grantPoints = (childId, amount) => {
-    setPoints(prev => {
-      const currentPoints = prev[childId] || 0;
-      return {
-        ...prev,
-        [childId]: currentPoints + amount
-      };
-    });
-  };
-  const getDayPointKey = (childId, date) => `${childId}:${date}`;
-  const getWeekPointKey = (childId, weekStart) => `${childId}:${weekStart}`;
-  const grantDayPointsIfNeeded = (childId, date) => {
-    const key = getDayPointKey(childId, date);
-    if (dayPointGrants[key]) return;
-    setDayPointGrants(prev => ({
-      ...prev,
-      [key]: true
-    }));
-    grantPoints(childId, POINTS_PER_PASSED_DAY);
-    addAuditLog('GRANT_DAY_POINTS', 'DAY', key, {
-      childId,
-      date,
-      points: POINTS_PER_PASSED_DAY
-    });
-  };
-  const grantWeekBonusIfNeeded = (childId, date) => {
-    const weekStart = getWeekStart(date);
-    const weekStatus = evaluateWeek(childId, weekStart);
-    if (weekStatus !== 'IDEAL') return;
-    const key = getWeekPointKey(childId, weekStart);
-    if (weekBonusGrants[key]) return;
-    setWeekBonusGrants(prev => ({
-      ...prev,
-      [key]: true
-    }));
-    grantPoints(childId, IDEAL_WEEK_BONUS);
-    addAuditLog('GRANT_WEEK_BONUS', 'WEEK', key, {
-      childId,
-      weekStart,
-      points: IDEAL_WEEK_BONUS
-    });
-  };
   const handleLogin = async (email, password) => {
     try {
       await apiRequest('/api/auth/login', {

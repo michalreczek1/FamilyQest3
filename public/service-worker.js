@@ -1,7 +1,7 @@
 // FamilyQuest service worker cleanup.
 // The app must prefer fresh code over offline caching, so existing SW installs are retired.
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 

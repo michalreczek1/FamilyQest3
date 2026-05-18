@@ -93,10 +93,6 @@ const viewports = [
   { name: 'narrow-360', width: 360, height: 740 },
 ];
 
-function rectWithinViewport(rect, width) {
-  return rect.left >= -1 && rect.right <= width + 1;
-}
-
 (async () => {
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch({ headless: true });
