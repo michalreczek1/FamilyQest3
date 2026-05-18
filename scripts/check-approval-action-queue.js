@@ -208,9 +208,9 @@ const installApiMocks = async (page, state, metrics) => {
     await page.getByRole('button', { name: /Panel rodzica/ }).click();
     await page.getByText('Zadania do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
 
-    const rejectButtons = await page.getByRole('button', { name: /Odrzuć/ }).elementHandles();
+    const rejectButtons = await page.locator('.task-item').getByRole('button', { name: /Odrzuć/ }).elementHandles();
     assert.strictEqual(rejectButtons.length, 3, 'test fixture should show three reject buttons');
-    const rejectButtonLocator = page.getByRole('button', { name: /Odrzuć/ });
+    const rejectButtonLocator = page.locator('.task-item').getByRole('button', { name: /Odrzuć/ });
     await rejectButtonLocator.nth(0).click();
     await rejectButtonLocator.nth(1).click();
     await rejectButtonLocator.nth(2).click();

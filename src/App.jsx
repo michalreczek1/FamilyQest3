@@ -709,6 +709,34 @@ const App = () => {
       }
     });
   };
+  const rejectAllPending = async (list = null) => {
+    const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
+    if (queue.length === 0) return;
+    return runServerMutation(async () => {
+      try {
+      const bulkRequest = {
+        ids: queue.map(item => item.id).filter(Boolean)
+      };
+      if (approvalFilterChildId !== 'ALL') {
+        bulkRequest.childId = approvalFilterChildId;
+      }
+      if (approvalFilterDate) {
+        bulkRequest.date = approvalFilterDate;
+      }
+      const result = await apiRequest('/api/completions/reject-bulk', {
+        method: 'POST',
+        body: bulkRequest
+      });
+      const rejectedCount = Number(result?.rejectedCount || 0);
+      await reloadAfterServerMutation();
+      if (rejectedCount === 0) {
+        alert('Nie odrzucono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
+      }
+      } catch (e) {
+        alert(e.message || 'Nie udało się odrzucić zadań');
+      }
+    });
+  };
   const showConfetti = () => {
     for (let i = 0; i < 50; i++) {
       setTimeout(() => {
@@ -1166,6 +1194,7 @@ const App = () => {
       setPointAdjustmentModal: setPointAdjustmentModal,
       handleLogout: handleLogout,
       approveAllPending: approveAllPending,
+      rejectAllPending: rejectAllPending,
       approveTask: approveTask,
       rejectTask: rejectTask,
       approveExtraTask: approveExtraTask,

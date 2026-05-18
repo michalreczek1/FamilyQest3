@@ -461,6 +461,8 @@ const bulkApproveSchema = z.object({
   ids: z.array(z.string().min(1)).min(1).max(500).optional(),
 });
 
+const bulkRejectSchema = bulkApproveSchema;
+
 const rewardSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(500).optional().nullable(),
@@ -3114,6 +3116,74 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
     }
     console.error('Bulk approve error:', error);
     res.status(500).json({ error: 'Nie udało się zatwierdzić zadań zbiorczo' });
+  }
+});
+
+app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const parsed = bulkRejectSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowe filtry odrzucania zbiorczego' });
+      return;
+    }
+
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const now = new Date().toISOString();
+    const rejectedIds = [];
+    const skippedApprovedIds = [];
+    const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
+    const affectedChildIds = new Set();
+
+    data.completions.forEach((completion) => {
+      if (!completion.doneByChild || completion.rejectedByParent) {
+        return;
+      }
+      if (requestedIds && !requestedIds.has(completion.id)) {
+        return;
+      }
+      if (parsed.data.childId && completion.childId !== parsed.data.childId) {
+        return;
+      }
+      if (parsed.data.date && completion.date !== parsed.data.date) {
+        return;
+      }
+      if (completion.approvedByParent) {
+        skippedApprovedIds.push(completion.id);
+        return;
+      }
+
+      completion.doneByChild = false;
+      completion.approvedByParent = false;
+      completion.approvedAt = null;
+      completion.rejectedByParent = true;
+      completion.rejectedAt = now;
+      completion.updatedAt = now;
+      rejectedIds.push(completion.id);
+      affectedChildIds.add(completion.childId);
+    });
+
+    affectedChildIds.forEach((childId) => refreshChildStreak(data, childId, now));
+    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASKS_BULK', 'COMPLETION', 'bulk', {
+      rejectedCount: rejectedIds.length,
+      skippedApprovedCount: skippedApprovedIds.length,
+      requestedCount: requestedIds ? requestedIds.size : null,
+      childId: parsed.data.childId || null,
+      date: parsed.data.date || null,
+    });
+    await saveStateData(state, data);
+    res.json({
+      ok: true,
+      rejectedCount: rejectedIds.length,
+      rejectedIds,
+      skippedApprovedIds,
+    });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Bulk reject error:', error);
+    res.status(500).json({ error: 'Nie udało się odrzucić zadań zbiorczo' });
   }
 });
 

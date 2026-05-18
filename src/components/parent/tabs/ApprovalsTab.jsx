@@ -22,6 +22,7 @@ const ApprovalsTab = ({
   setParentTaskChildId,
   setParentTaskDate,
   approveAllPending,
+  rejectAllPending,
   approveTask,
   rejectTask,
   approveExtraTask,
@@ -33,10 +34,19 @@ const ApprovalsTab = ({
 }) => {
   return React.createElement(React.Fragment, null, React.createElement("div", {
       className: "header"
-    }, React.createElement("h2", null, "Zadania do zatwierdzenia"), filteredPendingApprovals.length > 0 && React.createElement("button", {
+    }, React.createElement("h2", null, "Zadania do zatwierdzenia"), filteredPendingApprovals.length > 0 && React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: '0.6rem',
+        flexWrap: 'wrap'
+      }
+    }, React.createElement("button", {
       className: "btn btn-primary",
       onClick: () => approveAllPending(filteredPendingApprovals)
-    }, "\u2705 Zatwierd\u017A wg filtra (", filteredPendingApprovals.length, ")")), React.createElement("div", {
+    }, "\u2705 Zatwierd\u017A wg filtra (", filteredPendingApprovals.length, ")"), React.createElement("button", {
+      className: "btn btn-danger",
+      onClick: () => rejectAllPending(filteredPendingApprovals)
+    }, "\u274C Odrzu\u0107 wg filtra (", filteredPendingApprovals.length, ")"))), React.createElement("div", {
       className: "glass-card",
       style: {
         marginBottom: '1rem'

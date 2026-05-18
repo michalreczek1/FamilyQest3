@@ -48,6 +48,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Wyodrebniono hooki `useFamilyData`, `useAutosave` i `useRewardUnlocks`.
 - Dodano kolejke akcji rodzica po stronie frontendu. Szybkie klikniecia zatwierdzania, odrzucania, cofania zatwierdzen, premii, kar i mutacji zadan ida sekwencyjnie do API, co usuwa falszywe konflikty wersji FamilyState przy szybkim klikaniu.
 - Po mutacjach serwerowych reload danych uzywa `skipNextAutoSave`, zeby klient nie zapisywal natychmiast starego snapshotu po swiezym stanie z backendu.
+- Dodano zbiorcze odrzucanie wnioskow o zatwierdzenie: backend `POST /api/completions/reject-bulk`, frontendowy przycisk `Odrzuc wg filtra` oraz test UI/API. To przyspiesza czyszczenie wielu wnioskow bez klikania ich po kolei przez kolejke.
 
 ## Weryfikacja Wykonana
 
@@ -80,6 +81,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Dodano rodzicielski widok historii nagrod: `GET /api/rewards/history` zwraca pelny slad odblokowan, cofniec, przywrocen i wydan, a zakladka `Nagrody` pokazuje statusy `Dostepna`, `Cofnieta`, `Przywrocona`, `Wydana`.
 - `npm run lint` - OK, z ostrzezeniami legacy: `grantDayPointsIfNeeded`, `grantWeekBonusIfNeeded`, `withAuth`, nieuzyty argument w `server.js`, service worker i jeden helper testowy.
 - `npm run test:approval-action-queue` - OK, Playwright klika szybko trzy decyzje rodzica i potwierdza, ze do API trafia maksymalnie jeden request naraz oraz nie pojawia sie dialog konfliktu `FAMILY_STATE_VERSION_CONFLICT`.
+- `npm run test:bulk-reject` - OK, Playwright potwierdza, ze przycisk `Odrzuc wg filtra` wysyla jeden request `reject-bulk`, usuwa widoczne wnioski z kolejki i zostawia brak zadan do zatwierdzenia.
 - `npm run frontend:build` - OK po kolejce akcji rodzica.
 - `npm run test:smoke` - OK na lokalnym backendzie z testowa baza PostgreSQL przez tunel SSH.
 - Po wdrozeniu `7a8c380` produkcja ma `/health` 200, DB `ok`, Vite asset w HTML, brak `unpkg.com` i CSP `script-src 'self'`.
@@ -90,7 +92,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 Po wdrozeniu rankingu, passy, ledgeru, wersjonowania i kolejki akcji rodzica nie ma juz otwartego krytycznego bledu w samym liczeniu punktow ani porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu i dlug techniczny:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Szybkie akcje rodzica sa bezpieczne, ale wolniejsze, bo ida przez kolejke. Warto dodac lepszy UX kolejki albo bulk endpointy dla odrzucania/cofania.
+2. Szybkie akcje rodzica sa bezpieczne, ale pojedyncze klikniecia nadal ida przez kolejke. Bulk odrzucanie juz istnieje, a do rozważenia zostaje lepszy UX kolejki i ewentualne bulk cofanie.
 3. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
 4. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
 5. `npm run lint` przechodzi, ale zostawia warningi legacy.
@@ -104,7 +106,7 @@ Najbardziej sensowny kolejny pakiet zalezy od celu:
 - jesli priorytetem jest domkniecie audytu logicznego przed druga rodzina: **globalne kolizje kodow dzieci**;
 - jesli priorytetem jest stabilnosc operacyjna: **dedykowany skrypt deployu Proxmox**.
 
-Domyslna rekomendacja po ostatnim bledzie konfliktow: najpierw poprawic UX kolejki, bo mechanizm jest poprawny, ale wolniejszy.
+Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie jest wdrozone, wiec nastepny najbardziej operacyjny pakiet to stabilny skrypt deployu Proxmox.
 
 Dlaczego globalne kody nadal sa wazne:
 
@@ -298,7 +300,7 @@ Co zrobic dalej:
 
 1. Dac przyciski w stan `saving` po kliknieciu, zeby uzytkownik widzial, ze akcja czeka w kolejce.
 2. Optymistycznie ukrywac klikniety wniosek albo oznaczac go jako `W trakcie zapisu`.
-3. Dodac backendowy bulk endpoint dla odrzucania wielu wnioskow jednym requestem.
+3. Bulk odrzucanie wielu wnioskow jednym requestem jest wdrozone.
 4. Rozwazyc bulk cofanie zatwierdzen, ale ostroznie, bo kazde cofniecie ma efekt punktowy i komunikat dla rodzica.
 
 Priorytet: P2, bo poprawia codzienny komfort bez zmiany reguly punktow.
@@ -344,10 +346,10 @@ Priorytet: P2, bo zmniejsza ryzyko bledow przy kazdym kolejnym wdrozeniu.
 
 Rekomendowana kolejność od teraz:
 
-1. Poprawic UX kolejki akcji rodzica albo dodac bulk odrzucanie, bo mechanizm jest poprawny, ale wyczuwalnie wolniejszy.
-2. Dodac `scripts/deploy-proxmox.ps1`, zeby wdrozenia byly powtarzalne i mniej kruche.
-3. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
-4. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
+1. Dodac `scripts/deploy-proxmox.ps1`, zeby wdrozenia byly powtarzalne i mniej kruche.
+2. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
+3. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
+4. Dopracowac UX pojedynczych akcji w kolejce, jesli nadal beda odczuwalnie wolne.
 5. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
 6. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
 
@@ -355,9 +357,9 @@ Rekomendowana kolejność od teraz:
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: UX kolejki akcji rodzica albo bulk odrzucanie/cofanie.
-- Pakiet B: stabilny skrypt deployu Proxmox.
-- Pakiet C: czysty lint bez warningow.
-- Pakiet D: dalsze odchudzenie `src/App.jsx`.
+- Pakiet A: stabilny skrypt deployu Proxmox.
+- Pakiet B: czysty lint bez warningow.
+- Pakiet C: dalsze odchudzenie `src/App.jsx`.
+- Pakiet D: dopracowanie UX pojedynczych akcji w kolejce.
 - Pakiet E: logowanie dziecka z kodem rodziny.
 - Pakiet F: rozszerzony widok ledgeru dla rodzica.

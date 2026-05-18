@@ -312,6 +312,54 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(pointsAfterDuplicateApproveRes.status).toBe(200);
     expect(pointsAfterDuplicateApproveRes.body.value[child.id] || 0).toBe(pointsAfterApprove);
 
+    const rejectTaskRes = await request(app)
+      .post('/api/tasks')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        title: 'Zadanie do odrzucenia zbiorczego',
+        tier: 'PLUS',
+        points: 1,
+        description: 'Test bulk reject',
+      });
+    expect(rejectTaskRes.status).toBe(201);
+
+    const markRejectDoneRes = await request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${childToken}`)
+      .send({
+        taskId: rejectTaskRes.body.task.id,
+        childId: child.id,
+        date: today,
+        doneByChild: true,
+      });
+    expect([200, 201]).toContain(markRejectDoneRes.status);
+    const rejectCompletionId = markRejectDoneRes.body.completion.id;
+
+    const bulkRejectRes = await request(app)
+      .post('/api/completions/reject-bulk')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        ids: [rejectCompletionId],
+        childId: child.id,
+        date: today,
+      });
+    expect(bulkRejectRes.status).toBe(200);
+    expect(bulkRejectRes.body.rejectedCount).toBe(1);
+    expect(bulkRejectRes.body.rejectedIds).toContain(rejectCompletionId);
+
+    const pendingAfterBulkRejectRes = await request(app)
+      .get(`/api/completions/pending?childId=${encodeURIComponent(child.id)}&date=${encodeURIComponent(today)}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pendingAfterBulkRejectRes.status).toBe(200);
+    expect(pendingAfterBulkRejectRes.body.completions.some((item) => item.id === rejectCompletionId)).toBe(false);
+
+    const pointsAfterBulkRejectRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsAfterBulkRejectRes.status).toBe(200);
+    expect(pointsAfterBulkRejectRes.body.value[child.id] || 0).toBe(pointsAfterApprove);
+
     const extraTaskRes = await request(app)
       .post('/api/extra-tasks')
       .set('Authorization', `Bearer ${childToken}`)

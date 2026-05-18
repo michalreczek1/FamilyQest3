@@ -22,6 +22,7 @@
     "test:ranking": "node scripts/check-ranking-order.js",
     "test:reverse-approval": "node scripts/check-reverse-approval.js",
     "test:approval-action-queue": "node scripts/check-approval-action-queue.js",
+    "test:bulk-reject": "node scripts/check-bulk-reject-filter.js",
     "test:restore-backup": "node scripts/check-restore-backup.js",
     "test:state-version": "node scripts/check-family-state-versioning.js",
     "test:bulk-approve": "node scripts/check-bulk-approve-filter.js",
