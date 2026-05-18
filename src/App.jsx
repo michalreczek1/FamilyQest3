@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CHILD_SESSION_KEY, HISTORY_DAYS, IDEAL_WEEK_BONUS, POINTS_PER_PASSED_DAY } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, useStorage } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
@@ -63,6 +63,7 @@ const App = () => {
   const [showChildRewards, setShowChildRewards] = useState(false);
   const [showPointHistory, setShowPointHistory] = useState(false);
   const [pointAdjustmentModal, setPointAdjustmentModal] = useState(null);
+  const serverMutationQueueRef = useRef(Promise.resolve());
   const autosaveSnapshot = useMemo(() => ({
     children,
     tasks,
@@ -156,6 +157,17 @@ const App = () => {
     };
     setAuditLogs(prev => [entry, ...prev].slice(0, 500));
   }, [user?.id]);
+  const runServerMutation = useCallback(action => {
+    const queued = serverMutationQueueRef.current.catch(() => {}).then(action);
+    serverMutationQueueRef.current = queued.catch(() => {});
+    return queued;
+  }, []);
+  const reloadAfterServerMutation = useCallback((options = {}) => loadData({
+    preserveView: true,
+    silent: true,
+    skipNextAutoSave: true,
+    ...options
+  }), [loadData]);
   useEffect(() => {
     clearLegacyAuthToken();
     loadData();
@@ -494,32 +506,30 @@ const App = () => {
     reload = true
   } = {}) => {
     if (!completion || completion.approvedByParent) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/approve`, {
         method: 'POST'
       });
       if (celebrate) showConfetti();
-      if (reload) await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się zatwierdzić zadania');
-    }
+      if (reload) await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zatwierdzić zadania');
+      }
+    });
   };
   const rejectTask = async completion => {
     if (!completion) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/reject`, {
         method: 'POST'
       });
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się odrzucić zadania');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się odrzucić zadania');
+      }
+    });
   };
   const reverseApproval = async completion => {
     if (!completion || !completion.approvedByParent) return;
@@ -528,7 +538,8 @@ const App = () => {
     const label = `${child?.name || 'Dziecko'} • ${task?.title || 'zadanie'} • ${completion.date}`;
     const ok = window.confirm(`Cofnąć zatwierdzenie?\n\n${label}\n\nSystem przeliczy punkty i passę, a korekta zostanie zapisana w historii.`);
     if (!ok) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       const result = await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/reverse-approval`, {
         method: 'POST',
         body: {
@@ -539,17 +550,16 @@ const App = () => {
       const delta = Number(reversal.delta || 0);
       const deltaText = delta > 0 ? `+${delta}` : `${delta}`;
       window.alert(`Cofnięto zatwierdzenie.\nEfekt punktowy: ${deltaText} pkt (${reversal.previousPoints ?? '?'} → ${reversal.newPoints ?? '?'}).`);
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się cofnąć zatwierdzenia');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się cofnąć zatwierdzenia');
+      }
+    });
   };
   const completeTaskAsParent = async (task, childId, date) => {
     if (!task || !childId || !date) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       const result = await apiRequest('/api/completions', {
         method: 'POST',
         body: {
@@ -566,13 +576,11 @@ const App = () => {
         });
       }
       showConfetti();
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się zaliczyć zadania');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zaliczyć zadania');
+      }
+    });
   };
   const submitExtraTask = async title => {
     if (!selectedChild) return;
@@ -581,7 +589,8 @@ const App = () => {
       alert('Wpisz, co udało Ci się zrobić.');
       return;
     }
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest('/api/extra-tasks', {
         method: 'POST',
         body: {
@@ -591,13 +600,11 @@ const App = () => {
         }
       });
       setExtraTaskTitle('');
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się zgłosić zadania dodatkowego');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zgłosić zadania dodatkowego');
+      }
+    });
   };
   const resubmitExtraTask = async task => {
     if (!task || task.status === 'PENDING') return;
@@ -610,7 +617,8 @@ const App = () => {
       alert('Podaj poprawną liczbę punktów.');
       return;
     }
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/approve`, {
         method: 'POST',
         body: {
@@ -618,27 +626,24 @@ const App = () => {
         }
       });
       showConfetti();
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się zatwierdzić zadania dodatkowego');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zatwierdzić zadania dodatkowego');
+      }
+    });
   };
   const rejectExtraTask = async extraTask => {
     if (!extraTask) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/reject`, {
         method: 'POST'
       });
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
+      }
+    });
   };
   const addPointAdjustment = async (child, type) => {
     if (!child) return;
@@ -653,7 +658,8 @@ const App = () => {
     if (!child) return;
     const isPenalty = type === 'PENALTY';
     const label = isPenalty ? 'karę' : 'premię';
-    try {
+    return runServerMutation(async () => {
+      try {
       await apiRequest('/api/point-adjustments', {
         method: 'POST',
         body: {
@@ -667,18 +673,17 @@ const App = () => {
         showConfetti();
       }
       setPointAdjustmentModal(null);
-      await loadData({
-        preserveView: true,
-        silent: true
-      });
-    } catch (e) {
-      throw new Error(e.message || `Nie udało się zapisać ${label}`);
-    }
+      await reloadAfterServerMutation();
+      } catch (e) {
+        throw new Error(e.message || `Nie udało się zapisać ${label}`);
+      }
+    });
   };
   const approveAllPending = async (list = null) => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
-    try {
+    return runServerMutation(async () => {
+      try {
       const bulkRequest = {
         ids: queue.map(item => item.id).filter(Boolean)
       };
@@ -693,19 +698,16 @@ const App = () => {
         body: bulkRequest
       });
       const approvedCount = Number(result?.approvedCount || 0);
-      await loadData({
-        preserveView: true,
-        silent: true,
-        skipNextAutoSave: true
-      });
+      await reloadAfterServerMutation();
       if (approvedCount === 0) {
         alert('Nie zatwierdzono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
         return;
       }
       showConfetti();
-    } catch (e) {
-      alert(e.message || 'Nie udało się zatwierdzić zadań');
-    }
+      } catch (e) {
+        alert(e.message || 'Nie udało się zatwierdzić zadań');
+      }
+    });
   };
   const showConfetti = () => {
     for (let i = 0; i < 50; i++) {
@@ -885,66 +887,60 @@ const App = () => {
     });
   };
   const updateTask = async (taskId, updates) => {
-    try {
-      const payload = {
-        ...updates,
-        title: String(updates.title || '').trim(),
-        description: updates.description || '',
-        points: Number(updates.points || 0),
-        daysOfWeek: normalizeTaskArchiveDays(updates.daysOfWeek)
-      };
-      const response = await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`, {
-        method: 'PUT',
-        body: payload
-      });
-      setTasks(prev => prev.map(task => task.id === taskId ? response.task || {
-        ...task,
-        ...payload,
-        updatedAt: new Date().toISOString()
-      } : task));
-      await loadData({
-        preserveView: true,
-        silent: true,
-        skipNextAutoSave: true
-      });
-      addAuditLog('UPDATE_TASK', 'TASK', taskId, payload);
-      return response.task;
-    } catch (error) {
-      alert(error.message || 'Nie udało się zapisać zadania');
-      throw error;
-    }
+    return runServerMutation(async () => {
+      try {
+        const payload = {
+          ...updates,
+          title: String(updates.title || '').trim(),
+          description: updates.description || '',
+          points: Number(updates.points || 0),
+          daysOfWeek: normalizeTaskArchiveDays(updates.daysOfWeek)
+        };
+        const response = await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}`, {
+          method: 'PUT',
+          body: payload
+        });
+        setTasks(prev => prev.map(task => task.id === taskId ? response.task || {
+          ...task,
+          ...payload,
+          updatedAt: new Date().toISOString()
+        } : task));
+        await reloadAfterServerMutation();
+        addAuditLog('UPDATE_TASK', 'TASK', taskId, payload);
+        return response.task;
+      } catch (error) {
+        alert(error.message || 'Nie udało się zapisać zadania');
+        throw error;
+      }
+    });
   };
   const archiveTask = async (taskId, {
     matching = false
   } = {}) => {
-    try {
-      await apiRequest(matching ? `/api/tasks/${encodeURIComponent(taskId)}/archive-matching` : `/api/tasks/${encodeURIComponent(taskId)}`, {
-        method: matching ? 'POST' : 'DELETE'
-      });
-      await loadData({
-        preserveView: true,
-        silent: true,
-        skipNextAutoSave: true
-      });
-    } catch (error) {
-      alert(error.message || 'Nie udało się zarchiwizować zadania');
-    }
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(matching ? `/api/tasks/${encodeURIComponent(taskId)}/archive-matching` : `/api/tasks/${encodeURIComponent(taskId)}`, {
+          method: matching ? 'POST' : 'DELETE'
+        });
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się zarchiwizować zadania');
+      }
+    });
   };
   const restoreTask = async (taskId, {
     matching = false
   } = {}) => {
-    try {
-      await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}/${matching ? 'restore-matching' : 'restore'}`, {
-        method: 'POST'
-      });
-      await loadData({
-        preserveView: true,
-        silent: true,
-        skipNextAutoSave: true
-      });
-    } catch (error) {
-      alert(error.message || 'Nie udało się przywrócić zadania');
-    }
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(`/api/tasks/${encodeURIComponent(taskId)}/${matching ? 'restore-matching' : 'restore'}`, {
+          method: 'POST'
+        });
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się przywrócić zadania');
+      }
+    });
   };
   const updateFamilyGoal = updates => {
     setFamilyGoal(prev => ({
