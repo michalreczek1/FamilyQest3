@@ -27,6 +27,7 @@ const expectedSourceFiles = [
   'src/components/settings/SettingsSecurityPanel.jsx',
   'src/components/settings/SettingsBackupPanel.jsx',
   'src/components/parent/ExtraTaskApprovalCard.jsx',
+  'src/components/parent/ParentPanel.jsx',
   'src/components/modals/PointAdjustmentModal.jsx',
   'src/components/modals/AddChildModal.jsx',
   'src/components/modals/EditChildModal.jsx',
@@ -56,7 +57,7 @@ assert(
   'src/App.jsx must export the React application',
 );
 assert(
-  appSource.includes("from './lib/api.js'") && appSource.includes("from './components/modals/EditTaskModal.jsx'"),
+  appSource.includes("from './lib/api.js'") && appSource.includes("from './components/parent/ParentPanel.jsx'"),
   'src/App.jsx must consume extracted lib helpers and component modules instead of inlining everything',
 );
 assert(
