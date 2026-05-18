@@ -150,8 +150,7 @@ printf 'Commit: '
 git log -1 --pretty=format:%h:%s
 printf '\n'
 printf 'Local health: '
-curl -fsS http://127.0.0.1:3000/health
-printf '\n'
+node -e "fetch('http://127.0.0.1:3000/health').then(async r => { const t = await r.text(); if (!r.ok) { console.error(t); process.exit(1); } console.log(t); }).catch(e => { console.error(e); process.exit(1); })"
 '@
 
   $containerCommand = "pct exec $ContainerId -- env APP_DIR='$AppDir' BRANCH='$Branch' DO_BACKUP='$doBackup' bash -s"
