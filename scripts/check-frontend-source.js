@@ -20,6 +20,7 @@ const expectedSourceFiles = [
   'src/components/common/ModalOverlay.jsx',
   'src/components/auth/LoginView.jsx',
   'src/components/auth/ChildSelectionView.jsx',
+  'src/components/child/ChildView.jsx',
   'src/components/leaderboard/WeeklyLeaderboardPanel.jsx',
   'src/components/leaderboard/FamilyGoalWidget.jsx',
   'src/components/rewards/RewardHistoryPanel.jsx',
