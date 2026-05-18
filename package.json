@@ -33,7 +33,7 @@
     "test:frontend-source": "node scripts/check-frontend-source.js",
     "test:child-actions": "node scripts/check-child-actions-layout.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
-    "lint": "eslint .",
+    "lint": "eslint . --ext .js,.jsx",
     "format": "prettier --write ."
   },
   "keywords": [

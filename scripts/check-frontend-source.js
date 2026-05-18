@@ -11,6 +11,29 @@ const appSource = read('src/App.jsx');
 const mainSource = read('src/main.jsx');
 const serviceWorker = read('public/service-worker.js');
 const packageJson = JSON.parse(read('package.json'));
+const expectedSourceFiles = [
+  'src/constants.js',
+  'src/lib/api.js',
+  'src/lib/dates.js',
+  'src/lib/tasks.js',
+  'src/lib/leaderboard.js',
+  'src/components/common/ModalOverlay.jsx',
+  'src/components/auth/LoginView.jsx',
+  'src/components/auth/ChildSelectionView.jsx',
+  'src/components/leaderboard/WeeklyLeaderboardPanel.jsx',
+  'src/components/leaderboard/FamilyGoalWidget.jsx',
+  'src/components/rewards/RewardHistoryPanel.jsx',
+  'src/components/rewards/RewardOverlay.jsx',
+  'src/components/settings/SettingsSecurityPanel.jsx',
+  'src/components/settings/SettingsBackupPanel.jsx',
+  'src/components/parent/ExtraTaskApprovalCard.jsx',
+  'src/components/modals/PointAdjustmentModal.jsx',
+  'src/components/modals/AddChildModal.jsx',
+  'src/components/modals/EditChildModal.jsx',
+  'src/components/modals/AddTaskModal.jsx',
+  'src/components/modals/EditTaskModal.jsx',
+  'src/components/modals/AddRewardModal.jsx',
+];
 
 assert(
   indexHtml.includes('<script type="module" src="/src/main.jsx"></script>'),
@@ -25,8 +48,16 @@ assert(
   'Vite frontend source must live in src/App.jsx, src/main.jsx and src/styles.css',
 );
 assert(
+  expectedSourceFiles.every(exists),
+  'frontend source must keep shared constants, lib helpers and extracted component modules in src/',
+);
+assert(
   appSource.includes('export default App'),
   'src/App.jsx must export the React application',
+);
+assert(
+  appSource.includes("from './lib/api.js'") && appSource.includes("from './components/modals/EditTaskModal.jsx'"),
+  'src/App.jsx must consume extracted lib helpers and component modules instead of inlining everything',
 );
 assert(
   mainSource.includes("import App from './App.jsx'") && mainSource.includes("import './styles.css'"),
