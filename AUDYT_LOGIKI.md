@@ -1,7 +1,7 @@
 # Audyt logiki aplikacji FamilyQuest
 
 Data audytu: 2026-05-09  
-Ostatnia aktualizacja: 2026-05-17
+Ostatnia aktualizacja: 2026-05-18
 
 Zakres: backend `server.js`, frontend Vite/React w `src/`, `index.html`, `prisma/schema.prisma`, testy integracyjne, smoke, Playwrightowy test rankingu i wdrozenie na Proxmox.
 
@@ -19,7 +19,7 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Backend waliduje date `extraTask`.
 - `WEEKLY` dostal tygodniowy klucz naliczania punktow, wiec to samo zadanie tygodniowe nie powinno naliczac punktow codziennie.
 - Aktywny dzien bez zadan `MIN` nie jest juz automatycznie `PASSED`, tylko `NO_REQUIRED_TASKS`.
-- Produkcja `https://fq.familyos.pl` zostala zaktualizowana do `c5a0a81`.
+- Produkcja `https://fq.familyos.pl` zostala zaktualizowana do `7a8c380`.
 - CSP na produkcji nie wymaga juz `https://unpkg.com`; Vite buduje lokalny JS, a `script-src` moze zostac ograniczony do `'self'`.
 - Dodano jawne cofniecie zatwierdzenia zadania przez rodzica: `POST /api/completions/:id/reverse-approval`.
 - Cofniecie zatwierdzenia przelicza punkty i passe ze zrodel prawdy, zapisuje jawny wpis `REVERSAL` w `pointAdjustments` i nie nalicza tej korekty drugi raz przy kolejnym `recomputePointsAndGrants`.
@@ -43,6 +43,11 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Uporzadkowano zrodlo frontendu: aktualnym zrodlem jest Vite/React w `src/`, a produkcyjny frontend powstaje przez `npm run frontend:build` do `dist/`.
 - Dodano `npm run test:frontend-source`, ktory pilnuje entrypointu Vite, braku legacy compiled JS i aktualnej polityki PWA bez offline cache.
 - README i `PROXMOX_DEPLOY.md` opisuja teraz tryb PWA: manifest/install dziala, a service worker celowo czysci stare cache i wyrejestrowuje sie.
+- Rozbito frontend na moduly: `src/App.jsx` jest teraz orkiestratorem stanu i handlerow, a widoki dziecka, panel rodzica, zakladki, modale, helpery i hooki sa w `src/components/`, `src/lib/` i `src/hooks/`.
+- Dodano ESLint i `npm run lint`; lint przechodzi, ale zostawia kilka warningow legacy do posprzatania.
+- Wyodrebniono hooki `useFamilyData`, `useAutosave` i `useRewardUnlocks`.
+- Dodano kolejke akcji rodzica po stronie frontendu. Szybkie klikniecia zatwierdzania, odrzucania, cofania zatwierdzen, premii, kar i mutacji zadan ida sekwencyjnie do API, co usuwa falszywe konflikty wersji FamilyState przy szybkim klikaniu.
+- Po mutacjach serwerowych reload danych uzywa `skipNextAutoSave`, zeby klient nie zapisywal natychmiast starego snapshotu po swiezym stanie z backendu.
 
 ## Weryfikacja Wykonana
 
@@ -73,20 +78,35 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Wdrożono polityke nagrod po spadku punktow: niewydana nagroda punktowa jest ukrywana/cofana, gdy saldo spada ponizej progu, a wraca na konto dziecka po ponownym zdobyciu wymaganego salda.
 - Widoki `/api/rewards` i `storage/get/rewardUnlocks` zwracaja tylko aktywne odblokowania nagrod; cofniecia zostaja w stanie jako historia techniczna `revokedAt`, ale nie sa pokazywane dziecku jako dostepne nagrody.
 - Dodano rodzicielski widok historii nagrod: `GET /api/rewards/history` zwraca pelny slad odblokowan, cofniec, przywrocen i wydan, a zakladka `Nagrody` pokazuje statusy `Dostepna`, `Cofnieta`, `Przywrocona`, `Wydana`.
-- `npm run lint` nadal nie dziala, bo projekt nie ma konfiguracji ESLint.
+- `npm run lint` - OK, z ostrzezeniami legacy: `grantDayPointsIfNeeded`, `grantWeekBonusIfNeeded`, `withAuth`, nieuzyty argument w `server.js`, service worker i jeden helper testowy.
+- `npm run test:approval-action-queue` - OK, Playwright klika szybko trzy decyzje rodzica i potwierdza, ze do API trafia maksymalnie jeden request naraz oraz nie pojawia sie dialog konfliktu `FAMILY_STATE_VERSION_CONFLICT`.
+- `npm run frontend:build` - OK po kolejce akcji rodzica.
+- `npm run test:smoke` - OK na lokalnym backendzie z testowa baza PostgreSQL przez tunel SSH.
+- Po wdrozeniu `7a8c380` produkcja ma `/health` 200, DB `ok`, Vite asset w HTML, brak `unpkg.com` i CSP `script-src 'self'`.
+- Playwright przeciw produkcyjnemu buildowi `https://fq.familyos.pl` - OK dla: `approval-action-queue`, `reverse-approval`, `ranking`, `point-ledger`, `reward-history`, `task-edit`.
 
 ## Co Nadal Jest Do Zrobienia
 
-Po wdrozeniu rankingu i passy nie ma juz otwartego krytycznego bledu w samym porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu:
+Po wdrozeniu rankingu, passy, ledgeru, wersjonowania i kolejki akcji rodzica nie ma juz otwartego krytycznego bledu w samym liczeniu punktow ani porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu i dlug techniczny:
 
 1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
+2. Szybkie akcje rodzica sa bezpieczne, ale wolniejsze, bo ida przez kolejke. Warto dodac lepszy UX kolejki albo bulk endpointy dla odrzucania/cofania.
+3. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
+4. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
+5. `npm run lint` przechodzi, ale zostawia warningi legacy.
+6. Deploy na Proxmox dziala, ale warto zamienic reczne komendy na stabilny `scripts/deploy-proxmox.ps1`.
 
 ## Rekomendowany Nastepny Pakiet
 
-Najbardziej sensowny kolejny pakiet po domknieciu testow dat/WEEKLY/NO_REQUIRED_TASKS i polityki nagrod: **globalne kolizje kodow dzieci**.
+Najbardziej sensowny kolejny pakiet zalezy od celu:
 
-Dlaczego ten pakiet teraz:
+- jesli priorytetem jest codzienny komfort uzywania: **UX kolejki zapisow i bulk odrzucanie/cofanie**;
+- jesli priorytetem jest domkniecie audytu logicznego przed druga rodzina: **globalne kolizje kodow dzieci**;
+- jesli priorytetem jest stabilnosc operacyjna: **dedykowany skrypt deployu Proxmox**.
+
+Domyslna rekomendacja po ostatnim bledzie konfliktow: najpierw poprawic UX kolejki, bo mechanizm jest poprawny, ale wolniejszy.
+
+Dlaczego globalne kody nadal sa wazne:
 
 - Testy API dla dat, harmonogramu, `WEEKLY` i `NO_REQUIRED_TASKS` sa juz wdrozone.
 - Polityka nagrod po spadku punktow jest juz wdrozona.
@@ -214,17 +234,19 @@ Priorytet: zrealizowane, ewentualne filtrowanie historii P3.
 
 ### 8. Zrodlo Frontendu I Build
 
-Status: wdrozone.
+Status: wdrozone, ale z dlugiem porzadkowym.
 
 Uruchamiana aplikacja ma teraz prawdziwy build pipeline Vite + React bez TypeScriptu. Zrodlem prawdy sa `src/main.jsx`, `src/App.jsx` i `src/styles.css`. `index.html` laduje `/src/main.jsx` w dev, a produkcyjnie Express serwuje `dist/` wygenerowane przez `npm run frontend:build`. Stary `familyquest-app.compiled.js` zostal usuniety.
 
 Co zrobic dalej:
 
-1. Rozbijac `src/App.jsx` na mniejsze komponenty: child view, parent panel, modale, task/reward/admin sections.
-2. Do tego czasu pilnowac `npm run test:frontend-source` i `npm run frontend:build`.
-3. Nie przywracac recznie utrzymywanego compiled JS.
+1. Dalej odchudzac `src/App.jsx`, ktory ma okolo 1200 linii. Po hookach powinien zejsc do roli `router + wiring`.
+2. Wyprowadzic pozostale handlery domenowe do hookow lub modulow akcji: zadania, nagrody, dzieci, admin/security, import/export.
+3. Zmniejszyc prop drilling w `ParentPanel`, najlepiej przez obiekty akcji albo mniejsze kontenery per zakladka.
+4. Do tego czasu pilnowac `npm run test:frontend-source` i `npm run frontend:build`.
+5. Nie przywracac recznie utrzymywanego compiled JS.
 
-Priorytet: zrealizowane, refaktor komponentow P3.
+Priorytet: logika zrealizowana, dalszy refaktor P2/P3.
 
 ### 9. Dokumentacja PWA I Service Worker
 
@@ -260,19 +282,82 @@ Co rozszerzyc dalej:
 
 Priorytet: P2/P3.
 
+### 11. Kolejka Akcji Rodzica I UX Zapisu
+
+Status: backendowo/logicznie zabezpieczone, UX do poprawy.
+
+Po szybkim klikaniu kilku decyzji rodzica pojawial sie konflikt `Stan rodziny zmienił się na innym urządzeniu`, mimo ze nikt inny nie uzywal aplikacji. Przyczyna byl lokalny wyscig: kilka mutacji trafialo do API rownolegle, a odswiezenie stanu moglo pobudzic autosave snapshotu z nieaktualna wersja.
+
+Co jest wdrozone:
+
+1. `runServerMutation` kolejkuje akcje serwerowe rodzica po stronie frontendu.
+2. `reloadAfterServerMutation` zawsze odswieza stan z `skipNextAutoSave`.
+3. Test `npm run test:approval-action-queue` potwierdza szybkie trzy klikniecia bez konfliktu i z maksymalnie jednym requestem w locie.
+
+Co zrobic dalej:
+
+1. Dac przyciski w stan `saving` po kliknieciu, zeby uzytkownik widzial, ze akcja czeka w kolejce.
+2. Optymistycznie ukrywac klikniety wniosek albo oznaczac go jako `W trakcie zapisu`.
+3. Dodac backendowy bulk endpoint dla odrzucania wielu wnioskow jednym requestem.
+4. Rozwazyc bulk cofanie zatwierdzen, ale ostroznie, bo kazde cofniecie ma efekt punktowy i komunikat dla rodzica.
+
+Priorytet: P2, bo poprawia codzienny komfort bez zmiany reguly punktow.
+
+### 12. ESLint Warning Cleanup
+
+Status: lint dziala, warningi zostaly.
+
+`npm run lint` przechodzi, ale ostrzega o kilku rzeczach legacy:
+
+- `grantDayPointsIfNeeded` i `grantWeekBonusIfNeeded` w `src/App.jsx`,
+- parametr `withAuth` w `src/lib/api.js`,
+- nieuzyty argument `next` w `server.js`,
+- nieuzyty `event` w `public/service-worker.js`,
+- nieuzyty helper `rectWithinViewport` w `scripts/check-mobile-layout.js`.
+
+Co zrobic dalej:
+
+1. Usunac lub przeniesc nieuzywane helpery z `App.jsx`, jesli nie sa juz potrzebne po serwerowym recompute.
+2. Usunac `withAuth` albo przywrocic jego realne znaczenie w `apiRequest`.
+3. Zmienic nieuzyte argumenty na `_event` / `_next` albo uproscic sygnatury.
+4. Po zmianie uruchomic `npm run lint`, `npm run frontend:build` i szybkie Playwrighty dotknietych obszarow.
+
+Priorytet: P3, chyba ze warningi zaczna maskowac nowe problemy.
+
+### 13. Skrypt Deployu Proxmox
+
+Status: deploy dziala, ale jest zbyt reczny.
+
+Obecny deploy jest poprawny operacyjnie: snapshot, backup plikow, `git fetch/reset`, `npm ci`, `npm run frontend:build`, restart `familyquest`, healthcheck i Playwright po wdrozeniu. Problemem jest to, ze diagnostyczne koncowki komend w kontenerze potrafia dawac falszywe bledy skladni albo mieszac stdout/stderr, szczegolnie przy `git status` / `git log`.
+
+Co zrobic dalej:
+
+1. Dodac `scripts/deploy-proxmox.ps1` jako jedyne wejscie do deployu.
+2. Parametry: `-Host proxmox`, `-ContainerId 103`, `-AppDir /opt/familyquest`, `-Branch main`, `-SkipSnapshot`, `-SkipTests`.
+3. Kroki: sprawdzic czysty lokalny branch, opcjonalnie push, snapshot CT 103, backup plikow, fetch/reset, `npm ci`, build, restart, healthcheck.
+4. Diagnostyka ma byc odporna: osobne komendy dla `git rev-parse --short HEAD`, `git log -1 --pretty=format:%h:%s`, `systemctl is-active familyquest`.
+5. Po deployu opcjonalnie uruchamiac ustalone testy produkcyjne: ranking, point-ledger, reward-history, task-edit, approval-action-queue.
+
+Priorytet: P2, bo zmniejsza ryzyko bledow przy kazdym kolejnym wdrozeniu.
+
 ## Kolejnosc Następnych Prac
 
 Rekomendowana kolejność od teraz:
 
-1. Rozwiazac globalne kolizje kodow dzieci.
-2. Dodac ewentualne filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
-3. Rozbijac duzy `src/App.jsx` na komponenty, gdy bedziemy robic nastepny wiekszy pakiet UI.
+1. Poprawic UX kolejki akcji rodzica albo dodac bulk odrzucanie, bo mechanizm jest poprawny, ale wyczuwalnie wolniejszy.
+2. Dodac `scripts/deploy-proxmox.ps1`, zeby wdrozenia byly powtarzalne i mniej kruche.
+3. Posprzatac warningi ESLint, zeby lint byl czystym sygnalem.
+4. Dalej odchudzac `src/App.jsx` do roli `router + wiring`.
+5. Rozwiazac globalne kolizje kodow dzieci przed obsluga drugiej rodziny.
+6. Dodac filtrowanie historii nagrod po dziecku/statusie, jesli lista urosnie.
 
 ## Uwaga O Limicie I Zakresie
 
 Przy niskim limicie tygodniowym nie warto robic wszystkich punktow naraz. Najbezpieczniejsze pakiety prac to:
 
-- Pakiet A: stabilna lokalna baza testowa.
-- Pakiet B: decyzja o semantyce nagrod po spadku punktow.
-- Pakiet C: logowanie dziecka z kodem rodziny.
-- Pakiet D: rozszerzony widok ledgeru dla rodzica.
+- Pakiet A: UX kolejki akcji rodzica albo bulk odrzucanie/cofanie.
+- Pakiet B: stabilny skrypt deployu Proxmox.
+- Pakiet C: czysty lint bez warningow.
+- Pakiet D: dalsze odchudzenie `src/App.jsx`.
+- Pakiet E: logowanie dziecka z kodem rodziny.
+- Pakiet F: rozszerzony widok ledgeru dla rodzica.
