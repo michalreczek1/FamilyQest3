@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CHILD_SESSION_KEY, HISTORY_DAYS, IDEAL_WEEK_BONUS, POINTS_PER_PASSED_DAY } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, useStorage } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
-import { findAvailableChildAccessCode, isTaskScheduledForDate, isValidChildAccessCode, normalizeTaskArchiveDays } from './lib/tasks.js';
+import { findAvailableChildAccessCode, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
 import LoginView from './components/auth/LoginView.jsx';
 import ChildSelectionView from './components/auth/ChildSelectionView.jsx';
 import ChildView from './components/child/ChildView.jsx';
 import ParentPanel from './components/parent/ParentPanel.jsx';
+import { useAutosave } from './hooks/useAutosave.js';
+import { useFamilyData } from './hooks/useFamilyData.js';
+import { useRewardUnlocks } from './hooks/useRewardUnlocks.js';
 
 const App = () => {
   const storage = useMemo(() => useStorage(), []);
@@ -60,53 +63,77 @@ const App = () => {
   const [showChildRewards, setShowChildRewards] = useState(false);
   const [showPointHistory, setShowPointHistory] = useState(false);
   const [pointAdjustmentModal, setPointAdjustmentModal] = useState(null);
-  const pendingSaveSnapshotRef = useRef(null);
-  const saveInFlightRef = useRef(false);
-  const saveRequestedRef = useRef(false);
-  const skipNextSaveRef = useRef(false);
-  const skipAutoSaveUntilRef = useRef(0);
-  const resetFamilyData = () => {
-    setChildren([]);
-    setTasks([]);
-    setCompletions([]);
-    setExtraTasks([]);
-    setPointAdjustments([]);
-    setPointLedger([]);
-    setRewards([]);
-    setStreaks({});
-    setPoints({});
-    setFamilyLeaderboard({
-      children: [],
-      points: {},
-      streaks: {}
-    });
-    setRewardUnlocks([]);
-    setRewardUnlockHistory([]);
-    setFamilyGoal({
-      title: 'Cel rodzinny',
-      target: 500,
-      mode: 'points'
-    });
-    setAuditLogs([]);
-    setDayPointGrants({});
-    setWeekBonusGrants({});
-    setTaskPointGrants({});
-    setParentUsers([]);
-    setShowRewardOverlay(null);
-    setSelectedChild(null);
-    setParentTab('approvals');
-    setShowModal(null);
-    setEditingChild(null);
-    setEditingTask(null);
-    setEditingReward(null);
-    setApprovalFilterChildId('ALL');
-    setApprovalFilterDate('');
-    setExtraTaskTitle('');
-    setChildApprovalNotice(null);
-    setShowChildRewards(false);
-    setShowPointHistory(false);
-    setPointAdjustmentModal(null);
-  };
+  const autosaveSnapshot = useMemo(() => ({
+    children,
+    tasks,
+    completions,
+    extraTasks,
+    pointAdjustments,
+    pointLedger,
+    rewards,
+    streaks,
+    points,
+    rewardUnlocks,
+    familyGoal,
+    auditLogs,
+    dayPointGrants,
+    weekBonusGrants,
+    taskPointGrants,
+  }), [children, tasks, completions, extraTasks, pointAdjustments, pointLedger, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants]);
+  const {
+    saveInFlightRef,
+    saveRequestedRef,
+    skipNextSaveRef,
+    skipAutoSaveUntilRef,
+  } = useAutosave({
+    storage,
+    loading,
+    user,
+    hasLoadedSnapshot,
+    snapshot: autosaveSnapshot,
+    setSyncing,
+  });
+  const { resetFamilyData, loadData } = useFamilyData({
+    storage,
+    skipNextSaveRef,
+    skipAutoSaveUntilRef,
+    setUser,
+    setChildren,
+    setTasks,
+    setCompletions,
+    setExtraTasks,
+    setPointAdjustments,
+    setPointLedger,
+    setRewards,
+    setStreaks,
+    setPoints,
+    setFamilyLeaderboard,
+    setRewardUnlocks,
+    setRewardUnlockHistory,
+    setFamilyGoal,
+    setAuditLogs,
+    setDayPointGrants,
+    setWeekBonusGrants,
+    setTaskPointGrants,
+    setParentUsers,
+    setShowRewardOverlay,
+    setLoading,
+    setHasLoadedSnapshot,
+    setView,
+    setSelectedChild,
+    setParentTab,
+    setShowModal,
+    setEditingChild,
+    setEditingTask,
+    setEditingReward,
+    setApprovalFilterChildId,
+    setApprovalFilterDate,
+    setExtraTaskTitle,
+    setChildApprovalNotice,
+    setShowChildRewards,
+    setShowPointHistory,
+    setPointAdjustmentModal,
+  });
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
     const goOffline = () => setIsOnline(false);
@@ -133,185 +160,6 @@ const App = () => {
     clearLegacyAuthToken();
     loadData();
   }, []);
-  const loadData = async ({
-    preserveView = false,
-    silent = false,
-    skipNextAutoSave = false
-  } = {}) => {
-    if (!silent) {
-      setLoading(true);
-      setHasLoadedSnapshot(false);
-    }
-    try {
-      const session = await apiRequest('/api/auth/me');
-      if (session.user?.role === 'CHILD' && sessionStorage.getItem(CHILD_SESSION_KEY) !== '1') {
-        try {
-          await apiRequest('/api/auth/logout', {
-            method: 'POST'
-          }, false);
-        } catch (logoutError) {
-          console.warn('Child session cleanup failed:', logoutError.message);
-        }
-        clearLegacyAuthToken();
-        setUser(null);
-        resetFamilyData();
-        setView('login');
-        setHasLoadedSnapshot(false);
-        return;
-      }
-      if (skipNextAutoSave) {
-        skipNextSaveRef.current = true;
-        skipAutoSaveUntilRef.current = Date.now() + 2000;
-      }
-      setUser(session.user);
-      const [savedChildren, savedTasks, savedCompletions, savedExtraTasks, savedPointAdjustments, savedPointLedger, savedRewards, savedStreaks, savedPoints, savedRewardUnlocks, savedFamilyGoal, savedAuditLogs, savedDayPointGrants, savedWeekBonusGrants, savedTaskPointGrants] = await Promise.all([storage.get('children'), storage.get('tasks'), storage.get('completions'), storage.get('extraTasks'), storage.get('pointAdjustments'), storage.get('pointLedger'), storage.get('rewards'), storage.get('streaks'), storage.get('points'), storage.get('rewardUnlocks'), storage.get('familyGoal'), storage.get('auditLogs'), storage.get('dayPointGrants'), storage.get('weekBonusGrants'), storage.get('taskPointGrants')]);
-      const rawChildren = savedChildren || [];
-      const loadedChildren = rawChildren.map(child => ({
-        ...child
-      }));
-      loadedChildren.forEach(child => {
-        if (!isValidChildAccessCode(child.accessCode)) {
-          child.accessCode = findAvailableChildAccessCode(loadedChildren, null, child.id);
-        }
-      });
-      setChildren(loadedChildren);
-      setTasks(savedTasks || []);
-      setCompletions(savedCompletions || []);
-      setExtraTasks(savedExtraTasks || []);
-      setPointAdjustments(savedPointAdjustments || []);
-      setPointLedger(savedPointLedger || []);
-      setRewards(savedRewards || []);
-      setStreaks(savedStreaks || {});
-      setPoints(savedPoints || {});
-      setRewardUnlocks(savedRewardUnlocks || []);
-      setFamilyGoal(savedFamilyGoal || {
-        title: 'Cel rodzinny',
-        target: 500,
-        mode: 'points'
-      });
-      setAuditLogs(savedAuditLogs || []);
-      setDayPointGrants(savedDayPointGrants || {});
-      setWeekBonusGrants(savedWeekBonusGrants || {});
-      setTaskPointGrants(savedTaskPointGrants || {});
-      try {
-        const leaderboard = await apiRequest('/api/leaderboard');
-        setFamilyLeaderboard({
-          children: leaderboard.children || [],
-          points: leaderboard.points || {},
-          streaks: leaderboard.streaks || {}
-        });
-      } catch (leaderboardError) {
-        console.warn('Could not load family leaderboard:', leaderboardError.message);
-        setFamilyLeaderboard({
-          children: loadedChildren.map(child => ({
-            id: child.id,
-            name: child.name,
-            avatar: child.avatar
-          })),
-          points: savedPoints || {},
-          streaks: savedStreaks || {}
-        });
-      }
-      if (session.user?.role === 'CHILD') {
-        const ownChild = loadedChildren.find(c => c.id === session.user.childId && !c.archived);
-        if (!ownChild) {
-          throw new Error('Profil dziecka nie istnieje lub jest zarchiwizowany');
-        }
-        setSelectedChild(ownChild);
-        setView('child');
-      } else {
-        if (preserveView) {
-          setSelectedChild(prev => prev ? loadedChildren.find(c => c.id === prev.id) || prev : prev);
-        } else {
-          setSelectedChild(null);
-          setView('childSelect');
-        }
-      }
-      setHasLoadedSnapshot(true);
-      if (session.user?.role === 'PARENT') {
-        try {
-          const [parentUsersResponse, rewardHistoryResponse] = await Promise.all([apiRequest('/api/auth/parents'), apiRequest('/api/rewards/history')]);
-          setParentUsers(parentUsersResponse.users || []);
-          setRewardUnlockHistory(rewardHistoryResponse.rewardUnlockHistory || []);
-        } catch (parentError) {
-          console.warn('Could not load parent data:', parentError.message);
-          setParentUsers([]);
-          setRewardUnlockHistory([]);
-        }
-      } else {
-        setParentUsers([]);
-        setRewardUnlockHistory([]);
-      }
-    } catch (e) {
-      console.error('Load data error:', e);
-      if (silent) return;
-      clearLegacyAuthToken();
-      setUser(null);
-      resetFamilyData();
-      setView('login');
-      setHasLoadedSnapshot(false);
-    } finally {
-      if (!silent) {
-        setLoading(false);
-      }
-    }
-  };
-  const flushSaveQueue = useCallback(async () => {
-    if (saveInFlightRef.current) {
-      return;
-    }
-    if (!saveRequestedRef.current || !pendingSaveSnapshotRef.current) {
-      return;
-    }
-    saveInFlightRef.current = true;
-    setSyncing(true);
-    try {
-      while (saveRequestedRef.current && pendingSaveSnapshotRef.current) {
-        saveRequestedRef.current = false;
-        const snapshot = pendingSaveSnapshotRef.current;
-        pendingSaveSnapshotRef.current = null;
-        await storage.merge(snapshot);
-      }
-    } catch (e) {
-      console.error('Save data error:', e);
-    } finally {
-      saveInFlightRef.current = false;
-      setSyncing(false);
-      if (saveRequestedRef.current && pendingSaveSnapshotRef.current) {
-        flushSaveQueue();
-      }
-    }
-  }, [storage]);
-  useEffect(() => {
-    if (!loading && user && hasLoadedSnapshot) {
-      if (skipNextSaveRef.current) {
-        skipNextSaveRef.current = false;
-        return;
-      }
-      if (Date.now() < skipAutoSaveUntilRef.current) {
-        return;
-      }
-      pendingSaveSnapshotRef.current = {
-        children,
-        tasks,
-        completions,
-        extraTasks,
-        pointAdjustments,
-        pointLedger,
-        rewards,
-        streaks,
-        points,
-        rewardUnlocks,
-        familyGoal,
-        auditLogs,
-        dayPointGrants,
-        weekBonusGrants,
-        taskPointGrants
-      };
-      saveRequestedRef.current = true;
-      flushSaveQueue();
-    }
-  }, [loading, user, hasLoadedSnapshot, children, tasks, completions, extraTasks, pointAdjustments, pointLedger, rewards, streaks, points, rewardUnlocks, familyGoal, auditLogs, dayPointGrants, weekBonusGrants, taskPointGrants, flushSaveQueue]);
   useEffect(() => {
     if (!user || !hasLoadedSnapshot || view !== 'parent' && view !== 'child') {
       return undefined;
@@ -338,6 +186,17 @@ const App = () => {
   }, [user?.id, user?.role, hasLoadedSnapshot, view, parentTab, selectedChild?.id]);
   const getDateString = (date = new Date()) => toDateString(date);
   const activeChildren = children.filter(c => !c.archived);
+  const { claimReward } = useRewardUnlocks({
+    activeChildren,
+    rewards,
+    points,
+    streaks,
+    rewardUnlocks,
+    setRewardUnlocks,
+    setRewardUnlockHistory,
+    setShowRewardOverlay,
+    addAuditLog,
+  });
   const evaluateDay = (childId, date) => {
     const child = children.find(c => c.id === childId);
     if (!child) return 'NOT_ACTIVE';
@@ -463,69 +322,6 @@ const App = () => {
       points: IDEAL_WEEK_BONUS
     });
   };
-  const checkRewards = childId => {
-    const childPoints = points[childId] || 0;
-    const childStreak = streaks[childId] || {
-      current: 0,
-      idealWeeksInRow: 0
-    };
-    const now = new Date().toISOString();
-    rewards.forEach(reward => {
-      if (reward.active === false) return;
-      const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
-      const streakOk = !reward.requiredStreak || childStreak.current >= reward.requiredStreak;
-      const idealOk = !reward.requiredIdealWeeks || childStreak.idealWeeksInRow >= reward.requiredIdealWeeks;
-      const activeUnlock = rewardUnlocks.find(r => r.childId === childId && r.rewardId === reward.id && !r.revokedAt);
-      const revokedUnlock = rewardUnlocks.find(r => r.childId === childId && r.rewardId === reward.id && r.revokedAt && !r.claimedAt);
-      if (!pointsOk) {
-        if (activeUnlock && !activeUnlock.claimedAt && Number(reward.requiredPoints || 0) > 0) {
-          setRewardUnlocks(prev => prev.map(unlock => unlock.id === activeUnlock.id ? {
-            ...unlock,
-            revokedAt: now,
-            revokedReason: 'POINTS_BELOW_THRESHOLD',
-            updatedAt: now
-          } : unlock));
-        }
-        return;
-      }
-      if (activeUnlock) return;
-      if (pointsOk && streakOk && idealOk) {
-        if (revokedUnlock) {
-          setRewardUnlocks(prev => prev.map(unlock => unlock.id === revokedUnlock.id ? {
-            ...unlock,
-            revokedAt: null,
-            revokedReason: null,
-            restoredAt: now,
-            updatedAt: now
-          } : unlock));
-          return;
-        }
-        const unlock = {
-          id: `unlock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          childId,
-          rewardId: reward.id,
-          unlockedAt: now,
-          claimedAt: null,
-          shownAt: null,
-          revokedAt: null,
-          revokedReason: null,
-          restoredAt: null,
-          updatedAt: now
-        };
-        setRewardUnlocks(prev => [unlock, ...prev]);
-        setShowRewardOverlay({
-          childId,
-          reward
-        });
-        addAuditLog('UNLOCK_REWARD', 'REWARD', reward.id, {
-          childId
-        });
-      }
-    });
-  };
-  useEffect(() => {
-    activeChildren.forEach(child => checkRewards(child.id));
-  }, [points, streaks, rewards, children]);
   const handleLogin = async (email, password) => {
     try {
       await apiRequest('/api/auth/login', {
@@ -1149,26 +945,6 @@ const App = () => {
     } catch (error) {
       alert(error.message || 'Nie udało się przywrócić zadania');
     }
-  };
-  const claimReward = unlockId => {
-    const now = new Date().toISOString();
-    setRewardUnlocks(prev => prev.map(u => u.id === unlockId ? {
-      ...u,
-      claimedAt: now,
-      updatedAt: now
-    } : u));
-    setRewardUnlockHistory(prev => prev.map(entry => entry.id === unlockId ? {
-      ...entry,
-      status: 'CLAIMED',
-      claimedAt: now,
-      latestAt: now,
-      events: [...(entry.events || []), {
-        type: 'CLAIMED',
-        at: now,
-        source: 'local'
-      }]
-    } : entry));
-    addAuditLog('CLAIM_REWARD', 'REWARD_UNLOCK', unlockId);
   };
   const updateFamilyGoal = updates => {
     setFamilyGoal(prev => ({
