@@ -1,7 +1,11 @@
 require('dotenv').config();
+require('../scripts/test-env');
 process.env.ALLOW_DEBUG_RESET_TOKEN = 'true';
+process.env.ALLOW_PUBLIC_REGISTRATION = 'true';
 
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { app, prisma } = require('../server');
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -50,6 +54,7 @@ const restoreFamilyState = async (parentToken, state) => {
     .set('Authorization', `Bearer ${parentToken}`)
     .send({ backup: makeBackupState(state) });
   expect(restoreRes.status).toBe(200);
+  return restoreRes.body;
 };
 
 maybeDescribe('FamilyQuest API integration', () => {
@@ -72,6 +77,16 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(registerRes.body.user).not.toHaveProperty('pinCode');
 
     const parentToken = registerRes.body.token;
+    const csrfGuardRes = await request(app)
+      .post('/api/tasks')
+      .set('Cookie', registerRes.headers['set-cookie'] || [])
+      .send({
+        childId: 'missing',
+        title: 'Bez nagłówka',
+        tier: 'MIN',
+        points: 1,
+      });
+    expect(csrfGuardRes.status).toBe(403);
 
     const addChildRes = await request(app)
       .post('/api/children')
@@ -86,6 +101,10 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(addChildRes.body.child.accessCode).toMatch(/^\d{4}$/);
 
     const child = addChildRes.body.child;
+    const familyStateAfterChildCreate = await prisma.familyState.findUnique({
+      where: { familyId: registerRes.body.user.familyId },
+    });
+    expect(JSON.stringify(familyStateAfterChildCreate.data)).not.toContain(child.accessCode);
     const siblingName = `Rodzenstwo-${suffix}`;
     const addSiblingRes = await request(app)
       .post('/api/children')
@@ -158,6 +177,8 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(childLoginRes.status).toBe(200);
     expect(childLoginRes.body.token).toBeTruthy();
     expect(childLoginRes.body.user.role).toBe('CHILD');
+    const decodedChildToken = jwt.decode(childLoginRes.body.token);
+    expect(decodedChildToken.exp - decodedChildToken.iat).toBeLessThanOrEqual(24 * 60 * 60);
 
     const childToken = childLoginRes.body.token;
 
@@ -185,6 +206,7 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(childStorageChildrenRes.status).toBe(200);
     expect(childStorageChildrenRes.body.value).toHaveLength(1);
     expect(childStorageChildrenRes.body.value[0].id).toBe(child.id);
+    expect(childStorageChildrenRes.body.value[0]).not.toHaveProperty('accessCode');
     expect(childStorageChildrenRes.body.value.some((item) => item.id === sibling.id)).toBe(false);
 
     const childStorageAuditRes = await request(app)
@@ -532,6 +554,7 @@ maybeDescribe('FamilyQuest API integration', () => {
     const secondChild = secondChildRes.body.child;
     expect(secondChild.accessCode).toMatch(/^\d{4}$/);
     expect(secondChild.accessCode).not.toBe(takenCode);
+    const secondChildLoginCode = secondChild.accessCode;
 
     const conflictingUpdateRes = await request(app)
       .put(`/api/children/${secondChild.id}`)
@@ -570,7 +593,11 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(secondChildrenAfterSnapshotRes.status).toBe(200);
     expect(secondChildrenAfterSnapshotRes.body.children).toHaveLength(1);
     expect(secondChildrenAfterSnapshotRes.body.children[0].name).toBe(secondChild.name);
-    expect(secondChildrenAfterSnapshotRes.body.children[0].accessCode).toBe(secondChild.accessCode);
+    expect(secondChildrenAfterSnapshotRes.body.children[0]).not.toHaveProperty('accessCode');
+    const secondChildLoginAfterSnapshotRes = await request(app)
+      .post('/api/auth/login-child')
+      .send({ accessCode: secondChildLoginCode });
+    expect(secondChildLoginAfterSnapshotRes.status).toBe(200);
 
     const restoreRes = await request(app)
       .post('/api/storage/restore-backup')
@@ -591,22 +618,60 @@ maybeDescribe('FamilyQuest API integration', () => {
               name: 'Restore B',
               avatar: '🐯',
               activeDays: [1, 2, 3, 4, 5, 6, 7],
-              accessCode: secondChild.accessCode,
+              accessCode: secondChildLoginCode,
               archived: false,
             },
           ],
         }),
       });
     expect(restoreRes.status).toBe(200);
+    expect(restoreRes.body.childAccessCodes).toHaveLength(2);
 
     const restoredChildrenRes = await request(app)
       .get('/api/children')
       .set('Authorization', `Bearer ${secondParentToken}`);
     expect(restoredChildrenRes.status).toBe(200);
-    const restoredCodes = restoredChildrenRes.body.children.map((child) => child.accessCode);
+    const restoredCodes = restoreRes.body.childAccessCodes.map((item) => item.accessCode);
     expect(restoredChildrenRes.body.children).toHaveLength(2);
+    expect(restoredChildrenRes.body.children.some((child) => Object.prototype.hasOwnProperty.call(child, 'accessCode'))).toBe(false);
     expect(restoredCodes).not.toContain(takenCode);
     expect(new Set(restoredCodes).size).toBe(restoredCodes.length);
+    for (const accessCode of restoredCodes) {
+      const restoredChildLoginRes = await request(app)
+        .post('/api/auth/login-child')
+        .send({ accessCode });
+      expect(restoredChildLoginRes.status).toBe(200);
+    }
+  });
+
+  test('child login blocks repeated guesses for the same code across IPs', async () => {
+    let guessedCode = null;
+    for (let i = 9000; i < 10000; i += 1) {
+      const candidate = String(i);
+      const codeLookupHash = crypto
+        .createHmac('sha256', process.env.CHILD_CODE_PEPPER)
+        .update(candidate, 'utf8')
+        .digest('hex');
+      const existing = await prisma.childAccessCredential.findUnique({ where: { codeLookupHash } });
+      if (!existing) {
+        guessedCode = candidate;
+        break;
+      }
+    }
+    expect(guessedCode).toMatch(/^\d{4}$/);
+    for (let i = 0; i < 8; i += 1) {
+      const failedRes = await request(app)
+        .post('/api/auth/login-child')
+        .set('X-Forwarded-For', `198.51.100.${i + 1}`)
+        .send({ accessCode: guessedCode });
+      expect(failedRes.status).toBe(401);
+    }
+
+    const blockedRes = await request(app)
+      .post('/api/auth/login-child')
+      .set('X-Forwarded-For', '198.51.100.99')
+      .send({ accessCode: guessedCode });
+    expect(blockedRes.status).toBe(429);
   });
 
   test('streak and passed-day points require all MIN tasks approved for the day', async () => {
@@ -883,7 +948,9 @@ maybeDescribe('FamilyQuest API integration', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     };
-    await restoreFamilyState(parentToken, { children: [child], tasks: [weeklyTask] });
+    const restoredWeeklyState = await restoreFamilyState(parentToken, { children: [child], tasks: [weeklyTask] });
+    const restoredWeeklyCode = restoredWeeklyState.childAccessCodes.find((item) => item.childId === child.id)?.accessCode;
+    expect(restoredWeeklyCode).toMatch(/^\d{4}$/);
 
     const completeAndApprove = async (date) => {
       const completionRes = await request(app)
@@ -956,10 +1023,11 @@ maybeDescribe('FamilyQuest API integration', () => {
       .set('Authorization', `Bearer ${parentToken}`);
     expect(childrenRes.status).toBe(200);
     const currentChild = childrenRes.body.value.find((item) => item.id === child.id);
-    expect(currentChild?.accessCode).toMatch(/^\d{4}$/);
+    expect(currentChild).toBeTruthy();
+    expect(currentChild).not.toHaveProperty('accessCode');
 
     const childLoginRes = await request(app).post('/api/auth/login-child').send({
-      accessCode: currentChild.accessCode,
+      accessCode: restoredWeeklyCode,
     });
     expect(childLoginRes.status).toBe(200);
     const childLedgerRes = await request(app)

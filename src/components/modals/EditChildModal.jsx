@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { CHILD_AVATARS, DAY_NAMES } from '../../constants.js';
-import { findAvailableChildAccessCode, isValidChildAccessCode } from '../../lib/tasks.js';
+import { isValidChildAccessCode } from '../../lib/tasks.js';
 import ModalOverlay from '../common/ModalOverlay.jsx';
 
 const EditChildModal = ({
   child,
-  siblings,
   onSave,
   onClose
 }) => {
@@ -13,7 +12,7 @@ const EditChildModal = ({
   const [avatar, setAvatar] = useState(child?.avatar || '👧');
   const [customAvatar, setCustomAvatar] = useState('');
   const [activeDays, setActiveDays] = useState(Array.isArray(child?.activeDays) ? child.activeDays : [1, 2, 3, 4, 5]);
-  const [accessCode, setAccessCode] = useState(child?.accessCode || '');
+  const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
   const toggleDay = day => {
     if (activeDays.includes(day)) {
@@ -40,21 +39,19 @@ const EditChildModal = ({
       setError('Wybierz co najmniej 1 dzień aktywny.');
       return;
     }
-    if (!isValidChildAccessCode(normalizedCode)) {
+    if (normalizedCode && !isValidChildAccessCode(normalizedCode)) {
       setError('Kod dziecka musi mieć dokładnie 4 cyfry.');
       return;
     }
-    const uniqueCode = findAvailableChildAccessCode(siblings, normalizedCode, child.id);
-    if (!uniqueCode) {
-      setError('Nie udało się ustawić unikalnego kodu dziecka.');
-      return;
-    }
-    onSave({
+    const payload = {
       name: normalizedName,
       avatar: normalizedAvatar,
       activeDays: [...new Set(activeDays)].sort((a, b) => a - b),
-      accessCode: uniqueCode
-    });
+    };
+    if (normalizedCode) {
+      payload.accessCode = normalizedCode;
+    }
+    onSave(payload);
   };
   return React.createElement(ModalOverlay, {
     className: "modal"
@@ -132,14 +129,14 @@ const EditChildModal = ({
       marginBottom: '0.5rem',
       opacity: 0.8
     }
-  }, "Kod dziecka (4 cyfry)"), React.createElement("input", {
+  }, "Nowy kod dziecka (opcjonalnie, 4 cyfry)"), React.createElement("input", {
     type: "text",
     className: "input",
     value: accessCode,
     onChange: e => setAccessCode(e.target.value.replace(/\D/g, '').slice(0, 4)),
     inputMode: "numeric",
     maxLength: 4,
-    required: true
+    placeholder: "Zostaw puste, aby nie zmieniać"
   }), React.createElement("label", {
     style: {
       display: 'block',

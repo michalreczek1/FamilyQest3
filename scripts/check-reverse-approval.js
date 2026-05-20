@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
+require('./test-env');
 const { __test, prisma } = require('../server');
 
 const rootDir = path.join(__dirname, '..', 'dist');

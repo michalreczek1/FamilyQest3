@@ -121,7 +121,7 @@ if [ "$DO_BACKUP" = "1" ]; then
       cp -a "$file" "$backup_dir/$file"
     fi
   done
-  for dir in src public dist scripts __tests__; do
+  for dir in src public dist scripts __tests__ prisma/migrations; do
     if [ -e "$dir" ]; then
       cp -a "$dir" "$backup_dir/"
     fi
@@ -135,6 +135,21 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git reset --hard "origin/$BRANCH"
 npm ci
+
+if [ -f .env ]; then
+  if ! grep -q '^CHILD_CODE_PEPPER=' .env; then
+    printf '\nCHILD_CODE_PEPPER="%s"\n' "$(openssl rand -hex 32)" >> .env
+  fi
+  if ! grep -q '^CHILD_JWT_EXPIRES_IN=' .env; then
+    printf 'CHILD_JWT_EXPIRES_IN="24h"\n' >> .env
+  fi
+  if ! grep -q '^CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS=' .env; then
+    printf 'CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS=8\n' >> .env
+  fi
+fi
+
+node scripts/ensure-migration-baseline.js
+npx prisma migrate deploy
 npm run frontend:build
 systemctl restart familyquest
 sleep 3

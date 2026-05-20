@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+require('./test-env');
 const { prisma, __test } = require('../server');
 
 const clone = (value) => JSON.parse(JSON.stringify(value || {}));

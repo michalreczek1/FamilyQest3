@@ -7,6 +7,7 @@ module.exports = defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/health': 'http://localhost:3000',
+      '/livez': 'http://localhost:3000',
     },
   },
   build: {

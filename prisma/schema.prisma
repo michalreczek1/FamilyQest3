@@ -13,25 +13,27 @@ enum UserRole {
 }
 
 model Family {
-  id        String   @id @default(uuid())
-  name      String
-  users     User[]
-  state     FamilyState?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                     String                  @id @default(uuid())
+  name                   String
+  users                  User[]
+  state                  FamilyState?
+  childAccessCredentials ChildAccessCredential[]
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  role         UserRole @default(PARENT)
-  active       Boolean  @default(true)
-  pinCode      String?
-  familyId     String
-  family       Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  passwordHash        String
+  role                UserRole             @default(PARENT)
+  active              Boolean              @default(true)
+  pinCode             String?
+  familyId            String
+  family              Family               @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  passwordResetTokens PasswordResetToken[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@index([familyId])
 }
@@ -44,4 +46,33 @@ model FamilyState {
   version   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ChildAccessCredential {
+  id             String   @id @default(uuid())
+  familyId       String
+  family         Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  childId        String
+  codeLookupHash String   @unique
+  codeHash       String
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([familyId])
+  @@index([familyId, childId])
+  @@index([childId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }

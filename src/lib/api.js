@@ -19,6 +19,7 @@ export const clearLegacyAuthToken = () => localStorage.removeItem(LEGACY_AUTH_TO
 export const apiRequest = async (path, options = {}) => {
   const headers = {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
     ...(options.headers || {})
   };
   let response = null;
@@ -49,7 +50,7 @@ export const apiRequest = async (path, options = {}) => {
   }
   return data;
 };
-export const useStorage = () => {
+export const createStorageClient = () => {
   const get = async key => {
     try {
       const result = await apiRequest(`/api/storage/get/${encodeURIComponent(key)}`);

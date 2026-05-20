@@ -17,8 +17,11 @@ const prisma = new PrismaClient();
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me-in-production';
+const DEFAULT_JWT_SECRET = 'dev-only-change-me-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || '';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const CHILD_JWT_EXPIRES_IN = process.env.CHILD_JWT_EXPIRES_IN || '24h';
+const CHILD_CODE_PEPPER = process.env.CHILD_CODE_PEPPER || '';
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 12);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 0);
@@ -26,18 +29,23 @@ const AUTH_RATE_LIMIT_WINDOW_MS = Number(process.env.AUTH_RATE_LIMIT_WINDOW_MS |
 const AUTH_RATE_LIMIT_MAX_REQUESTS = Number(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || 20);
 const CHILD_LOGIN_FAILED_WINDOW_MS = Number(process.env.CHILD_LOGIN_FAILED_WINDOW_MS || 15 * 60 * 1000);
 const CHILD_LOGIN_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_FAILED_MAX_ATTEMPTS || 40);
+const CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS || 8);
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
 const STREAK_HISTORY_DAYS = 3650;
-const ALLOW_DEBUG_RESET_TOKEN = process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
-const ALLOW_PUBLIC_REGISTRATION =
-  process.env.ALLOW_PUBLIC_REGISTRATION === 'true' || process.env.NODE_ENV !== 'production';
+const ALLOW_DEBUG_RESET_TOKEN = process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
+const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true';
 const AUTH_COOKIE_NAME = 'familyquest_session';
 
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is required in production');
-}
+const validateSecret = (name, value, forbiddenValues = []) => {
+  if (!value || value.length < 32 || forbiddenValues.includes(value)) {
+    throw new Error(`${name} environment variable is required and must be at least 32 characters`);
+  }
+};
+
+validateSecret('JWT_SECRET', JWT_SECRET, [DEFAULT_JWT_SECRET]);
+validateSecret('CHILD_CODE_PEPPER', CHILD_CODE_PEPPER);
 
 const DEFAULT_FAMILY_STATE = {
   children: [],
@@ -61,12 +69,13 @@ const DEFAULT_FAMILY_STATE = {
   taskPointGrants: {},
 };
 
-const passwordResetTokens = new Map();
-
 const parseAllowedOrigins = () => {
   const raw = process.env.CORS_ORIGINS;
-  if (!raw || raw.trim() === '*') {
-    return '*';
+  if (!raw) {
+    return [];
+  }
+  if (raw.trim() === '*') {
+    throw new Error('CORS_ORIGINS=* is not allowed when credentials are enabled');
   }
   return raw
     .split(',')
@@ -76,23 +85,20 @@ const parseAllowedOrigins = () => {
 
 const allowedOrigins = parseAllowedOrigins();
 
-const corsOptions =
-  allowedOrigins === '*'
-    ? { origin: true, credentials: true }
-    : {
-        origin: (origin, callback) => {
-          if (!origin) {
-            callback(null, true);
-            return;
-          }
-          if (allowedOrigins.includes(origin)) {
-            callback(null, true);
-            return;
-          }
-          callback(new Error(`CORS blocked origin: ${origin}`));
-        },
-        credentials: true,
-      };
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`CORS blocked origin: ${origin}`));
+  },
+  credentials: true,
+};
 
 app.set('trust proxy', 1);
 
@@ -119,6 +125,21 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
+const unsafeApiMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+app.use('/api', (req, res, next) => {
+  if (!unsafeApiMethods.has(req.method)) {
+    next();
+    return;
+  }
+  const hasSessionCookie = String(req.headers.cookie || '').includes(`${AUTH_COOKIE_NAME}=`);
+  if (!hasSessionCookie || req.get('x-requested-with') === 'XMLHttpRequest') {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'Brak wymaganego nagłówka zabezpieczającego żądanie' });
+});
+
 if (RATE_LIMIT_MAX_REQUESTS > 0) {
   app.use(
     '/api',
@@ -144,15 +165,18 @@ const childLoginFailures = new Map();
 const getRateLimitKey = (req) =>
   req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
 
-const getChildLoginFailure = (req) => {
-  const key = `child-login:${getRateLimitKey(req)}`;
+const cleanupChildLoginFailures = () => {
   const now = Date.now();
-
   for (const [storedKey, value] of childLoginFailures.entries()) {
     if (value.resetAt <= now) {
       childLoginFailures.delete(storedKey);
     }
   }
+};
+
+const getChildLoginFailure = (key) => {
+  cleanupChildLoginFailures();
+  const now = Date.now();
 
   const current = childLoginFailures.get(key);
 
@@ -165,20 +189,61 @@ const getChildLoginFailure = (req) => {
   return { key, current };
 };
 
-const clearChildLoginFailures = (req) => {
-  childLoginFailures.delete(`child-login:${getRateLimitKey(req)}`);
+const clearChildLoginFailures = (req, codeLookupHash = null) => {
+  childLoginFailures.delete(`child-login:ip:${getRateLimitKey(req)}`);
+  if (codeLookupHash) {
+    childLoginFailures.delete(`child-login:code:${codeLookupHash}`);
+  }
 };
 
-const recordChildLoginFailure = (req) => {
-  const { current } = getChildLoginFailure(req);
+const recordChildLoginFailureForKey = (key) => {
+  const { current } = getChildLoginFailure(key);
   current.count += 1;
   return current;
 };
 
-const isChildLoginTemporarilyBlocked = (req) => {
-  const { current } = getChildLoginFailure(req);
-  return current.count >= CHILD_LOGIN_FAILED_MAX_ATTEMPTS ? current : null;
+const getBlockedChildLoginFailure = (req, codeLookupHash = null) => {
+  const ipFailure = getChildLoginFailure(`child-login:ip:${getRateLimitKey(req)}`).current;
+  if (ipFailure.count >= CHILD_LOGIN_FAILED_MAX_ATTEMPTS) {
+    return ipFailure;
+  }
+  if (codeLookupHash) {
+    const codeFailure = getChildLoginFailure(`child-login:code:${codeLookupHash}`).current;
+    if (codeFailure.count >= CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS) {
+      return codeFailure;
+    }
+  }
+  return null;
 };
+
+const recordChildLoginFailure = (req, codeLookupHash = null) => {
+  const ipFailure = recordChildLoginFailureForKey(`child-login:ip:${getRateLimitKey(req)}`);
+  if (codeLookupHash) {
+    recordChildLoginFailureForKey(`child-login:code:${codeLookupHash}`);
+  }
+  return ipFailure;
+};
+
+setInterval(cleanupChildLoginFailures, 60 * 1000).unref();
+
+const getPasswordResetTokenHash = (token) =>
+  crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+
+const cleanupExpiredPasswordResetTokens = () =>
+  prisma.passwordResetToken
+    .deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date() } },
+          { usedAt: { not: null } },
+        ],
+      },
+    })
+    .catch((error) => {
+      console.warn('Password reset token cleanup failed:', error.message);
+    });
+
+setInterval(cleanupExpiredPasswordResetTokens, 60 * 1000).unref();
 
 const isObjectRecord = (value) =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -206,7 +271,7 @@ const signChildToken = ({ familyId, childId, childName }) =>
       childName,
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN },
+    { expiresIn: CHILD_JWT_EXPIRES_IN },
   );
 
 const toPublicUser = (user) => ({
@@ -622,9 +687,26 @@ const normalizeStateData = (value) => {
   };
 };
 
+const sanitizeChildForStorage = (child) => {
+  if (!isObjectRecord(child)) return child;
+  const { accessCode: _accessCode, ...safeChild } = child;
+  return safeChild;
+};
+
+const sanitizeChildrenForStorage = (children) =>
+  (Array.isArray(children) ? children : []).map((child) => sanitizeChildForStorage(child));
+
+const sanitizeStateDataForStorage = (value) => {
+  const data = normalizeStateData(value);
+  return {
+    ...data,
+    children: sanitizeChildrenForStorage(data.children),
+  };
+};
+
 const FAMILY_STATE_CONFLICT_BASE_DATA = Symbol('familyStateConflictBaseData');
 
-const cloneStateDataForStorage = (value) => JSON.parse(JSON.stringify(normalizeStateData(value)));
+const cloneStateDataForStorage = (value) => JSON.parse(JSON.stringify(sanitizeStateDataForStorage(value)));
 
 const attachStateDataConflictBase = (target, data) => {
   if (!isObjectRecord(target)) return target;
@@ -784,37 +866,33 @@ const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChil
 
 const isValidChildAccessCode = (value) => typeof value === 'string' && /^\d{4}$/.test(value);
 
-const collectActiveChildAccessCodes = (states, options = {}) => {
+const getChildAccessCodeLookupHash = (accessCode) =>
+  crypto
+    .createHmac('sha256', CHILD_CODE_PEPPER)
+    .update(String(accessCode || ''), 'utf8')
+    .digest('hex');
+
+const getGloballyUsedChildAccessCodeHashes = async (options = {}, client = prisma) => {
   const { excludeFamilyId = null, excludeChildId = null } = options;
-  const usedCodes = new Set();
-
-  states.forEach((state) => {
-    const data = normalizeStateData(state.data);
-    data.children.forEach((child) => {
-      if (child.archived || !isValidChildAccessCode(child.accessCode)) return;
-      if (state.familyId === excludeFamilyId && child.id === excludeChildId) return;
-      usedCodes.add(child.accessCode);
-    });
+  const credentials = await client.childAccessCredential.findMany({
+    where: { active: true },
+    select: { familyId: true, childId: true, codeLookupHash: true },
   });
-
-  return usedCodes;
-};
-
-const getGloballyUsedChildAccessCodes = async (options = {}, client = prisma) => {
-  const states = await client.familyState.findMany({
-    select: { familyId: true, data: true },
-  });
-  return collectActiveChildAccessCodes(states, options);
+  return new Set(
+    credentials
+      .filter((credential) => !(credential.familyId === excludeFamilyId && credential.childId === excludeChildId))
+      .map((credential) => credential.codeLookupHash),
+  );
 };
 
 const pickGloballyUniqueChildAccessCode = async (options = {}, client = prisma) => {
   const { preferredCode = null, excludeFamilyId = null, excludeChildId = null, reservedCodes = new Set() } = options;
-  const usedCodes = await getGloballyUsedChildAccessCodes({ excludeFamilyId, excludeChildId }, client);
+  const usedHashes = await getGloballyUsedChildAccessCodeHashes({ excludeFamilyId, excludeChildId }, client);
   reservedCodes.forEach((code) => {
-    if (isValidChildAccessCode(code)) usedCodes.add(code);
+    if (isValidChildAccessCode(code)) usedHashes.add(getChildAccessCodeLookupHash(code));
   });
 
-  if (isValidChildAccessCode(preferredCode) && !usedCodes.has(preferredCode)) {
+  if (isValidChildAccessCode(preferredCode) && !usedHashes.has(getChildAccessCodeLookupHash(preferredCode))) {
     return preferredCode;
   }
 
@@ -824,7 +902,7 @@ const pickGloballyUniqueChildAccessCode = async (options = {}, client = prisma) 
 
   for (let i = 0; i < 10000; i += 1) {
     const code = String(i).padStart(4, '0');
-    if (!usedCodes.has(code)) {
+    if (!usedHashes.has(getChildAccessCodeLookupHash(code))) {
       return code;
     }
   }
@@ -834,7 +912,7 @@ const pickGloballyUniqueChildAccessCode = async (options = {}, client = prisma) 
 
 const normalizeChildrenAccessCodesGlobally = async (children, options = {}, client = prisma) => {
   const { familyId } = options;
-  const usedCodes = await getGloballyUsedChildAccessCodes({ excludeFamilyId: familyId }, client);
+  const usedHashes = await getGloballyUsedChildAccessCodeHashes({ excludeFamilyId: familyId }, client);
   const normalized = [];
 
   for (const child of children) {
@@ -843,14 +921,14 @@ const normalizeChildrenAccessCodesGlobally = async (children, options = {}, clie
       continue;
     }
 
-    let accessCode = isValidChildAccessCode(child.accessCode) && !usedCodes.has(child.accessCode)
+    let accessCode = isValidChildAccessCode(child.accessCode) && !usedHashes.has(getChildAccessCodeLookupHash(child.accessCode))
       ? child.accessCode
       : null;
 
     if (!accessCode) {
       for (let i = 0; i < 10000; i += 1) {
         const candidate = String(i).padStart(4, '0');
-        if (!usedCodes.has(candidate)) {
+        if (!usedHashes.has(getChildAccessCodeLookupHash(candidate))) {
           accessCode = candidate;
           break;
         }
@@ -861,12 +939,77 @@ const normalizeChildrenAccessCodesGlobally = async (children, options = {}, clie
       return null;
     }
 
-    usedCodes.add(accessCode);
+    usedHashes.add(getChildAccessCodeLookupHash(accessCode));
     normalized.push({ ...child, accessCode });
   }
 
   return normalized;
 };
+
+const setChildAccessCredential = async (client, { familyId, childId, accessCode, active = true }) => {
+  if (!isValidChildAccessCode(accessCode)) {
+    throw new Error('Nieprawidłowy kod dostępu dziecka');
+  }
+  const codeLookupHash = getChildAccessCodeLookupHash(accessCode);
+  const existingForCode = await client.childAccessCredential.findUnique({
+    where: { codeLookupHash },
+  });
+  if (existingForCode?.active && (existingForCode.familyId !== familyId || existingForCode.childId !== childId)) {
+    throw new Error('Kod dostępu dziecka jest zajęty');
+  }
+  if (existingForCode?.active && existingForCode.familyId === familyId && existingForCode.childId === childId) {
+    return existingForCode;
+  }
+
+  const codeHash = await bcrypt.hash(accessCode, BCRYPT_ROUNDS);
+  await client.childAccessCredential.updateMany({
+    where: { familyId, childId, active: true },
+    data: { active: false },
+  });
+
+  if (existingForCode && !existingForCode.active) {
+    return client.childAccessCredential.update({
+      where: { id: existingForCode.id },
+      data: {
+        familyId,
+        childId,
+        codeHash,
+        active,
+      },
+    });
+  }
+
+  if (existingForCode && existingForCode.familyId === familyId && existingForCode.childId === childId) {
+    return client.childAccessCredential.update({
+      where: { id: existingForCode.id },
+      data: { codeHash, active },
+    });
+  }
+
+  return client.childAccessCredential.create({
+    data: {
+      familyId,
+      childId,
+      codeLookupHash,
+      codeHash,
+      active,
+    },
+  });
+};
+
+const deactivateChildAccessCredential = (client, familyId, childId) =>
+  client.childAccessCredential.updateMany({
+    where: { familyId, childId, active: true },
+    data: { active: false },
+  });
+
+const findChildAccessCredentialByCode = (accessCode) =>
+  prisma.childAccessCredential.findUnique({
+    where: { codeLookupHash: getChildAccessCodeLookupHash(accessCode) },
+  });
+
+const attachOneTimeAccessCode = (child, accessCode = null) =>
+  accessCode ? { ...sanitizeChildForStorage(child), accessCode } : sanitizeChildForStorage(child);
 
 const isSerializableTransactionConflict = (error) =>
   error?.code === 'P2034' || /write conflict|deadlock|could not serialize/i.test(String(error?.message || ''));
@@ -885,6 +1028,61 @@ const runFamilyStateTransaction = async (action) => {
     }
   }
   return null;
+};
+
+const bootstrapChildAccessCredentials = async () => {
+  const states = await prisma.familyState.findMany({
+    select: { id: true, familyId: true, data: true },
+  });
+
+  for (const snapshot of states) {
+    await prisma.$transaction(async (tx) => {
+      const state = await tx.familyState.findUnique({ where: { id: snapshot.id } });
+      if (!state) return;
+      const data = normalizeStateData(state.data);
+      let changed = false;
+
+      for (const child of data.children) {
+        if (!child?.id) continue;
+        if (child.archived) {
+          await deactivateChildAccessCredential(tx, state.familyId, child.id);
+        } else {
+          const activeCredential = await tx.childAccessCredential.findFirst({
+            where: { familyId: state.familyId, childId: child.id, active: true },
+          });
+          if (!activeCredential) {
+            const accessCode = await pickGloballyUniqueChildAccessCode(
+              { preferredCode: child.accessCode || null },
+              tx,
+            );
+            if (!accessCode) {
+              throw new Error(`Brak wolnego kodu dostępu dla dziecka ${child.id}`);
+            }
+            await setChildAccessCredential(tx, {
+              familyId: state.familyId,
+              childId: child.id,
+              accessCode,
+            });
+          }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(child, 'accessCode')) {
+          delete child.accessCode;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await tx.familyState.update({
+          where: { id: state.id },
+          data: {
+            data: cloneStateDataForStorage(data),
+            version: { increment: 1 },
+          },
+        });
+      }
+    });
+  }
 };
 
 const hasChildAccess = (req, childId) =>
@@ -1648,13 +1846,16 @@ const filterStorageValueForUser = (key, data, user) => {
   }
 
   if (user.role !== 'CHILD') {
+    if (key === 'children') {
+      return sanitizeChildrenForStorage(data.children);
+    }
     return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : null;
   }
 
   const childId = user.childId;
   switch (key) {
     case 'children':
-      return data.children.filter((child) => child.id === childId);
+      return data.children.filter((child) => child.id === childId).map((child) => sanitizeChildForStorage(child));
     case 'tasks':
       return data.tasks.filter((task) => task.childId === childId);
     case 'completions':
@@ -1908,6 +2109,13 @@ app.get('/health', async (req, res) => {
   res.json({
     status: db === 'ok' ? 'ok' : 'degraded',
     db,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/livez', (req, res) => {
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
   });
 });
@@ -2259,15 +2467,16 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     let debugToken = null;
 
     if (user && user.active) {
-      for (const [token, info] of passwordResetTokens.entries()) {
-        if (info.userId === user.id) {
-          passwordResetTokens.delete(token);
-        }
-      }
       const token = crypto.randomBytes(24).toString('hex');
-      passwordResetTokens.set(token, {
-        userId: user.id,
-        expiresAt: Date.now() + RESET_TOKEN_TTL_MS,
+      await prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id },
+      });
+      await prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: getPasswordResetTokenHash(token),
+          expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+        },
       });
       debugToken = token;
     }
@@ -2295,21 +2504,31 @@ app.post('/api/auth/reset-password/token', async (req, res) => {
       return;
     }
 
-    const reset = passwordResetTokens.get(parsed.data.token);
-    if (!reset || reset.expiresAt < Date.now()) {
-      if (reset) {
-        passwordResetTokens.delete(parsed.data.token);
-      }
+    const reset = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash: getPasswordResetTokenHash(parsed.data.token) },
+    });
+    if (!reset || reset.usedAt || reset.expiresAt < new Date()) {
       res.status(400).json({ error: 'Token resetu wygasł lub jest nieprawidłowy' });
       return;
     }
 
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_ROUNDS);
-    await prisma.user.update({
-      where: { id: reset.userId },
-      data: { passwordHash },
-    });
-    passwordResetTokens.delete(parsed.data.token);
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: reset.userId },
+        data: { passwordHash },
+      }),
+      prisma.passwordResetToken.update({
+        where: { id: reset.id },
+        data: { usedAt: new Date() },
+      }),
+      prisma.passwordResetToken.deleteMany({
+        where: {
+          userId: reset.userId,
+          id: { not: reset.id },
+        },
+      }),
+    ]);
     res.json({ ok: true });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
@@ -2329,7 +2548,9 @@ app.post('/api/auth/login-child', async (req, res) => {
       return;
     }
 
-    const temporaryBlock = isChildLoginTemporarilyBlocked(req);
+    const accessCode = parsed.data.accessCode;
+    const codeLookupHash = getChildAccessCodeLookupHash(accessCode);
+    const temporaryBlock = getBlockedChildLoginFailure(req, codeLookupHash);
     if (temporaryBlock) {
       const retryAfterSeconds = Math.max(1, Math.ceil((temporaryBlock.resetAt - Date.now()) / 1000));
       res.set('Retry-After', String(retryAfterSeconds));
@@ -2339,52 +2560,40 @@ app.post('/api/auth/login-child', async (req, res) => {
       return;
     }
 
-    const accessCode = parsed.data.accessCode;
-    const states = await prisma.familyState.findMany({
-      select: { familyId: true, data: true },
-    });
-
-    const matches = [];
-    for (const state of states) {
-      const data = normalizeStateData(state.data);
-      data.children.forEach((child) => {
-        if (!child.archived && child.accessCode === accessCode) {
-          matches.push({ familyId: state.familyId, child });
-        }
-      });
-    }
-
-    if (matches.length === 0) {
-      recordChildLoginFailure(req);
+    const credential = await findChildAccessCredentialByCode(accessCode);
+    const codeOk = credential?.active ? await bcrypt.compare(accessCode, credential.codeHash) : false;
+    if (!credential || !codeOk) {
+      recordChildLoginFailure(req, codeLookupHash);
       res.status(401).json({ error: 'Nieprawidłowy kod dostępu dziecka' });
       return;
     }
 
-    if (matches.length > 1) {
-      recordChildLoginFailure(req);
-      res.status(409).json({
-        error: 'Kod dostępu nie jest unikalny. Poproś rodzica o zmianę kodu dziecka.',
-      });
+    const state = await getOrCreateState(credential.familyId);
+    const data = normalizeStateData(state.data);
+    const child = data.children.find((item) => item.id === credential.childId && !item.archived);
+    if (!child) {
+      await deactivateChildAccessCredential(prisma, credential.familyId, credential.childId);
+      recordChildLoginFailure(req, codeLookupHash);
+      res.status(401).json({ error: 'Nieprawidłowy kod dostępu dziecka' });
       return;
     }
 
-    const match = matches[0];
     const token = signChildToken({
-      familyId: match.familyId,
-      childId: match.child.id,
-      childName: match.child.name,
+      familyId: credential.familyId,
+      childId: child.id,
+      childName: child.name,
     });
     setAuthCookie(req, res, token, { persistent: false });
-    clearChildLoginFailures(req);
+    clearChildLoginFailures(req, codeLookupHash);
 
     res.json({
       token,
       user: {
-        id: `child:${match.child.id}`,
+        id: `child:${child.id}`,
         role: 'CHILD',
-        familyId: match.familyId,
-        childId: match.child.id,
-        childName: match.child.name,
+        familyId: credential.familyId,
+        childId: child.id,
+        childName: child.name,
       },
     });
   } catch (error) {
@@ -2499,7 +2708,7 @@ app.get('/api/children', authMiddleware, async (req, res) => {
       list = list.filter((child) => !child.archived);
     }
 
-    res.json({ children: list });
+    res.json({ children: list.map((child) => sanitizeChildForStorage(child)) });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2539,13 +2748,17 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
         name: parsed.data.name.trim(),
         avatar: parsed.data.avatar.trim(),
         activeDays,
-        accessCode,
         archived: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
       data.children = [...data.children, child];
+      await setChildAccessCredential(tx, {
+        familyId: req.auth.user.familyId,
+        childId: id,
+        accessCode,
+      });
       data.streaks = { ...data.streaks, [id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } };
       data.points = { ...data.points, [id]: 0 };
       data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_CHILD', 'CHILD', id, {
@@ -2554,7 +2767,7 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       });
 
       await saveTxStateData(state, data);
-      return { status: 201, body: { child } };
+      return { status: 201, body: { child: attachOneTimeAccessCode(child, accessCode) } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -2586,6 +2799,7 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
 
       const current = data.children[index];
       const next = { ...current };
+      let oneTimeAccessCode = null;
       if (typeof parsed.data.name === 'string') next.name = parsed.data.name.trim();
       if (typeof parsed.data.avatar === 'string') next.avatar = parsed.data.avatar.trim();
       if (Array.isArray(parsed.data.activeDays)) {
@@ -2607,14 +2821,24 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
         if (!accessCode) {
           return { status: 409, body: { error: 'Kod dostępu dziecka jest zajęty' } };
         }
-        next.accessCode = accessCode;
+        await setChildAccessCredential(tx, {
+          familyId: req.auth.user.familyId,
+          childId,
+          accessCode,
+        });
+        oneTimeAccessCode = accessCode;
       }
       next.updatedAt = new Date().toISOString();
 
       data.children[index] = next;
-      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_CHILD', 'CHILD', childId, parsed.data);
+      const auditDetails = { ...parsed.data };
+      if (Object.prototype.hasOwnProperty.call(auditDetails, 'accessCode')) {
+        auditDetails.accessCodeChanged = true;
+        delete auditDetails.accessCode;
+      }
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_CHILD', 'CHILD', childId, auditDetails);
       await saveTxStateData(state, data);
-      return { status: 200, body: { child: next } };
+      return { status: 200, body: { child: attachOneTimeAccessCode(next, oneTimeAccessCode) } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -2640,6 +2864,7 @@ app.delete('/api/children/:id', authMiddleware, requireParent, async (req, res) 
 
       child.archived = true;
       child.updatedAt = new Date().toISOString();
+      await deactivateChildAccessCredential(tx, req.auth.user.familyId, childId);
       data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_CHILD', 'CHILD', childId);
       await saveTxStateData(state, data);
       return { status: 200, body: { ok: true } };
@@ -4010,14 +4235,14 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
 app.post('/api/storage/merge', authMiddleware, async (req, res) => {
   const values = req.body?.values;
   if (!isObjectRecord(values)) {
-    res.status(400).json({ error: 'Nieprawidlowe dane merge storage' });
+    res.status(400).json({ error: 'Nieprawidłowe dane merge storage' });
     return;
   }
 
   const keys = Object.keys(values);
   for (const key of keys) {
     if (!isValidStorageKey(key)) {
-      res.status(400).json({ error: `Nieprawidlowy klucz storage: ${key}` });
+      res.status(400).json({ error: `Nieprawidłowy klucz storage: ${key}` });
       return;
     }
   }
@@ -4043,7 +4268,7 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
         return;
       }
       console.error('Storage merge error:', error);
-      res.status(500).json({ error: 'Blad zapisu storage merge' });
+      res.status(500).json({ error: 'Błąd zapisu storage merge' });
       return;
     }
   }
@@ -4068,7 +4293,23 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
         return { status: 409, body: { error: 'Brak wolnych kodów dostępu dla dzieci' } };
       }
 
-      nextData.children = normalizedChildren;
+      const childAccessCodes = [];
+      await tx.childAccessCredential.updateMany({
+        where: { familyId: req.auth.user.familyId, active: true },
+        data: { active: false },
+      });
+      for (const child of normalizedChildren) {
+        if (!child.archived && isValidChildAccessCode(child.accessCode)) {
+          await setChildAccessCredential(tx, {
+            familyId: req.auth.user.familyId,
+            childId: child.id,
+            accessCode: child.accessCode,
+          });
+          childAccessCodes.push({ childId: child.id, accessCode: child.accessCode });
+        }
+      }
+
+      nextData.children = sanitizeChildrenForStorage(normalizedChildren);
       const { state } = await loadStateData(req.auth.user.familyId, tx);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, nextData);
@@ -4085,6 +4326,7 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
           },
           points: nextData.points,
           streaks: nextData.streaks,
+          childAccessCodes,
         },
       };
     });
@@ -4131,7 +4373,7 @@ app.use(
 );
 
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/') || req.path === '/health') {
+  if (req.path.startsWith('/api/') || req.path === '/health' || req.path === '/livez') {
     next();
     return;
   }
@@ -4156,9 +4398,17 @@ const gracefulShutdown = async () => {
 };
 
 if (require.main === module) {
-  httpServer = app.listen(PORT, () => {
-    console.log(`FamilyQuest server running on port ${PORT}`);
-  });
+  bootstrapChildAccessCredentials()
+    .then(() => {
+      httpServer = app.listen(PORT, () => {
+        console.log(`FamilyQuest server running on port ${PORT}`);
+      });
+    })
+    .catch(async (error) => {
+      console.error('Startup bootstrap failed:', error);
+      await prisma.$disconnect().catch(() => {});
+      process.exit(1);
+    });
 
   process.on('SIGINT', gracefulShutdown);
   process.on('SIGTERM', gracefulShutdown);

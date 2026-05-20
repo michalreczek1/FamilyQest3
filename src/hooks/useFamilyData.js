@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import { CHILD_SESSION_KEY } from '../constants.js';
 import { apiRequest, clearLegacyAuthToken } from '../lib/api.js';
-import { findAvailableChildAccessCode, isValidChildAccessCode } from '../lib/tasks.js';
 
 const defaultFamilyGoal = {
   title: 'Cel rodzinny',
@@ -21,6 +20,7 @@ export const useFamilyData = ({
   skipAutoSaveUntilRef,
   setUser,
   setChildren,
+  setChildAccessCodes,
   setTasks,
   setCompletions,
   setExtraTasks,
@@ -59,6 +59,7 @@ export const useFamilyData = ({
 }) => {
   const resetFamilyData = useCallback(() => {
     setChildren([]);
+    setChildAccessCodes({});
     setTasks([]);
     setCompletions([]);
     setExtraTasks([]);
@@ -92,6 +93,7 @@ export const useFamilyData = ({
     setPointAdjustmentModal(null);
   }, [
     setChildren,
+    setChildAccessCodes,
     setTasks,
     setCompletions,
     setExtraTasks,
@@ -189,14 +191,7 @@ export const useFamilyData = ({
         storage.get('taskPointGrants'),
       ]);
       const rawChildren = savedChildren || [];
-      const loadedChildren = rawChildren.map(child => ({
-        ...child,
-      }));
-      loadedChildren.forEach(child => {
-        if (!isValidChildAccessCode(child.accessCode)) {
-          child.accessCode = findAvailableChildAccessCode(loadedChildren, null, child.id);
-        }
-      });
+      const loadedChildren = rawChildren.map(child => ({ ...child }));
       setChildren(loadedChildren);
       setTasks(savedTasks || []);
       setCompletions(savedCompletions || []);

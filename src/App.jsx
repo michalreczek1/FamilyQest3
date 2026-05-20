@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CHILD_SESSION_KEY, HISTORY_DAYS } from './constants.js';
-import { apiRequest, clearLegacyAuthToken, useStorage } from './lib/api.js';
+import { apiRequest, clearLegacyAuthToken, createStorageClient } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
 import { isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
 import LoginView from './components/auth/LoginView.jsx';
@@ -13,9 +13,10 @@ import { useFamilyData } from './hooks/useFamilyData.js';
 import { useRewardUnlocks } from './hooks/useRewardUnlocks.js';
 
 const App = () => {
-  const storage = useMemo(() => useStorage(), []);
+  const storage = useMemo(() => createStorageClient(), []);
   const [user, setUser] = useState(null);
   const [children, setChildren] = useState([]);
+  const [childAccessCodes, setChildAccessCodes] = useState({});
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState([]);
   const [extraTasks, setExtraTasks] = useState([]);
@@ -102,6 +103,7 @@ const App = () => {
     skipAutoSaveUntilRef,
     setUser,
     setChildren,
+    setChildAccessCodes,
     setTasks,
     setCompletions,
     setExtraTasks,
@@ -774,7 +776,7 @@ const App = () => {
   const addChild = async (name, avatar, activeDays) => {
     return runServerMutation(async () => {
       try {
-        await apiRequest('/api/children', {
+        const response = await apiRequest('/api/children', {
           method: 'POST',
           body: {
             name,
@@ -782,6 +784,12 @@ const App = () => {
             activeDays
           }
         });
+        if (response?.child?.id && response.child.accessCode) {
+          setChildAccessCodes(prev => ({
+            ...prev,
+            [response.child.id]: response.child.accessCode
+          }));
+        }
         setShowModal(null);
         await reloadAfterServerMutation();
       } catch (e) {
@@ -854,10 +862,16 @@ const App = () => {
   const updateChild = (childId, updates) => {
     return runServerMutation(async () => {
       try {
-        await apiRequest(`/api/children/${encodeURIComponent(childId)}`, {
+        const response = await apiRequest(`/api/children/${encodeURIComponent(childId)}`, {
           method: 'PUT',
           body: updates
         });
+        if (response?.child?.id && response.child.accessCode) {
+          setChildAccessCodes(prev => ({
+            ...prev,
+            [response.child.id]: response.child.accessCode
+          }));
+        }
         await reloadAfterServerMutation();
       } catch (e) {
         alert(e.message || 'Nie udało się zaktualizować dziecka');
@@ -1036,6 +1050,9 @@ const App = () => {
         backup: parsed
       }
     });
+    if (Array.isArray(result?.childAccessCodes)) {
+      setChildAccessCodes(Object.fromEntries(result.childAccessCodes.map(item => [item.childId, item.accessCode])));
+    }
     await loadData({
       preserveView: true,
       silent: true,
@@ -1140,6 +1157,7 @@ const App = () => {
       parentTaskChildId: parentTaskChildId,
       activeChildren: activeChildren,
       children: children,
+      childAccessCodes: childAccessCodes,
       tasks: tasks,
       streaks: streaks,
       points: points,

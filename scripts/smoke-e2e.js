@@ -3,7 +3,7 @@
 const baseUrl = process.env.SMOKE_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3010}`;
 
 const requestJson = async (path, { method = 'GET', body, token } = {}) => {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }

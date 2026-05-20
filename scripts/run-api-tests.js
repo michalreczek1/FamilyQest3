@@ -28,6 +28,9 @@ const loadEnvFile = () => {
   }
   process.env.DATABASE_URL = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-change-only-if-needed-32chars';
+  process.env.CHILD_CODE_PEPPER =
+    process.env.CHILD_CODE_PEPPER || 'test-child-code-pepper-change-only-if-needed-32chars';
+  process.env.CHILD_JWT_EXPIRES_IN = process.env.CHILD_JWT_EXPIRES_IN || '24h';
   process.env.NODE_ENV = process.env.NODE_ENV || 'test';
   process.env.BCRYPT_ROUNDS = process.env.BCRYPT_ROUNDS || '4';
   process.env.ALLOW_DEBUG_RESET_TOKEN = 'true';

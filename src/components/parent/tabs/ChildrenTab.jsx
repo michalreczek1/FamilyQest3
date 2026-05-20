@@ -9,6 +9,7 @@ const ChildrenTab = ({
   setEditingChild,
   archiveChild,
   addPointAdjustment,
+  childAccessCodes = {},
 }) => {
   return React.createElement(React.Fragment, null, React.createElement("div", {
       className: "header"
@@ -30,6 +31,7 @@ const ChildrenTab = ({
       };
       const childPoints = points[child.id] || 0;
       const childTasks = tasks.filter(t => t.childId === child.id);
+      const visibleAccessCode = childAccessCodes[child.id];
       return React.createElement("div", {
         key: child.id,
         className: "glass-card"
@@ -70,7 +72,7 @@ const ChildrenTab = ({
           textAlign: 'center',
           marginTop: '0.35rem'
         }
-      }, "Kod dziecka: ", React.createElement("strong", null, child.accessCode || '----')), React.createElement("div", {
+      }, visibleAccessCode ? React.createElement(React.Fragment, null, "Nowy kod dziecka: ", React.createElement("strong", null, visibleAccessCode)) : "Kod dziecka: ukryty. Ustaw nowy kod w edycji, jeśli trzeba."), React.createElement("div", {
         className: "child-admin-actions"
       }, React.createElement("button", {
         className: "btn btn-secondary",

@@ -4,7 +4,11 @@
 
 body {
   font-family: 'Fredoka', sans-serif;
-  background-image: url('/t%C5%82o/tlo.jpg');
+  background-image: image-set(
+    url('/t%C5%82o/tlo.avif') type('image/avif'),
+    url('/t%C5%82o/tlo.webp') type('image/webp'),
+    url('/t%C5%82o/tlo.jpg') type('image/jpeg')
+  );
   background-size: cover;
   background-position: center bottom;
   background-repeat: no-repeat;

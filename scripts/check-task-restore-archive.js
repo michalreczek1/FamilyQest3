@@ -4,6 +4,7 @@ const http = require('http');
 const path = require('path');
 const request = require('supertest');
 const { chromium } = require('playwright');
+require('./test-env');
 const { app, __test, prisma } = require('../server');
 
 const rootDir = path.join(__dirname, '..', 'dist');

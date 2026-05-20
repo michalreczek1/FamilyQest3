@@ -1,4 +1,5 @@
 const assert = require('assert');
+require('./test-env');
 const { __test, prisma } = require('../server');
 
 const createFakeFamilyStateClient = () => {
