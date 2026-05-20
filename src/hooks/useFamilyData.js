@@ -55,6 +55,7 @@ export const useFamilyData = ({
   setShowChildRewards,
   setShowPointHistory,
   setPointAdjustmentModal,
+  setConnectionError,
 }) => {
   const resetFamilyData = useCallback(() => {
     setChildren([]);
@@ -135,6 +136,7 @@ export const useFamilyData = ({
     }
     try {
       const session = await apiRequest('/api/auth/me');
+      setConnectionError('');
       if (session.user?.role === 'CHILD' && sessionStorage.getItem(CHILD_SESSION_KEY) !== '1') {
         try {
           await apiRequest('/api/auth/logout', {
@@ -161,7 +163,6 @@ export const useFamilyData = ({
         savedCompletions,
         savedExtraTasks,
         savedPointAdjustments,
-        savedPointLedger,
         savedRewards,
         savedStreaks,
         savedPoints,
@@ -177,7 +178,6 @@ export const useFamilyData = ({
         storage.get('completions'),
         storage.get('extraTasks'),
         storage.get('pointAdjustments'),
-        storage.get('pointLedger'),
         storage.get('rewards'),
         storage.get('streaks'),
         storage.get('points'),
@@ -202,7 +202,7 @@ export const useFamilyData = ({
       setCompletions(savedCompletions || []);
       setExtraTasks(savedExtraTasks || []);
       setPointAdjustments(savedPointAdjustments || []);
-      setPointLedger(savedPointLedger || []);
+      setPointLedger([]);
       setRewards(savedRewards || []);
       setStreaks(savedStreaks || {});
       setPoints(savedPoints || {});
@@ -267,6 +267,9 @@ export const useFamilyData = ({
     } catch (e) {
       console.error('Load data error:', e);
       if (silent) return;
+      setConnectionError(e?.isNetworkError
+        ? e.message
+        : 'Nie udało się załadować danych aplikacji. Spróbuj odświeżyć za chwilę.');
       clearLegacyAuthToken();
       setUser(null);
       resetFamilyData();
@@ -305,6 +308,7 @@ export const useFamilyData = ({
     setHasLoadedSnapshot,
     setView,
     setSelectedChild,
+    setConnectionError,
   ]);
 
   return {

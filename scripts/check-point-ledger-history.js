@@ -139,6 +139,30 @@ const makeState = () => ({
 
 const storageValues = makeState();
 __test.recomputePointsAndGrants(storageValues);
+const compareLedgerEntriesDescending = (a, b) => {
+  const timeDiff = Date.parse(b.occurredAt || 0) - Date.parse(a.occurredAt || 0);
+  if (timeDiff !== 0) return timeDiff;
+  return String(b.id || '').localeCompare(String(a.id || ''));
+};
+const uiPointLedgerEntries = [
+  ...storageValues.pointLedger,
+  ...Array.from({ length: 21 }, (_, index) => {
+    const date = new Date('2024-04-20T09:00:00.000Z');
+    date.setDate(date.getDate() - index);
+    const dateText = date.toISOString().slice(0, 10);
+    return {
+      id: `older-ledger-${index + 1}`,
+      childId: child.id,
+      type: 'BONUS',
+      title: `Starszy wpis ${index + 1}`,
+      note: `Starszy wpis ${index + 1}`,
+      delta: 1,
+      newPoints: Math.max(0, storageValues.points[child.id] - index - 1),
+      date: dateText,
+      occurredAt: `${dateText}T09:00:00.000Z`,
+    };
+  }),
+].sort(compareLedgerEntriesDescending);
 
 const runLogicCheck = () => {
   assert.strictEqual(storageValues.points[child.id], 12);
@@ -245,6 +269,24 @@ const runUiCheck = async () => {
       return;
     }
 
+    if (apiPath === '/api/point-ledger') {
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 20)));
+      const cursor = Math.max(0, Number(url.searchParams.get('cursor') || 0));
+      const entries = uiPointLedgerEntries.slice(cursor, cursor + limit);
+      const nextCursor = cursor + entries.length < uiPointLedgerEntries.length ? cursor + entries.length : null;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          childId: child.id,
+          entries,
+          nextCursor,
+          limit,
+          total: uiPointLedgerEntries.length,
+        }),
+      });
+      return;
+    }
+
     const storageMatch = apiPath.match(/^\/api\/storage\/get\/([^/]+)$/);
     if (storageMatch) {
       const key = decodeURIComponent(storageMatch[1]);
@@ -274,6 +316,10 @@ const runUiCheck = async () => {
   await historyDialog.getByText('Poranne zadanie').waitFor({ state: 'visible', timeout: 10000 });
   await historyDialog.getByText('Zaliczony dzień').waitFor({ state: 'visible', timeout: 10000 });
   await historyDialog.getByText('Premia za wytrwałość').waitFor({ state: 'visible', timeout: 10000 });
+  const olderButton = historyDialog.getByRole('button', { name: 'Pokaż starsze wpisy' });
+  await olderButton.waitFor({ state: 'visible', timeout: 10000 });
+  await olderButton.click();
+  await historyDialog.getByText('Starszy wpis 21').waitFor({ state: 'visible', timeout: 10000 });
   await page.screenshot({ path: 'tmp/point-ledger-history-check.png', fullPage: true });
 
   await page.setViewportSize({ width: 390, height: 844 });

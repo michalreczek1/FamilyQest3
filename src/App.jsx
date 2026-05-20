@@ -6,6 +6,7 @@ import { isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js
 import LoginView from './components/auth/LoginView.jsx';
 import ChildSelectionView from './components/auth/ChildSelectionView.jsx';
 import ChildView from './components/child/ChildView.jsx';
+import ErrorBoundary from './components/common/ErrorBoundary.jsx';
 import ParentPanel from './components/parent/ParentPanel.jsx';
 import { useAutosave } from './hooks/useAutosave.js';
 import { useFamilyData } from './hooks/useFamilyData.js';
@@ -41,6 +42,7 @@ const App = () => {
   const [taskPointGrants, setTaskPointGrants] = useState({});
   const [parentUsers, setParentUsers] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [connectionError, setConnectionError] = useState(() => navigator.onLine ? '' : 'Brak połączenia z serwerem domowym. Sprawdź Wi-Fi i spróbuj ponownie.');
   const [syncing, setSyncing] = useState(false);
   const [showRewardOverlay, setShowRewardOverlay] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -134,10 +136,17 @@ const App = () => {
     setShowChildRewards,
     setShowPointHistory,
     setPointAdjustmentModal,
+    setConnectionError,
   });
   useEffect(() => {
-    const goOnline = () => setIsOnline(true);
-    const goOffline = () => setIsOnline(false);
+    const goOnline = () => {
+      setIsOnline(true);
+      setConnectionError('');
+    };
+    const goOffline = () => {
+      setIsOnline(false);
+      setConnectionError('Brak połączenia z serwerem domowym. Sprawdź Wi-Fi i spróbuj ponownie.');
+    };
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
     return () => {
@@ -1047,7 +1056,8 @@ const App = () => {
       onRegister: handleRegister,
       onChildLogin: handleChildLogin,
       onForgotPassword: handleForgotPassword,
-      onResetPassword: handleResetPasswordByToken
+      onResetPassword: handleResetPasswordByToken,
+      connectionError: connectionError
     });
   }
   if (view === 'childSelect') {
@@ -1068,7 +1078,15 @@ const App = () => {
     });
   }
   if (view === 'child' && selectedChild) {
-    return React.createElement(ChildView, {
+    return React.createElement(ErrorBoundary, {
+      title: "Widok dziecka wymaga odświeżenia",
+      message: "Coś poszło nie tak podczas renderowania panelu dziecka.",
+      onReset: () => loadData({
+        preserveView: true,
+        skipNextAutoSave: true
+      }),
+      onLogout: handleLogout
+    }, React.createElement(ChildView, {
       selectedChild: selectedChild,
       user: user,
       tasks: tasks,
@@ -1076,7 +1094,6 @@ const App = () => {
       extraTasks: extraTasks,
       streaks: streaks,
       points: points,
-      pointLedger: pointLedger,
       rewardUnlocks: rewardUnlocks,
       rewards: rewards,
       familyLeaderboard: familyLeaderboard,
@@ -1102,10 +1119,18 @@ const App = () => {
       resubmitExtraTask: resubmitExtraTask,
       setRewardUnlocks: setRewardUnlocks,
       setShowRewardOverlay: setShowRewardOverlay
-    });
+    }));
   }
   if (view === 'parent') {
-    return React.createElement(ParentPanel, {
+    return React.createElement(ErrorBoundary, {
+      title: "Panel rodzica wymaga odświeżenia",
+      message: "Coś poszło nie tak podczas renderowania panelu rodzica.",
+      onReset: () => loadData({
+        preserveView: true,
+        skipNextAutoSave: true
+      }),
+      onLogout: handleLogout
+    }, React.createElement(ParentPanel, {
       completions: completions,
       extraTasks: extraTasks,
       rewards: rewards,
@@ -1177,7 +1202,7 @@ const App = () => {
       addReward: addReward,
       updateReward: updateReward,
       savePointAdjustment: savePointAdjustment
-    });
+    }));
   }
   return null;
 };

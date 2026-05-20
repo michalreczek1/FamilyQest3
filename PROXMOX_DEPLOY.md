@@ -79,6 +79,36 @@ Parametry domyslne:
 
 Ręczny deploy przez `git pull` w CT 103 zostaje tylko procedura awaryjna. Jesli trzeba go wykonac recznie, zachowaj ten sam porzadek: snapshot, backup, pull/reset, install, build, restart, healthcheck.
 
+## Backup I Logi Produkcyjne
+
+Po wdrozeniu host Proxmox powinien miec niezalezny backup PostgreSQL poza kontenerami oraz limity journald dla `familyquest.service` w CT 103. Instalator:
+
+```powershell
+# Dry-run i podglad obecnej konfiguracji
+powershell -ExecutionPolicy Bypass -File scripts/install-proxmox-hardening.ps1
+
+# Instalacja timera backupu i limitow logow
+powershell -ExecutionPolicy Bypass -File scripts/install-proxmox-hardening.ps1 -Apply
+```
+
+Domyslnie skrypt tworzy:
+
+- `/usr/local/sbin/familyquest-pg-backup.sh` na hoscie Proxmox,
+- `familyquest-postgres-backup.service` i `familyquest-postgres-backup.timer`,
+- backupi w `/var/backups/familyquest-postgres`, z retencja 30 dni,
+- log backupu w `/var/log/familyquest/postgres-backup.log`,
+- limity journald i rate-limit logow uslugi w CT 103.
+
+Weryfikacja po instalacji:
+
+```bash
+systemctl list-timers 'familyquest*' --no-pager
+systemctl start familyquest-postgres-backup.service
+tail -n 20 /var/log/familyquest/postgres-backup.log
+ls -lh /var/backups/familyquest-postgres
+pct exec 103 -- journalctl --disk-usage
+```
+
 ```bash
 ssh proxmox
 SNAP="predeploy-familyquest-$(date +%Y%m%d-%H%M%S)"

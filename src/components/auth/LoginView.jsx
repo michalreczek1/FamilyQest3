@@ -5,7 +5,8 @@ const LoginView = ({
   onRegister,
   onChildLogin,
   onForgotPassword,
-  onResetPassword
+  onResetPassword,
+  connectionError
 }) => {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
@@ -113,7 +114,10 @@ const LoginView = ({
   }, "Dziecko"), React.createElement("button", {
     className: `tab ${mode === 'forgot' ? 'active' : ''}`,
     onClick: () => switchMode('forgot')
-  }, "Reset")), React.createElement("form", {
+  }, "Reset")), connectionError && React.createElement("div", {
+    className: "connection-banner",
+    role: "status"
+  }, connectionError), React.createElement("form", {
     onSubmit: handleSubmit
   }, error && React.createElement("div", {
     className: "error"

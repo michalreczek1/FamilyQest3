@@ -546,6 +546,12 @@ button.hero-metric:hover {
   min-height: 0;
 }
 
+.point-history-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.25rem;
+}
+
 .point-history-entry {
   display: grid;
   grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr);
@@ -594,6 +600,34 @@ button.hero-metric:hover {
   opacity: 0.72;
   margin-top: 0.25rem;
   line-height: 1.25;
+}
+
+.connection-banner {
+  border-radius: 0.8rem;
+  border: 1px solid rgba(249, 112, 102, 0.42);
+  background: rgba(249, 112, 102, 0.14);
+  color: #ffd7d2;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.error-boundary-card {
+  max-width: 620px;
+  margin: 5rem auto;
+}
+
+.error-boundary-card p {
+  opacity: 0.82;
+  margin-top: 0.5rem;
+}
+
+.error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
 }
 
 .reward-history-card {

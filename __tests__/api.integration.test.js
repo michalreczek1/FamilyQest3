@@ -924,6 +924,50 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(
       pointLedgerRes.body.value.filter((entry) => entry.sourceType === 'COMPLETION' && entry.sourceId),
     ).toHaveLength(1);
+
+    const bonusRes = await request(app)
+      .post('/api/point-adjustments')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        childId: child.id,
+        type: 'BONUS',
+        points: 1,
+        note: 'Drugi wpis do paginacji',
+      });
+    expect(bonusRes.status).toBe(201);
+
+    const ledgerPageOneRes = await request(app)
+      .get(`/api/point-ledger?childId=${encodeURIComponent(child.id)}&limit=1&cursor=0`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(ledgerPageOneRes.status).toBe(200);
+    expect(ledgerPageOneRes.body.entries).toHaveLength(1);
+    expect(ledgerPageOneRes.body.nextCursor).toBe(1);
+    expect(ledgerPageOneRes.body.total).toBeGreaterThan(1);
+
+    const ledgerPageTwoRes = await request(app)
+      .get(`/api/point-ledger?childId=${encodeURIComponent(child.id)}&limit=1&cursor=1`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(ledgerPageTwoRes.status).toBe(200);
+    expect(ledgerPageTwoRes.body.entries).toHaveLength(1);
+    expect(ledgerPageTwoRes.body.entries[0].id).not.toBe(ledgerPageOneRes.body.entries[0].id);
+
+    const childrenRes = await request(app)
+      .get('/api/storage/get/children')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(childrenRes.status).toBe(200);
+    const currentChild = childrenRes.body.value.find((item) => item.id === child.id);
+    expect(currentChild?.accessCode).toMatch(/^\d{4}$/);
+
+    const childLoginRes = await request(app).post('/api/auth/login-child').send({
+      accessCode: currentChild.accessCode,
+    });
+    expect(childLoginRes.status).toBe(200);
+    const childLedgerRes = await request(app)
+      .get('/api/point-ledger?limit=2')
+      .set('Authorization', `Bearer ${childLoginRes.body.token}`);
+    expect(childLedgerRes.status).toBe(200);
+    expect(childLedgerRes.body.childId).toBe(child.id);
+    expect(childLedgerRes.body.entries.every((entry) => entry.childId === child.id)).toBe(true);
   });
 
   test('active days without MIN tasks do not count as passed days', async () => {

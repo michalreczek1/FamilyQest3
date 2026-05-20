@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { apiRequest } from '../../lib/api.js';
 import { isTaskScheduledForDate } from '../../lib/tasks.js';
 import ModalOverlay from '../common/ModalOverlay.jsx';
 import WeeklyLeaderboardPanel from '../leaderboard/WeeklyLeaderboardPanel.jsx';
 import RewardOverlay from '../rewards/RewardOverlay.jsx';
+
+const POINT_LEDGER_PAGE_LIMIT = 20;
 
 const ChildView = ({
   selectedChild,
@@ -12,7 +15,6 @@ const ChildView = ({
   extraTasks,
   streaks,
   points,
-  pointLedger,
   rewardUnlocks,
   rewards,
   familyLeaderboard,
@@ -51,7 +53,10 @@ const ChildView = ({
       best: 0
     };
     const childPoints = points[selectedChild.id] || 0;
-    const childPointLedger = pointLedger.filter(entry => entry.childId === selectedChild.id).sort((a, b) => Date.parse(b.occurredAt || 0) - Date.parse(a.occurredAt || 0));
+    const [pointHistoryEntries, setPointHistoryEntries] = useState([]);
+    const [pointHistoryNextCursor, setPointHistoryNextCursor] = useState(null);
+    const [pointHistoryLoading, setPointHistoryLoading] = useState(false);
+    const [pointHistoryError, setPointHistoryError] = useState('');
     const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id && !unlock.revokedAt);
     const childUnlockedRewardIds = new Set(childRewardUnlocks.map(unlock => unlock.rewardId));
     const childEarnedRewards = childRewardUnlocks.map(unlock => ({
@@ -61,6 +66,38 @@ const ChildView = ({
     const nextPointReward = rewards.filter(reward => reward.active !== false && !childUnlockedRewardIds.has(reward.id) && Number(reward.requiredPoints || 0) > childPoints).sort((a, b) => Number(a.requiredPoints || 0) - Number(b.requiredPoints || 0))[0] || null;
     const pointsToNextReward = nextPointReward ? Math.max(0, Number(nextPointReward.requiredPoints || 0) - childPoints) : 0;
     const dayStatus = evaluateDay(selectedChild.id, selectedTaskDate);
+    const loadPointHistoryPage = useCallback(async ({
+      cursor = 0,
+      reset = false
+    } = {}) => {
+      if (!selectedChild?.id) return;
+      setPointHistoryLoading(true);
+      setPointHistoryError('');
+      try {
+        const params = new URLSearchParams({
+          childId: selectedChild.id,
+          limit: String(POINT_LEDGER_PAGE_LIMIT),
+          cursor: String(cursor)
+        });
+        const result = await apiRequest(`/api/point-ledger?${params.toString()}`);
+        const entries = Array.isArray(result?.entries) ? result.entries : [];
+        setPointHistoryEntries(prev => reset ? entries : [...prev, ...entries]);
+        setPointHistoryNextCursor(result?.nextCursor ?? null);
+      } catch (error) {
+        setPointHistoryError(error.message || 'Nie udało się pobrać historii punktów');
+      } finally {
+        setPointHistoryLoading(false);
+      }
+    }, [selectedChild?.id]);
+    useEffect(() => {
+      if (!showPointHistory) return;
+      setPointHistoryEntries([]);
+      setPointHistoryNextCursor(null);
+      loadPointHistoryPage({
+        cursor: 0,
+        reset: true
+      });
+    }, [loadPointHistoryPage, selectedChild?.id, showPointHistory]);
     const last14Days = [];
     for (let i = 0; i < 14; i++) {
       const date = new Date();
@@ -231,9 +268,13 @@ const ChildView = ({
       className: "stat-label"
     }, "aktualnych punkt\xF3w")), React.createElement("div", {
       className: "point-history-list"
-    }, childPointLedger.length === 0 ? React.createElement("div", {
+    }, pointHistoryError && React.createElement("div", {
+      className: "error"
+    }, pointHistoryError), pointHistoryLoading && pointHistoryEntries.length === 0 ? React.createElement("div", {
       className: "empty-state"
-    }, "Nie ma jeszcze historii punkt\xF3w") : childPointLedger.map(entry => {
+    }, "\u0141adowanie historii punkt\xF3w...") : pointHistoryEntries.length === 0 && !pointHistoryError ? React.createElement("div", {
+      className: "empty-state"
+    }, "Nie ma jeszcze historii punkt\xF3w") : pointHistoryEntries.map(entry => {
       const delta = Number(entry.delta || 0);
       const isNegative = delta < 0;
       const when = entry.date || (entry.occurredAt ? entry.occurredAt.slice(0, 10) : '');
@@ -252,7 +293,17 @@ const ChildView = ({
       }, typeLabel, when ? ` • ${when}` : '', Number.isFinite(Number(entry.newPoints)) ? ` • saldo: ${entry.newPoints}` : ''), entry.note && entry.note !== entry.title && React.createElement("div", {
         className: "point-history-note"
       }, entry.note)));
-    })))), showChildRewards && React.createElement(ModalOverlay, {
+    }), pointHistoryNextCursor !== null && React.createElement("div", {
+      className: "point-history-footer"
+    }, React.createElement("button", {
+      type: "button",
+      className: "btn btn-secondary",
+      disabled: pointHistoryLoading,
+      onClick: () => loadPointHistoryPage({
+        cursor: pointHistoryNextCursor,
+        reset: false
+      })
+    }, pointHistoryLoading ? "\u0141adowanie..." : "Poka\u017C starsze wpisy"))))), showChildRewards && React.createElement(ModalOverlay, {
       className: "modal",
       style: {
         alignItems: 'flex-start',

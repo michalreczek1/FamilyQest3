@@ -32,6 +32,7 @@
     "test:extra-task-resubmit": "node scripts/check-extra-task-resubmit.js",
     "test:reward-history": "node scripts/check-reward-history.js",
     "test:task-edit": "node scripts/check-task-edit-modal.js",
+    "test:hardening-ui": "node scripts/check-hardening-ui.js",
     "test:frontend-source": "node scripts/check-frontend-source.js",
     "test:child-login": "node scripts/check-child-login.js",
     "test:child-actions": "node scripts/check-child-actions-layout.js",

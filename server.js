@@ -411,6 +411,11 @@ const childSchema = z.object({
 });
 
 const updateChildSchema = childSchema.partial();
+const pointLedgerQuerySchema = z.object({
+  childId: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.coerce.number().int().min(0).default(0),
+});
 
 const taskSchema = z.object({
   childId: z.string().min(1),
@@ -2431,6 +2436,53 @@ app.get('/api/leaderboard', authMiddleware, async (req, res) => {
     }
     console.error('Leaderboard error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać tablicy wyników' });
+  }
+});
+
+app.get('/api/point-ledger', authMiddleware, async (req, res) => {
+  try {
+    const parsed = pointLedgerQuerySchema.safeParse(req.query || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Nieprawidłowe parametry historii punktów' });
+      return;
+    }
+
+    const { childId, limit, cursor } = parsed.data;
+    const effectiveChildId = req.auth.user.role === 'CHILD' ? req.auth.user.childId : childId;
+    if (!effectiveChildId) {
+      res.status(400).json({ error: 'Wybierz dziecko dla historii punktów' });
+      return;
+    }
+    if (!hasChildAccess(req, effectiveChildId)) {
+      res.status(403).json({ error: 'Brak dostępu do historii punktów tego dziecka' });
+      return;
+    }
+
+    const { state, data } = await loadStateData(req.auth.user.familyId);
+    if (recomputePointsAndGrantsIfChanged(data)) {
+      await saveStateData(state, data, { skipOnConflict: true });
+    }
+
+    const entries = data.pointLedger
+      .filter((entry) => entry.childId === effectiveChildId)
+      .sort(compareLedgerEventsDescending);
+    const pageEntries = entries.slice(cursor, cursor + limit);
+    const nextCursor = cursor + pageEntries.length < entries.length ? cursor + pageEntries.length : null;
+
+    res.json({
+      childId: effectiveChildId,
+      entries: pageEntries,
+      nextCursor,
+      limit,
+      total: entries.length,
+    });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Point ledger error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać historii punktów' });
   }
 });
 

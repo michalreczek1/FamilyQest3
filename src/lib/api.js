@@ -21,12 +21,20 @@ export const apiRequest = async (path, options = {}) => {
     'Content-Type': 'application/json',
     ...(options.headers || {})
   };
-  const response = await fetch(buildApiUrl(path), {
-    ...options,
-    headers,
-    credentials: 'include',
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
-  });
+  let response = null;
+  try {
+    response = await fetch(buildApiUrl(path), {
+      ...options,
+      headers,
+      credentials: 'include',
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+    });
+  } catch (e) {
+    const error = new Error('Brak połączenia z serwerem domowym. Sprawdź Wi-Fi i spróbuj ponownie.');
+    error.isNetworkError = true;
+    error.cause = e;
+    throw error;
+  }
   let data = null;
   try {
     data = await response.json();
