@@ -696,11 +696,28 @@ const sanitizeChildForStorage = (child) => {
 const sanitizeChildrenForStorage = (children) =>
   (Array.isArray(children) ? children : []).map((child) => sanitizeChildForStorage(child));
 
+const sanitizeAuditLogForStorage = (entry) => {
+  if (!isObjectRecord(entry)) return entry;
+  const details = isObjectRecord(entry.details) ? { ...entry.details } : entry.details;
+  if (isObjectRecord(details) && Object.prototype.hasOwnProperty.call(details, 'accessCode')) {
+    delete details.accessCode;
+    details.accessCodeChanged = true;
+  }
+  return {
+    ...entry,
+    ...(isObjectRecord(details) ? { details } : {}),
+  };
+};
+
+const sanitizeAuditLogsForStorage = (auditLogs) =>
+  (Array.isArray(auditLogs) ? auditLogs : []).map((entry) => sanitizeAuditLogForStorage(entry));
+
 const sanitizeStateDataForStorage = (value) => {
   const data = normalizeStateData(value);
   return {
     ...data,
     children: sanitizeChildrenForStorage(data.children),
+    auditLogs: sanitizeAuditLogsForStorage(data.auditLogs),
   };
 };
 
@@ -1072,11 +1089,16 @@ const bootstrapChildAccessCredentials = async () => {
         }
       }
 
+      const storageData = cloneStateDataForStorage(data);
+      if (JSON.stringify(storageData) !== JSON.stringify(normalizeStateData(state.data))) {
+        changed = true;
+      }
+
       if (changed) {
         await tx.familyState.update({
           where: { id: state.id },
           data: {
-            data: cloneStateDataForStorage(data),
+            data: storageData,
             version: { increment: 1 },
           },
         });
@@ -4423,6 +4445,7 @@ module.exports = {
     reverseApprovalEffects,
     createSaveStateData,
     attachStateDataConflictBase,
+    sanitizeStateDataForStorage,
     FamilyStateConflictError,
     isFamilyStateConflict,
   },

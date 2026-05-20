@@ -6,7 +6,7 @@ process.env.ALLOW_PUBLIC_REGISTRATION = 'true';
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { app, prisma } = require('../server');
+const { app, prisma, __test } = require('../server');
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
@@ -59,6 +59,16 @@ const restoreFamilyState = async (parentToken, state) => {
 
 maybeDescribe('FamilyQuest API integration', () => {
   jest.setTimeout(60000);
+
+  test('storage sanitizer strips child access codes from children and audit logs', () => {
+    const sanitized = __test.sanitizeStateDataForStorage(makeBackupState({
+      children: [{ id: 'child-a', name: 'A', avatar: '⭐', activeDays: [1], accessCode: '1234' }],
+      auditLogs: [{ id: 'audit-a', action: 'UPDATE_CHILD', details: { accessCode: '1234', name: 'A' } }],
+    }));
+    expect(sanitized.children[0]).not.toHaveProperty('accessCode');
+    expect(sanitized.auditLogs[0].details).not.toHaveProperty('accessCode');
+    expect(sanitized.auditLogs[0].details.accessCodeChanged).toBe(true);
+  });
 
   afterAll(async () => {
     await prisma.$disconnect();
