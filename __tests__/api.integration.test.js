@@ -69,6 +69,7 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(registerRes.status).toBe(201);
     expect(registerRes.body.token).toBeTruthy();
     expect(registerRes.body.user.email).toBe(parentPayload.email);
+    expect(registerRes.body.user).not.toHaveProperty('pinCode');
 
     const parentToken = registerRes.body.token;
 
@@ -477,6 +478,135 @@ maybeDescribe('FamilyQuest API integration', () => {
     });
     expect(loginAfterResetRes.status).toBe(200);
     expect(loginAfterResetRes.body.token).toBeTruthy();
+    expect(loginAfterResetRes.body.user).not.toHaveProperty('pinCode');
+  });
+
+  test('child access codes are globally unique and protected from storage snapshots', async () => {
+    const suffix = `global-code-${Date.now()}`;
+    const firstParentPayload = createParentPayload(`${suffix}-first`);
+    const firstRegisterRes = await request(app).post('/api/auth/register').send(firstParentPayload);
+    expect(firstRegisterRes.status).toBe(201);
+    expect(firstRegisterRes.body.user).not.toHaveProperty('pinCode');
+    const firstParentToken = firstRegisterRes.body.token;
+
+    const firstMeRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${firstParentToken}`);
+    expect(firstMeRes.status).toBe(200);
+    expect(firstMeRes.body.user).not.toHaveProperty('pinCode');
+
+    const firstChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${firstParentToken}`)
+      .send({
+        name: `Pierwsze-${suffix}`,
+        avatar: '🦊',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(firstChildRes.status).toBe(201);
+    const takenCode = firstChildRes.body.child.accessCode;
+    expect(takenCode).toMatch(/^\d{4}$/);
+
+    const secondParentToken = await registerParent(`${suffix}-second`);
+
+    const conflictingCreateRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({
+        name: `Konflikt-${suffix}`,
+        avatar: '🐼',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+        accessCode: takenCode,
+      });
+    expect(conflictingCreateRes.status).toBe(409);
+
+    const secondChildRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({
+        name: `Drugie-${suffix}`,
+        avatar: '🐸',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(secondChildRes.status).toBe(201);
+    const secondChild = secondChildRes.body.child;
+    expect(secondChild.accessCode).toMatch(/^\d{4}$/);
+    expect(secondChild.accessCode).not.toBe(takenCode);
+
+    const conflictingUpdateRes = await request(app)
+      .put(`/api/children/${secondChild.id}`)
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({ accessCode: takenCode });
+    expect(conflictingUpdateRes.status).toBe(409);
+
+    const snapshotMergeRes = await request(app)
+      .post('/api/storage/merge')
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({
+        values: {
+          children: [
+            {
+              ...secondChild,
+              name: 'Nadpisane snapshotem',
+              accessCode: takenCode,
+              updatedAt: new Date().toISOString(),
+            },
+            {
+              id: `fake-child-${suffix}`,
+              name: 'Nie powinno powstac',
+              avatar: '🐱',
+              activeDays: [1],
+              accessCode: '9999',
+              archived: false,
+            },
+          ],
+        },
+      });
+    expect(snapshotMergeRes.status).toBe(200);
+
+    const secondChildrenAfterSnapshotRes = await request(app)
+      .get('/api/children')
+      .set('Authorization', `Bearer ${secondParentToken}`);
+    expect(secondChildrenAfterSnapshotRes.status).toBe(200);
+    expect(secondChildrenAfterSnapshotRes.body.children).toHaveLength(1);
+    expect(secondChildrenAfterSnapshotRes.body.children[0].name).toBe(secondChild.name);
+    expect(secondChildrenAfterSnapshotRes.body.children[0].accessCode).toBe(secondChild.accessCode);
+
+    const restoreRes = await request(app)
+      .post('/api/storage/restore-backup')
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({
+        backup: makeBackupState({
+          children: [
+            {
+              id: `restore-a-${suffix}`,
+              name: 'Restore A',
+              avatar: '🦁',
+              activeDays: [1, 2, 3, 4, 5, 6, 7],
+              accessCode: takenCode,
+              archived: false,
+            },
+            {
+              id: `restore-b-${suffix}`,
+              name: 'Restore B',
+              avatar: '🐯',
+              activeDays: [1, 2, 3, 4, 5, 6, 7],
+              accessCode: secondChild.accessCode,
+              archived: false,
+            },
+          ],
+        }),
+      });
+    expect(restoreRes.status).toBe(200);
+
+    const restoredChildrenRes = await request(app)
+      .get('/api/children')
+      .set('Authorization', `Bearer ${secondParentToken}`);
+    expect(restoredChildrenRes.status).toBe(200);
+    const restoredCodes = restoredChildrenRes.body.children.map((child) => child.accessCode);
+    expect(restoredChildrenRes.body.children).toHaveLength(2);
+    expect(restoredCodes).not.toContain(takenCode);
+    expect(new Set(restoredCodes).size).toBe(restoredCodes.length);
   });
 
   test('streak and passed-day points require all MIN tasks approved for the day', async () => {

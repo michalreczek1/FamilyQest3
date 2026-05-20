@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CHILD_SESSION_KEY, HISTORY_DAYS } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, useStorage } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
-import { findAvailableChildAccessCode, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
+import { isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
 import LoginView from './components/auth/LoginView.jsx';
 import ChildSelectionView from './components/auth/ChildSelectionView.jsx';
 import ChildView from './components/child/ChildView.jsx';
@@ -763,39 +763,22 @@ const App = () => {
     localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id), ...newPointAdjustments.map(adjustment => adjustment.id)].slice(-200)));
   }, [view, user?.role, selectedChild?.id, completions, extraTasks, pointAdjustments, tasks]);
   const addChild = async (name, avatar, activeDays) => {
-    const accessCode = findAvailableChildAccessCode(children);
-    if (!accessCode) {
-      alert('Brak wolnych kodów dostępu dla dzieci');
-      return;
-    }
-    const newChild = {
-      id: `child-${Date.now()}`,
-      name,
-      avatar,
-      activeDays,
-      accessCode,
-      archived: false,
-      createdAt: new Date().toISOString()
-    };
-    setChildren([...children, newChild]);
-    setStreaks({
-      ...streaks,
-      [newChild.id]: {
-        current: 0,
-        best: 0,
-        idealWeeksCount: 0,
-        idealWeeksInRow: 0
+    return runServerMutation(async () => {
+      try {
+        await apiRequest('/api/children', {
+          method: 'POST',
+          body: {
+            name,
+            avatar,
+            activeDays
+          }
+        });
+        setShowModal(null);
+        await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się dodać dziecka');
       }
     });
-    setPoints({
-      ...points,
-      [newChild.id]: 0
-    });
-    addAuditLog('ADD_CHILD', 'CHILD', newChild.id, {
-      name,
-      activeDays
-    });
-    setShowModal(null);
   };
   const addTask = async (childId, title, tier, points, description, daysOfWeek = []) => {
     const targetChildren = childId === 'ALL' ? activeChildren : activeChildren.filter(child => child.id === childId);
@@ -860,16 +843,28 @@ const App = () => {
     });
   };
   const updateChild = (childId, updates) => {
-    setChildren(prev => prev.map(child => child.id === childId ? {
-      ...child,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    } : child));
-    addAuditLog('UPDATE_CHILD', 'CHILD', childId, updates);
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(`/api/children/${encodeURIComponent(childId)}`, {
+          method: 'PUT',
+          body: updates
+        });
+        await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zaktualizować dziecka');
+      }
+    });
   };
   const archiveChild = childId => {
-    updateChild(childId, {
-      archived: true
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(`/api/children/${encodeURIComponent(childId)}`, {
+          method: 'DELETE'
+        });
+        await reloadAfterServerMutation();
+      } catch (e) {
+        alert(e.message || 'Nie udało się zarchiwizować dziecka');
+      }
     });
   };
   const updateTask = async (taskId, updates) => {

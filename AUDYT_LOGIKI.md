@@ -50,6 +50,8 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 - Po mutacjach serwerowych reload danych uzywa `skipNextAutoSave`, zeby klient nie zapisywal natychmiast starego snapshotu po swiezym stanie z backendu.
 - Dodano zbiorcze odrzucanie wnioskow o zatwierdzenie: backend `POST /api/completions/reject-bulk`, frontendowy przycisk `Odrzuc wg filtra` oraz test UI/API. To przyspiesza czyszczenie wielu wnioskow bez klikania ich po kolei przez kolejke.
 - Dodano stabilny skrypt wdrozenia `scripts/deploy-proxmox.ps1`, ktory automatyzuje snapshot, backup, deploy w CT 103, build Vite, restart uslugi, health/CSP check i produkcyjne testy Playwright.
+- Utwardzono logowanie dzieci: 4-cyfrowe kody pozostaja w UX, ale backend pilnuje globalnej unikalnosci aktywnych kodow miedzy rodzinami, a zwykly `storage/merge` nie moze juz tworzyc dzieci ani nadpisywac `accessCode`.
+- Publiczne odpowiedzi auth nie zwracaja juz `pinCode`; zapis PIN-u, jesli jest uzyty przez kompatybilny endpoint, trafia do bazy jako hash bcrypt.
 
 ## Weryfikacja Wykonana
 
@@ -93,33 +95,22 @@ Naprawiony i wdrozony zostal krytyczny pakiet logiki punktow i rankingu:
 
 Po wdrozeniu rankingu, passy, ledgeru, wersjonowania i kolejki akcji rodzica nie ma juz otwartego krytycznego bledu w samym liczeniu punktow ani porzadku tablicy wynikow. Zostaly ryzyka drugiego poziomu i dlug techniczny:
 
-1. Kody dzieci moga kolidowac globalnie miedzy rodzinami.
-2. Szybkie akcje rodzica sa bezpieczne, ale pojedyncze klikniecia nadal ida przez kolejke. Bulk odrzucanie juz istnieje, a do rozważenia zostaje lepszy UX kolejki i ewentualne bulk cofanie.
-3. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
-4. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
-5. Deploy na Proxmox ma juz stabilny skrypt, ale warto uzywac go przez kilka kolejnych wdrozen i dopiero wtedy usunac z dokumentacji reczna procedure jako glowne zrodlo.
+1. Szybkie akcje rodzica sa bezpieczne, ale pojedyncze klikniecia nadal ida przez kolejke. Bulk odrzucanie juz istnieje, a do rozważenia zostaje lepszy UX kolejki i ewentualne bulk cofanie.
+2. Warto ewentualnie dopracowac filtrowanie historii nagrod w panelu rodzica, jesli lista urosnie przy dluzszym uzywaniu aplikacji.
+3. `src/App.jsx` nadal ma okolo 1200 linii i powinien dalej schodzic do roli `router + wiring`.
+4. Deploy na Proxmox ma juz stabilny skrypt, ale warto uzywac go przez kilka kolejnych wdrozen i dopiero wtedy usunac z dokumentacji reczna procedure jako glowne zrodlo.
 
 ## Rekomendowany Nastepny Pakiet
 
 Najbardziej sensowny kolejny pakiet zalezy od celu:
 
 - jesli priorytetem jest codzienny komfort uzywania: **UX kolejki zapisow i bulk odrzucanie/cofanie**;
-- jesli priorytetem jest domkniecie audytu logicznego przed druga rodzina: **globalne kolizje kodow dzieci**;
+- jesli priorytetem jest dalsze domkniecie audytu technicznego: **odchudzanie `src/App.jsx` i wydzielanie kolejnych hookow/komponentow**;
 - jesli priorytetem jest stabilnosc operacyjna: **uzywanie i dopracowanie skryptu deployu Proxmox**.
 
 Domyslna rekomendacja po ostatnim bledzie konfliktow: bulk odrzucanie, skrypt deployu i czysty lint sa wdrozone, wiec nastepny najbardziej praktyczny pakiet to dalsze odchudzanie `src/App.jsx`.
 
-Dlaczego globalne kody nadal sa wazne:
-
-- Testy API dla dat, harmonogramu, `WEEKLY` i `NO_REQUIRED_TASKS` sa juz wdrozone.
-- Polityka nagrod po spadku punktow jest juz wdrozona.
-- Globalne kody dzieci sa ostatnim istotnym ryzykiem logicznym, ktore moze wyjsc dopiero przy drugiej rodzinie.
-
-Minimalny zakres wdrozenia:
-
-1. Zmienic logowanie dziecka tak, by nie opieralo sie wylacznie na globalnym 4-cyfrowym kodzie.
-2. Dodac kod rodziny albo dluzszy globalnie unikalny kod dziecka.
-3. Dodac test API dla dwoch rodzin z tym samym kodem dziecka.
+Globalne kolizje kodow dzieci zostaly zamkniete bez zmiany UX: backend wymusza unikalnosc aktywnych 4-cyfrowych kodow miedzy rodzinami, a test API pokrywa konflikt dwoch rodzin.
 
 ## Najwazniejsze Otwarte Decyzje
 
@@ -187,18 +178,18 @@ Priorytet: zrealizowane, retry/test DB P3.
 
 ### 5. Globalne Kolizje Kodow Dzieci
 
-Status: otwarte, celowo odlozone na koniec.
+Status: wdrozone.
 
-Kody dzieci sa unikalne tylko w rodzinie, ale logowanie dziecka szuka kodu globalnie po wszystkich rodzinach. Dwie rodziny z tym samym kodem dziecka wywoluja konflikt.
+Kody dzieci pozostaja 4-cyfrowe w UI, ale backend pilnuje ich globalnej unikalnosci dla aktywnych dzieci. Proba ustawienia kodu uzywanego przez inna rodzine zwraca `409`, a automatyczne generowanie wybiera pierwszy wolny kod z puli `0000-9999`.
 
-Co zrobic dalej:
+Wazne zabezpieczenia:
 
-1. Dodac drugi skladnik logowania dziecka: kod rodziny + kod dziecka.
-2. Alternatywnie generowac globalnie unikalne dluzsze kody.
-3. Zmienic UI logowania dziecka i endpoint `/api/auth/login-child`.
-4. Dodac test na dwie rodziny z tym samym kodem dziecka.
+1. `POST /api/children` i `PUT /api/children/:id` sprawdzaja kod wzgledem wszystkich rodzin.
+2. `storage/merge` nie moze tworzyc dzieci ani nadpisywac `accessCode`; zwykle mutacje dzieci ida przez dedykowane API.
+3. Restore backupu normalizuje kody wzgledem globalnej puli i zmienia konfliktowe kody na wolne.
+4. Publiczne odpowiedzi auth nie zwracaja `pinCode`.
 
-Priorytet: P2.
+Priorytet: zrealizowane.
 
 ### 6. Archiwizacja Zadan
 

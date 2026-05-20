@@ -22,6 +22,7 @@ async function main() {
   }
 
   const passwordHash = await bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS || 12));
+  const pinCodeHash = pinCode ? await bcrypt.hash(pinCode, Number(process.env.BCRYPT_ROUNDS || 12)) : null;
 
   await prisma.$transaction(async (tx) => {
     const family = await tx.family.create({
@@ -32,7 +33,7 @@ async function main() {
       data: {
         email,
         passwordHash,
-        pinCode,
+        pinCode: pinCodeHash,
         familyId: family.id,
       },
     });

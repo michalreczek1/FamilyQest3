@@ -11,7 +11,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { z } = require('zod');
-const { PrismaClient } = require('@prisma/client');
+const { Prisma, PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -213,7 +213,6 @@ const toPublicUser = (user) => ({
   id: user.id,
   email: user.email,
   role: user.role,
-  pinCode: user.pinCode,
   familyId: user.familyId,
 });
 
@@ -287,7 +286,6 @@ const authMiddleware = async (req, res, next) => {
           id: payload.sub,
           email: null,
           role: 'CHILD',
-          pinCode: null,
           familyId: payload.familyId,
           active: true,
           childId: payload.childId,
@@ -304,7 +302,6 @@ const authMiddleware = async (req, res, next) => {
         id: true,
         email: true,
         role: true,
-        pinCode: true,
         familyId: true,
         active: true,
       },
@@ -334,12 +331,12 @@ const requireParent = (req, res, next) => {
   next();
 };
 
-const getOrCreateState = async (familyId) => {
-  const existing = await prisma.familyState.findUnique({ where: { familyId } });
+const getOrCreateState = async (familyId, client = prisma) => {
+  const existing = await client.familyState.findUnique({ where: { familyId } });
   if (existing) {
     return existing;
   }
-  return prisma.familyState.create({
+  return client.familyState.create({
     data: {
       familyId,
       data: DEFAULT_FAMILY_STATE,
@@ -662,8 +659,8 @@ const isCompatibleFamilyStateConflict = (baseData, latestData) =>
   JSON.stringify(getConflictComparableStateData(baseData)) ===
   JSON.stringify(getConflictComparableStateData(latestData));
 
-const loadStateData = async (familyId) => {
-  const state = await getOrCreateState(familyId);
+const loadStateData = async (familyId, client = prisma) => {
+  const state = await getOrCreateState(familyId, client);
   const data = normalizeStateData(state.data);
   attachStateDataConflictBase(state, data);
   attachStateDataConflictBase(data, data);
@@ -777,6 +774,111 @@ const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChil
     }
   }
 
+  return null;
+};
+
+const isValidChildAccessCode = (value) => typeof value === 'string' && /^\d{4}$/.test(value);
+
+const collectActiveChildAccessCodes = (states, options = {}) => {
+  const { excludeFamilyId = null, excludeChildId = null } = options;
+  const usedCodes = new Set();
+
+  states.forEach((state) => {
+    const data = normalizeStateData(state.data);
+    data.children.forEach((child) => {
+      if (child.archived || !isValidChildAccessCode(child.accessCode)) return;
+      if (state.familyId === excludeFamilyId && child.id === excludeChildId) return;
+      usedCodes.add(child.accessCode);
+    });
+  });
+
+  return usedCodes;
+};
+
+const getGloballyUsedChildAccessCodes = async (options = {}, client = prisma) => {
+  const states = await client.familyState.findMany({
+    select: { familyId: true, data: true },
+  });
+  return collectActiveChildAccessCodes(states, options);
+};
+
+const pickGloballyUniqueChildAccessCode = async (options = {}, client = prisma) => {
+  const { preferredCode = null, excludeFamilyId = null, excludeChildId = null, reservedCodes = new Set() } = options;
+  const usedCodes = await getGloballyUsedChildAccessCodes({ excludeFamilyId, excludeChildId }, client);
+  reservedCodes.forEach((code) => {
+    if (isValidChildAccessCode(code)) usedCodes.add(code);
+  });
+
+  if (isValidChildAccessCode(preferredCode) && !usedCodes.has(preferredCode)) {
+    return preferredCode;
+  }
+
+  if (isValidChildAccessCode(preferredCode)) {
+    return null;
+  }
+
+  for (let i = 0; i < 10000; i += 1) {
+    const code = String(i).padStart(4, '0');
+    if (!usedCodes.has(code)) {
+      return code;
+    }
+  }
+
+  return null;
+};
+
+const normalizeChildrenAccessCodesGlobally = async (children, options = {}, client = prisma) => {
+  const { familyId } = options;
+  const usedCodes = await getGloballyUsedChildAccessCodes({ excludeFamilyId: familyId }, client);
+  const normalized = [];
+
+  for (const child of children) {
+    if (child.archived) {
+      normalized.push(child);
+      continue;
+    }
+
+    let accessCode = isValidChildAccessCode(child.accessCode) && !usedCodes.has(child.accessCode)
+      ? child.accessCode
+      : null;
+
+    if (!accessCode) {
+      for (let i = 0; i < 10000; i += 1) {
+        const candidate = String(i).padStart(4, '0');
+        if (!usedCodes.has(candidate)) {
+          accessCode = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!accessCode) {
+      return null;
+    }
+
+    usedCodes.add(accessCode);
+    normalized.push({ ...child, accessCode });
+  }
+
+  return normalized;
+};
+
+const isSerializableTransactionConflict = (error) =>
+  error?.code === 'P2034' || /write conflict|deadlock|could not serialize/i.test(String(error?.message || ''));
+
+const runFamilyStateTransaction = async (action) => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(action, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (attempt < 2 && isSerializableTransactionConflict(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
   return null;
 };
 
@@ -1697,7 +1799,7 @@ const mergeAuditLogs = (existing, incoming) =>
 const mergeParentStorageValues = (data, values) => {
   const nextData = { ...data, ...values };
   if (Object.prototype.hasOwnProperty.call(values, 'children')) {
-    nextData.children = mergeArrayRecordsById(data.children, values.children);
+    nextData.children = data.children;
   }
   if (Object.prototype.hasOwnProperty.call(values, 'tasks')) {
     nextData.tasks = mergeArrayRecordsById(data.tasks, values.tasks);
@@ -1829,6 +1931,7 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const pinCodeHash = pinCode ? await bcrypt.hash(pinCode, BCRYPT_ROUNDS) : null;
 
     const created = await prisma.$transaction(async (tx) => {
       const family = await tx.family.create({
@@ -1841,7 +1944,7 @@ app.post('/api/auth/register', async (req, res) => {
         data: {
           email,
           passwordHash,
-          pinCode,
+          pinCode: pinCodeHash,
           familyId: family.id,
         },
       });
@@ -1931,11 +2034,11 @@ app.put('/api/auth/pin', authMiddleware, async (req, res) => {
       res.status(400).json({ error: 'PIN musi mieć dokładnie 4 cyfry' });
       return;
     }
-    const pinCode = parsed.data.pinCode;
+    const pinCodeHash = await bcrypt.hash(parsed.data.pinCode, BCRYPT_ROUNDS);
 
     const user = await prisma.user.update({
       where: { id: req.auth.user.id },
-      data: { pinCode },
+      data: { pinCode: pinCodeHash },
     });
     res.json({ user: toPublicUser(user) });
   } catch (error) {
@@ -2019,6 +2122,7 @@ app.post('/api/auth/parents', authMiddleware, requireParent, async (req, res) =>
 
     const email = parsed.data.email.trim().toLowerCase();
     const passwordHash = await bcrypt.hash(parsed.data.password, BCRYPT_ROUNDS);
+    const pinCodeHash = parsed.data.pinCode ? await bcrypt.hash(parsed.data.pinCode, BCRYPT_ROUNDS) : null;
 
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) {
@@ -2030,7 +2134,7 @@ app.post('/api/auth/parents', authMiddleware, requireParent, async (req, res) =>
       data: {
         email,
         passwordHash,
-        pinCode: parsed.data.pinCode || null,
+        pinCode: pinCodeHash,
         familyId: req.auth.user.familyId,
         role: 'PARENT',
         active: false,
@@ -2362,40 +2466,45 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const id = createEntityId('child');
-    const activeDays = normalizeActiveDays(parsed.data.activeDays);
-    if (activeDays.length === 0) {
-      res.status(400).json({ error: 'Dziecko musi mieć co najmniej 1 dzień aktywny' });
-      return;
-    }
-    const accessCode = ensureUniqueChildAccessCode(data.children, parsed.data.accessCode || null);
-    if (!accessCode) {
-      res.status(409).json({ error: 'Nie udało się wygenerować unikalnego kodu dostępu dziecka' });
-      return;
-    }
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      const id = createEntityId('child');
+      const activeDays = normalizeActiveDays(parsed.data.activeDays);
+      if (activeDays.length === 0) {
+        return { status: 400, body: { error: 'Dziecko musi mieć co najmniej 1 dzień aktywny' } };
+      }
+      const accessCode = await pickGloballyUniqueChildAccessCode(
+        { preferredCode: parsed.data.accessCode || null },
+        tx,
+      );
+      if (!accessCode) {
+        return { status: 409, body: { error: 'Kod dostępu dziecka jest zajęty' } };
+      }
 
-    const child = {
-      id,
-      name: parsed.data.name.trim(),
-      avatar: parsed.data.avatar.trim(),
-      activeDays,
-      accessCode,
-      archived: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+      const child = {
+        id,
+        name: parsed.data.name.trim(),
+        avatar: parsed.data.avatar.trim(),
+        activeDays,
+        accessCode,
+        archived: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
 
-    data.children = [...data.children, child];
-    data.streaks = { ...data.streaks, [id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } };
-    data.points = { ...data.points, [id]: 0 };
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_CHILD', 'CHILD', id, {
-      name: child.name,
-      activeDays: child.activeDays,
+      data.children = [...data.children, child];
+      data.streaks = { ...data.streaks, [id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } };
+      data.points = { ...data.points, [id]: 0 };
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_CHILD', 'CHILD', id, {
+        name: child.name,
+        activeDays: child.activeDays,
+      });
+
+      await saveTxStateData(state, data);
+      return { status: 201, body: { child } };
     });
-
-    await saveStateData(state, data);
-    res.status(201).json({ child });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2415,39 +2524,47 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
     }
 
     const childId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const index = data.children.findIndex((child) => child.id === childId);
-    if (index < 0) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
-
-    const current = data.children[index];
-    const next = { ...current };
-    if (typeof parsed.data.name === 'string') next.name = parsed.data.name.trim();
-    if (typeof parsed.data.avatar === 'string') next.avatar = parsed.data.avatar.trim();
-    if (Array.isArray(parsed.data.activeDays)) {
-      const normalized = normalizeActiveDays(parsed.data.activeDays);
-      if (normalized.length === 0) {
-        res.status(400).json({ error: 'Dziecko musi mieć co najmniej 1 dzień aktywny' });
-        return;
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      const index = data.children.findIndex((child) => child.id === childId);
+      if (index < 0) {
+        return { status: 404, body: { error: 'Dziecko nie istnieje' } };
       }
-      next.activeDays = normalized;
-    }
-    if (typeof parsed.data.accessCode === 'string') {
-      const accessCode = ensureUniqueChildAccessCode(data.children, parsed.data.accessCode, childId);
-      if (!accessCode) {
-        res.status(409).json({ error: 'Kod dostępu dziecka jest zajęty' });
-        return;
-      }
-      next.accessCode = accessCode;
-    }
-    next.updatedAt = new Date().toISOString();
 
-    data.children[index] = next;
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_CHILD', 'CHILD', childId, parsed.data);
-    await saveStateData(state, data);
-    res.json({ child: next });
+      const current = data.children[index];
+      const next = { ...current };
+      if (typeof parsed.data.name === 'string') next.name = parsed.data.name.trim();
+      if (typeof parsed.data.avatar === 'string') next.avatar = parsed.data.avatar.trim();
+      if (Array.isArray(parsed.data.activeDays)) {
+        const normalized = normalizeActiveDays(parsed.data.activeDays);
+        if (normalized.length === 0) {
+          return { status: 400, body: { error: 'Dziecko musi mieć co najmniej 1 dzień aktywny' } };
+        }
+        next.activeDays = normalized;
+      }
+      if (typeof parsed.data.accessCode === 'string') {
+        const accessCode = await pickGloballyUniqueChildAccessCode(
+          {
+            preferredCode: parsed.data.accessCode,
+            excludeFamilyId: req.auth.user.familyId,
+            excludeChildId: childId,
+          },
+          tx,
+        );
+        if (!accessCode) {
+          return { status: 409, body: { error: 'Kod dostępu dziecka jest zajęty' } };
+        }
+        next.accessCode = accessCode;
+      }
+      next.updatedAt = new Date().toISOString();
+
+      data.children[index] = next;
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_CHILD', 'CHILD', childId, parsed.data);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { child: next } };
+    });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2461,18 +2578,21 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
 app.delete('/api/children/:id', authMiddleware, requireParent, async (req, res) => {
   try {
     const childId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const child = data.children.find((item) => item.id === childId);
-    if (!child) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      const child = data.children.find((item) => item.id === childId);
+      if (!child) {
+        return { status: 404, body: { error: 'Dziecko nie istnieje' } };
+      }
 
-    child.archived = true;
-    child.updatedAt = new Date().toISOString();
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_CHILD', 'CHILD', childId);
-    await saveStateData(state, data);
-    res.json({ ok: true });
+      child.archived = true;
+      child.updatedAt = new Date().toISOString();
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_CHILD', 'CHILD', childId);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true } };
+    });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3879,27 +3999,44 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
 
 app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (req, res) => {
   const backup = Object.prototype.hasOwnProperty.call(req.body || {}, 'backup') ? req.body.backup : req.body;
-  const nextData = normalizeRestoredBackupData(backup, req.auth.user.id);
-  if (!nextData) {
-    res.status(400).json({ error: 'Nieprawidłowy plik backupu' });
-    return;
-  }
 
   try {
-    const { state } = await loadStateData(req.auth.user.familyId);
-    await saveStateData(state, nextData);
-    res.json({
-      ok: true,
-      restored: {
-        children: nextData.children.length,
-        tasks: nextData.tasks.length,
-        completions: nextData.completions.length,
-        extraTasks: nextData.extraTasks.length,
-        rewardUnlocks: nextData.rewardUnlocks.length,
-      },
-      points: nextData.points,
-      streaks: nextData.streaks,
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const nextData = normalizeRestoredBackupData(backup, req.auth.user.id);
+      if (!nextData) {
+        return { status: 400, body: { error: 'Nieprawidłowy plik backupu' } };
+      }
+
+      const normalizedChildren = await normalizeChildrenAccessCodesGlobally(
+        nextData.children,
+        { familyId: req.auth.user.familyId },
+        tx,
+      );
+      if (!normalizedChildren) {
+        return { status: 409, body: { error: 'Brak wolnych kodów dostępu dla dzieci' } };
+      }
+
+      nextData.children = normalizedChildren;
+      const { state } = await loadStateData(req.auth.user.familyId, tx);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, nextData);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          restored: {
+            children: nextData.children.length,
+            tasks: nextData.tasks.length,
+            completions: nextData.completions.length,
+            extraTasks: nextData.extraTasks.length,
+            rewardUnlocks: nextData.rewardUnlocks.length,
+          },
+          points: nextData.points,
+          streaks: nextData.streaks,
+        },
+      };
     });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
