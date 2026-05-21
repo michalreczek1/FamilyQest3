@@ -248,9 +248,25 @@ setInterval(cleanupExpiredPasswordResetTokens, 60 * 1000).unref();
 const isObjectRecord = (value) =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const createJwtId = () => crypto.randomUUID();
+
+const cleanupExpiredRevokedTokens = () =>
+  prisma.revokedToken
+    .deleteMany({
+      where: {
+        expiresAt: { lt: new Date() },
+      },
+    })
+    .catch((error) => {
+      console.warn('Revoked token cleanup failed:', error.message);
+    });
+
+setInterval(cleanupExpiredRevokedTokens, 60 * 1000).unref();
+
 const signAuthToken = (user) =>
   jwt.sign(
     {
+      jti: createJwtId(),
       sub: user.id,
       familyId: user.familyId,
       role: user.role,
@@ -260,15 +276,17 @@ const signAuthToken = (user) =>
     { expiresIn: JWT_EXPIRES_IN },
   );
 
-const signChildToken = ({ familyId, childId, childName }) =>
+const signChildToken = ({ familyId, childId, childName, credentialId }) =>
   jwt.sign(
     {
+      jti: createJwtId(),
       sub: `child:${childId}`,
       familyId,
       role: 'CHILD',
       tokenType: 'CHILD',
       childId,
       childName,
+      credentialId,
     },
     JWT_SECRET,
     { expiresIn: CHILD_JWT_EXPIRES_IN },
@@ -328,6 +346,31 @@ const readBearerToken = (req) => {
   return header.slice('Bearer '.length);
 };
 
+const isTokenRevoked = async (payload) => {
+  if (!payload?.jti) return true;
+  const revoked = await prisma.revokedToken.findUnique({
+    where: { jti: payload.jti },
+    select: { id: true },
+  });
+  return Boolean(revoked);
+};
+
+const revokeJwtPayload = async (payload) => {
+  if (!payload?.jti || !payload?.exp || !payload?.sub || !payload?.tokenType) return;
+  const expiresAt = new Date(payload.exp * 1000);
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt <= new Date()) return;
+  await prisma.revokedToken.upsert({
+    where: { jti: payload.jti },
+    update: { expiresAt },
+    create: {
+      jti: payload.jti,
+      tokenType: String(payload.tokenType),
+      subjectId: String(payload.sub),
+      expiresAt,
+    },
+  });
+};
+
 const authMiddleware = async (req, res, next) => {
   try {
     const token = readBearerToken(req);
@@ -337,13 +380,34 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload.jti || (await isTokenRevoked(payload))) {
+      res.status(401).json({ error: 'Sesja wygasła. Zaloguj się ponownie.' });
+      return;
+    }
+
     if (payload.tokenType === 'CHILD') {
+      if (!payload.credentialId) {
+        res.status(401).json({ error: 'Sesja dziecka jest nieważna' });
+        return;
+      }
+      const credential = await prisma.childAccessCredential.findUnique({
+        where: { id: payload.credentialId },
+        select: { id: true, familyId: true, childId: true, active: true },
+      });
+      if (
+        !credential?.active ||
+        credential.familyId !== payload.familyId ||
+        credential.childId !== payload.childId
+      ) {
+        res.status(401).json({ error: 'Sesja dziecka jest nieważna' });
+        return;
+      }
       const state = await getOrCreateState(payload.familyId);
       const data = isObjectRecord(state.data) ? state.data : {};
       const children = Array.isArray(data.children) ? data.children : [];
       const child = children.find((c) => c.id === payload.childId && !c.archived);
       if (!child) {
-        res.status(401).json({ error: 'Sesja dziecka jest niewazna' });
+        res.status(401).json({ error: 'Sesja dziecka jest nieważna' });
         return;
       }
       req.auth = {
@@ -2116,6 +2180,7 @@ app.use('/api/auth/login', authRateLimit);
 app.use('/api/auth/register', authRateLimit);
 app.use('/api/auth/forgot-password', authRateLimit);
 app.use('/api/auth/reset-password/token', authRateLimit);
+app.use('/api/auth/login-child', authRateLimit);
 
 app.get('/health', async (req, res) => {
   let db = 'ok';
@@ -2257,9 +2322,24 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json({ user: req.auth.user });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  clearAuthCookie(req, res);
-  res.json({ ok: true });
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const token = readBearerToken(req);
+    if (token) {
+      try {
+        const payload = jwt.verify(token, JWT_SECRET);
+        await revokeJwtPayload(payload);
+      } catch {
+        // Logout must still clear the browser cookie when the token is already invalid.
+      }
+    }
+    clearAuthCookie(req, res);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Logout error:', error);
+    clearAuthCookie(req, res);
+    res.json({ ok: true });
+  }
 });
 
 app.put('/api/auth/pin', authMiddleware, async (req, res) => {
@@ -2604,6 +2684,7 @@ app.post('/api/auth/login-child', async (req, res) => {
       familyId: credential.familyId,
       childId: child.id,
       childName: child.name,
+      credentialId: credential.id,
     });
     setAuthCookie(req, res, token, { persistent: false });
     clearChildLoginFailures(req, codeLookupHash);
@@ -3361,32 +3442,31 @@ app.get('/api/completions/pending', authMiddleware, requireParent, async (req, r
 app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (req, res) => {
   try {
     const completionId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const completion = data.completions.find((item) => item.id === completionId);
-    if (!completion) {
-      res.status(404).json({ error: 'Wykonanie nie istnieje' });
-      return;
-    }
-    if (completion.approvedByParent) {
-      res.status(409).json({
-        error: 'Zadanie jest już zatwierdzone',
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const completion = data.completions.find((item) => item.id === completionId);
+      if (!completion) {
+        return { status: 404, body: { error: 'Wykonanie nie istnieje' } };
+      }
+      if (completion.approvedByParent) {
+        return { status: 409, body: { error: 'Zadanie jest już zatwierdzone' } };
+      }
+
+      const now = new Date().toISOString();
+      if (!applyApprovalEffects(data, completion, req.auth.user.id, now)) {
+        return { status: 409, body: { error: 'Nie można zatwierdzić nieaktywnego lub niepoprawnego zadania' } };
+      }
+
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASK', 'COMPLETION', completionId, {
+        childId: completion.childId,
+        taskId: completion.taskId,
+        date: completion.date,
       });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    if (!applyApprovalEffects(data, completion, req.auth.user.id, now)) {
-      res.status(409).json({ error: 'Nie można zatwierdzić nieaktywnego lub niepoprawnego zadania' });
-      return;
-    }
-
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASK', 'COMPLETION', completionId, {
-      childId: completion.childId,
-      taskId: completion.taskId,
-      date: completion.date,
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { completion } };
     });
-    await saveStateData(state, data);
-    res.json({ completion });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3400,46 +3480,47 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
 app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (req, res) => {
   try {
     const completionId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const completion = data.completions.find((item) => item.id === completionId);
-    if (!completion) {
-      res.status(404).json({ error: 'Wykonanie nie istnieje' });
-      return;
-    }
-    if (completion.approvedByParent) {
-      res.status(409).json({
-        error: 'Zatwierdzonego zadania nie można odrzucić bez jawnej korekty punktów',
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const completion = data.completions.find((item) => item.id === completionId);
+      if (!completion) {
+        return { status: 404, body: { error: 'Wykonanie nie istnieje' } };
+      }
+      if (completion.approvedByParent) {
+        return {
+          status: 409,
+          body: { error: 'Zatwierdzonego zadania nie można odrzucić bez jawnej korekty punktów' },
+        };
+      }
+      const child = data.children.find((item) => item.id === completion.childId && !item.archived);
+      const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
+      if (!child || !task || !isTaskActiveForDate(task, completion.date)) {
+        return { status: 404, body: { error: 'Zadanie lub dziecko nie istnieje' } };
+      }
+      const completionDateError = validateTaskCompletionDate(child, task, completion.date);
+      if (completionDateError) {
+        return { status: 400, body: { error: completionDateError } };
+      }
+
+      const now = new Date().toISOString();
+      completion.doneByChild = false;
+      completion.approvedByParent = false;
+      completion.approvedAt = null;
+      completion.rejectedByParent = true;
+      completion.rejectedAt = now;
+      completion.updatedAt = now;
+      refreshChildStreak(data, completion.childId, now);
+
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASK', 'COMPLETION', completionId, {
+        childId: completion.childId,
+        taskId: completion.taskId,
+        date: completion.date,
       });
-      return;
-    }
-    const child = data.children.find((item) => item.id === completion.childId && !item.archived);
-    const task = data.tasks.find((item) => item.id === completion.taskId && item.childId === completion.childId);
-    if (!child || !task || !isTaskActiveForDate(task, completion.date)) {
-      res.status(404).json({ error: 'Zadanie lub dziecko nie istnieje' });
-      return;
-    }
-    const completionDateError = validateTaskCompletionDate(child, task, completion.date);
-    if (completionDateError) {
-      res.status(400).json({ error: completionDateError });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    completion.doneByChild = false;
-    completion.approvedByParent = false;
-    completion.approvedAt = null;
-    completion.rejectedByParent = true;
-    completion.rejectedAt = now;
-    completion.updatedAt = now;
-    refreshChildStreak(data, completion.childId, now);
-
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASK', 'COMPLETION', completionId, {
-      childId: completion.childId,
-      taskId: completion.taskId,
-      date: completion.date,
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { completion } };
     });
-    await saveStateData(state, data);
-    res.json({ completion });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3459,25 +3540,26 @@ app.post('/api/completions/:id/reverse-approval', authMiddleware, requireParent,
     }
 
     const completionId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const completion = data.completions.find((item) => item.id === completionId);
-    if (!completion) {
-      res.status(404).json({ error: 'Wykonanie nie istnieje' });
-      return;
-    }
-    if (!completion.approvedByParent) {
-      res.status(409).json({ error: 'Tylko zatwierdzone zadanie można cofnąć' });
-      return;
-    }
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const completion = data.completions.find((item) => item.id === completionId);
+      if (!completion) {
+        return { status: 404, body: { error: 'Wykonanie nie istnieje' } };
+      }
+      if (!completion.approvedByParent) {
+        return { status: 409, body: { error: 'Tylko zatwierdzone zadanie można cofnąć' } };
+      }
 
-    const result = reverseApprovalEffects(data, completion, req.auth.user.id, parsed.data.reason || '');
-    if (!result) {
-      res.status(409).json({ error: 'Nie udało się cofnąć zatwierdzenia' });
-      return;
-    }
+      const body = reverseApprovalEffects(data, completion, req.auth.user.id, parsed.data.reason || '');
+      if (!body) {
+        return { status: 409, body: { error: 'Nie udało się cofnąć zatwierdzenia' } };
+      }
 
-    await saveStateData(state, data);
-    res.json(result);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body };
+    });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3496,38 +3578,42 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const now = new Date().toISOString();
-    const approvedIds = [];
-    const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const now = new Date().toISOString();
+      const approvedIds = [];
+      const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
 
-    data.completions.forEach((completion) => {
-      if (!completion.doneByChild || completion.approvedByParent) {
-        return;
-      }
-      if (requestedIds && !requestedIds.has(completion.id)) {
-        return;
-      }
-      if (parsed.data.childId && completion.childId !== parsed.data.childId) {
-        return;
-      }
-      if (parsed.data.date && completion.date !== parsed.data.date) {
-        return;
-      }
+      data.completions.forEach((completion) => {
+        if (!completion.doneByChild || completion.approvedByParent) {
+          return;
+        }
+        if (requestedIds && !requestedIds.has(completion.id)) {
+          return;
+        }
+        if (parsed.data.childId && completion.childId !== parsed.data.childId) {
+          return;
+        }
+        if (parsed.data.date && completion.date !== parsed.data.date) {
+          return;
+        }
 
-      if (applyApprovalEffects(data, completion, req.auth.user.id, now)) {
-        approvedIds.push(completion.id);
-      }
+        if (applyApprovalEffects(data, completion, req.auth.user.id, now)) {
+          approvedIds.push(completion.id);
+        }
+      });
+
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASKS_BULK', 'COMPLETION', 'bulk', {
+        approvedCount: approvedIds.length,
+        requestedCount: requestedIds ? requestedIds.size : null,
+        childId: parsed.data.childId || null,
+        date: parsed.data.date || null,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true, approvedCount: approvedIds.length, approvedIds } };
     });
-
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_TASKS_BULK', 'COMPLETION', 'bulk', {
-      approvedCount: approvedIds.length,
-      requestedCount: requestedIds ? requestedIds.size : null,
-      childId: parsed.data.childId || null,
-      date: parsed.data.date || null,
-    });
-    await saveStateData(state, data);
-    res.json({ ok: true, approvedCount: approvedIds.length, approvedIds });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3546,56 +3632,63 @@ app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (r
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const now = new Date().toISOString();
-    const rejectedIds = [];
-    const skippedApprovedIds = [];
-    const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
-    const affectedChildIds = new Set();
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const now = new Date().toISOString();
+      const rejectedIds = [];
+      const skippedApprovedIds = [];
+      const requestedIds = parsed.data.ids ? new Set(parsed.data.ids) : null;
+      const affectedChildIds = new Set();
 
-    data.completions.forEach((completion) => {
-      if (!completion.doneByChild || completion.rejectedByParent) {
-        return;
-      }
-      if (requestedIds && !requestedIds.has(completion.id)) {
-        return;
-      }
-      if (parsed.data.childId && completion.childId !== parsed.data.childId) {
-        return;
-      }
-      if (parsed.data.date && completion.date !== parsed.data.date) {
-        return;
-      }
-      if (completion.approvedByParent) {
-        skippedApprovedIds.push(completion.id);
-        return;
-      }
+      data.completions.forEach((completion) => {
+        if (!completion.doneByChild || completion.rejectedByParent) {
+          return;
+        }
+        if (requestedIds && !requestedIds.has(completion.id)) {
+          return;
+        }
+        if (parsed.data.childId && completion.childId !== parsed.data.childId) {
+          return;
+        }
+        if (parsed.data.date && completion.date !== parsed.data.date) {
+          return;
+        }
+        if (completion.approvedByParent) {
+          skippedApprovedIds.push(completion.id);
+          return;
+        }
 
-      completion.doneByChild = false;
-      completion.approvedByParent = false;
-      completion.approvedAt = null;
-      completion.rejectedByParent = true;
-      completion.rejectedAt = now;
-      completion.updatedAt = now;
-      rejectedIds.push(completion.id);
-      affectedChildIds.add(completion.childId);
-    });
+        completion.doneByChild = false;
+        completion.approvedByParent = false;
+        completion.approvedAt = null;
+        completion.rejectedByParent = true;
+        completion.rejectedAt = now;
+        completion.updatedAt = now;
+        rejectedIds.push(completion.id);
+        affectedChildIds.add(completion.childId);
+      });
 
-    affectedChildIds.forEach((childId) => refreshChildStreak(data, childId, now));
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASKS_BULK', 'COMPLETION', 'bulk', {
-      rejectedCount: rejectedIds.length,
-      skippedApprovedCount: skippedApprovedIds.length,
-      requestedCount: requestedIds ? requestedIds.size : null,
-      childId: parsed.data.childId || null,
-      date: parsed.data.date || null,
+      affectedChildIds.forEach((childId) => refreshChildStreak(data, childId, now));
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_TASKS_BULK', 'COMPLETION', 'bulk', {
+        rejectedCount: rejectedIds.length,
+        skippedApprovedCount: skippedApprovedIds.length,
+        requestedCount: requestedIds ? requestedIds.size : null,
+        childId: parsed.data.childId || null,
+        date: parsed.data.date || null,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          rejectedCount: rejectedIds.length,
+          rejectedIds,
+          skippedApprovedIds,
+        },
+      };
     });
-    await saveStateData(state, data);
-    res.json({
-      ok: true,
-      rejectedCount: rejectedIds.length,
-      rejectedIds,
-      skippedApprovedIds,
-    });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3706,36 +3799,38 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
     }
 
     const extraTaskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
-    if (!extraTask) {
-      res.status(404).json({ error: 'Zadanie dodatkowe nie istnieje' });
-      return;
-    }
-    if (extraTask.status === 'APPROVED') {
-      res.json({ extraTask });
-      return;
-    }
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
+      if (!extraTask) {
+        return { status: 404, body: { error: 'Zadanie dodatkowe nie istnieje' } };
+      }
+      if (extraTask.status === 'APPROVED') {
+        return { status: 200, body: { extraTask } };
+      }
 
-    const now = new Date().toISOString();
-    extraTask.status = 'APPROVED';
-    extraTask.points = parsed.data.points;
-    extraTask.approvedByParent = true;
-    extraTask.approvedAt = now;
-    extraTask.rejectedAt = null;
-    extraTask.updatedAt = now;
+      const now = new Date().toISOString();
+      extraTask.status = 'APPROVED';
+      extraTask.points = parsed.data.points;
+      extraTask.approvedByParent = true;
+      extraTask.approvedAt = now;
+      extraTask.rejectedAt = null;
+      extraTask.updatedAt = now;
 
-    addPoints(data, extraTask.childId, parsed.data.points);
-    unlockEligibleRewards(data, extraTask.childId, req.auth.user.id);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
-      childId: extraTask.childId,
-      date: extraTask.date,
-      points: parsed.data.points,
-      title: extraTask.title,
+      addPoints(data, extraTask.childId, parsed.data.points);
+      unlockEligibleRewards(data, extraTask.childId, req.auth.user.id);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'APPROVE_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+        childId: extraTask.childId,
+        date: extraTask.date,
+        points: parsed.data.points,
+        title: extraTask.title,
+      });
+
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { extraTask } };
     });
-
-    await saveStateData(state, data);
-    res.json({ extraTask });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3749,33 +3844,35 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
 app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (req, res) => {
   try {
     const extraTaskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
-    if (!extraTask) {
-      res.status(404).json({ error: 'Zadanie dodatkowe nie istnieje' });
-      return;
-    }
-    if (extraTask.status === 'APPROVED') {
-      res.status(409).json({ error: 'Zatwierdzonego zadania dodatkowego nie można odrzucić' });
-      return;
-    }
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
+      if (!extraTask) {
+        return { status: 404, body: { error: 'Zadanie dodatkowe nie istnieje' } };
+      }
+      if (extraTask.status === 'APPROVED') {
+        return { status: 409, body: { error: 'Zatwierdzonego zadania dodatkowego nie można odrzucić' } };
+      }
 
-    const now = new Date().toISOString();
-    extraTask.status = 'REJECTED';
-    extraTask.points = null;
-    extraTask.approvedByParent = false;
-    extraTask.approvedAt = null;
-    extraTask.rejectedAt = now;
-    extraTask.updatedAt = now;
+      const now = new Date().toISOString();
+      extraTask.status = 'REJECTED';
+      extraTask.points = null;
+      extraTask.approvedByParent = false;
+      extraTask.approvedAt = null;
+      extraTask.rejectedAt = now;
+      extraTask.updatedAt = now;
 
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
-      childId: extraTask.childId,
-      date: extraTask.date,
-      title: extraTask.title,
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'REJECT_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+        childId: extraTask.childId,
+        date: extraTask.date,
+        title: extraTask.title,
+      });
+
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { extraTask } };
     });
-
-    await saveStateData(state, data);
-    res.json({ extraTask });
+    res.status(result.status).json(result.body);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3816,23 +3913,21 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
     return;
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const { state, data } = await loadStateData(req.auth.user.familyId);
+  try {
+    const result = await runFamilyStateTransaction(async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       recomputePointsAndGrants(data);
 
       const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
       if (!child) {
-        res.status(404).json({ error: 'Dziecko nie istnieje' });
-        return;
+        return { status: 404, body: { error: 'Dziecko nie istnieje' } };
       }
 
       const requestedPoints = parsed.data.points;
       const delta = parsed.data.type === 'BONUS' ? requestedPoints : -requestedPoints;
       const result = adjustPoints(data, parsed.data.childId, delta);
       if (parsed.data.type === 'PENALTY' && result.appliedDelta === 0) {
-        res.status(409).json({ error: 'Dziecko nie ma punktów do odjęcia' });
-        return;
+        return { status: 409, body: { error: 'Dziecko nie ma punktów do odjęcia' } };
       }
       const now = new Date().toISOString();
       const adjustment = {
@@ -3868,21 +3963,18 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
       recomputePointsAndGrants(data);
       reconcileRewardUnlocksForChild(data, parsed.data.childId, req.auth.user.id, now);
 
-      await saveStateData(state, data);
-      res.status(201).json({ pointAdjustment: adjustment, points: data.points });
-      return;
-    } catch (error) {
-      if (isFamilyStateConflict(error) && attempt === 0) {
-        continue;
-      }
-      if (isFamilyStateConflict(error)) {
-        sendFamilyStateConflict(res);
-        return;
-      }
-      console.error('Point adjustment create error:', error);
-      res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 201, body: { pointAdjustment: adjustment, points: data.points } };
+    });
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
       return;
     }
+    console.error('Point adjustment create error:', error);
+    res.status(500).json({ error: 'Nie udało się zapisać premii lub kary' });
   }
 });
 
@@ -4420,17 +4512,9 @@ const gracefulShutdown = async () => {
 };
 
 if (require.main === module) {
-  bootstrapChildAccessCredentials()
-    .then(() => {
-      httpServer = app.listen(PORT, () => {
-        console.log(`FamilyQuest server running on port ${PORT}`);
-      });
-    })
-    .catch(async (error) => {
-      console.error('Startup bootstrap failed:', error);
-      await prisma.$disconnect().catch(() => {});
-      process.exit(1);
-    });
+  httpServer = app.listen(PORT, () => {
+    console.log(`FamilyQuest server running on port ${PORT}`);
+  });
 
   process.on('SIGINT', gracefulShutdown);
   process.on('SIGTERM', gracefulShutdown);
@@ -4446,6 +4530,11 @@ module.exports = {
     createSaveStateData,
     attachStateDataConflictBase,
     sanitizeStateDataForStorage,
+    bootstrapChildAccessCredentials,
+    parseDateInput,
+    toDateString,
+    isValidDateString,
+    getDayNumber,
     FamilyStateConflictError,
     isFamilyStateConflict,
   },

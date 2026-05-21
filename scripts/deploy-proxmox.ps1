@@ -150,6 +150,7 @@ fi
 
 node scripts/ensure-migration-baseline.js
 npx prisma migrate deploy
+node scripts/bootstrap-child-access-credentials.js
 npm run frontend:build
 systemctl restart familyquest
 sleep 3

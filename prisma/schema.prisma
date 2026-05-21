@@ -76,3 +76,15 @@ model PasswordResetToken {
   @@index([userId])
   @@index([expiresAt])
 }
+
+model RevokedToken {
+  id        String   @id @default(uuid())
+  jti       String   @unique
+  tokenType String
+  subjectId String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([subjectId])
+}

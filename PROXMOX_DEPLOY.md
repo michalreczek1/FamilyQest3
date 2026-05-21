@@ -56,11 +56,14 @@ Skrypt wykonuje:
 7. uzupelnienie brakujacego `CHILD_CODE_PEPPER` w `.env`, jesli to pierwsze wdrozenie po hardeningu,
 8. oznaczenie baseline migracji jako zastosowanej dla istniejacej bazy,
 9. `npx prisma migrate deploy`,
-10. `npm run frontend:build`,
-11. `systemctl restart familyquest`,
-12. lokalny healthcheck w kontenerze,
-13. publiczny health/CSP check,
-14. produkcyjne Playwrighty: bulk reject, approval queue, reverse approval, ranking, point ledger, reward history, task edit.
+10. `node scripts/bootstrap-child-access-credentials.js`,
+11. `npm run frontend:build`,
+12. `systemctl restart familyquest`,
+13. lokalny healthcheck w kontenerze,
+14. publiczny health/CSP check,
+15. produkcyjne Playwrighty: bulk reject, approval queue, reverse approval, ranking, point ledger, reward history, task edit.
+
+Pakiet hardeningu sesji wymusza ponowne logowanie po wdrozeniu: tokeny bez `jti` sa odrzucane, a token dziecka jest powiazany z konkretnym aktywnym credentialem.
 
 Przydatne warianty:
 
@@ -83,7 +86,7 @@ Parametry domyslne:
 - `-Branch main`
 - `-PublicUrl https://fq.familyos.pl`
 
-Ręczny deploy przez `git pull` w CT 103 zostaje tylko procedura awaryjna. Jesli trzeba go wykonac recznie, zachowaj ten sam porzadek: snapshot, backup, pull/reset, install, baseline migracji, `npx prisma migrate deploy`, build, restart, healthcheck.
+Ręczny deploy przez `git pull` w CT 103 zostaje tylko procedura awaryjna. Jesli trzeba go wykonac recznie, zachowaj ten sam porzadek: snapshot, backup, pull/reset, install, baseline migracji, `npx prisma migrate deploy`, bootstrap child credentials, build, restart, healthcheck.
 
 ## Backup I Logi Produkcyjne
 
@@ -132,6 +135,8 @@ for dir in src public dist; do
 done
 git pull --ff-only
 npm ci
+npx prisma migrate deploy
+node scripts/bootstrap-child-access-credentials.js
 npm run frontend:build
 systemctl restart familyquest
 systemctl status familyquest --no-pager -l

@@ -6,6 +6,7 @@ process.env.ALLOW_PUBLIC_REGISTRATION = 'true';
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const { app, prisma, __test } = require('../server');
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -68,6 +69,119 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(sanitized.children[0]).not.toHaveProperty('accessCode');
     expect(sanitized.auditLogs[0].details).not.toHaveProperty('accessCode');
     expect(sanitized.auditLogs[0].details.accessCodeChanged).toBe(true);
+  });
+
+  test('date helpers keep YYYY-MM-DD stable across supported time zones', () => {
+    for (const timezone of ['UTC', 'Europe/Warsaw']) {
+      const script = `
+        require('./scripts/test-env');
+        const { __test, prisma } = require('./server');
+        const assert = require('assert');
+        assert.strictEqual(__test.toDateString('2026-03-29'), '2026-03-29');
+        assert.strictEqual(__test.isValidDateString('2026-03-29'), true);
+        assert.strictEqual(__test.getDayNumber('2026-03-30'), 1);
+        prisma.$disconnect().then(() => process.exit(0));
+      `;
+      const result = spawnSync(process.execPath, ['-e', script], {
+        cwd: process.cwd(),
+        env: { ...process.env, TZ: timezone },
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+    }
+  });
+
+  test('JWT revocation and child credential binding invalidate stale sessions', async () => {
+    const suffix = `jwt-hardening-${Date.now()}`;
+    const parentPayload = createParentPayload(suffix);
+    const registerRes = await request(app).post('/api/auth/register').send(parentPayload);
+    expect(registerRes.status).toBe(201);
+    const parentToken = registerRes.body.token;
+    const decodedParentToken = jwt.decode(parentToken);
+    expect(decodedParentToken.jti).toBeTruthy();
+
+    const legacyParentToken = jwt.sign(
+      {
+        sub: registerRes.body.user.id,
+        familyId: registerRes.body.user.familyId,
+        role: 'PARENT',
+        tokenType: 'USER',
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' },
+    );
+    const legacyMeRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${legacyParentToken}`);
+    expect(legacyMeRes.status).toBe(401);
+
+    const parentMeRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(parentMeRes.status).toBe(200);
+
+    const parentLogoutRes = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(parentLogoutRes.status).toBe(200);
+    const parentAfterLogoutRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(parentAfterLogoutRes.status).toBe(401);
+
+    const secondParentToken = await registerParent(`${suffix}-child`);
+    const childRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${secondParentToken}`)
+      .send({
+        name: `Tokeny-${suffix}`,
+        avatar: '⭐',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+      });
+    expect(childRes.status).toBe(201);
+    const child = childRes.body.child;
+    const childLoginRes = await request(app)
+      .post('/api/auth/login-child')
+      .send({ accessCode: child.accessCode });
+    expect(childLoginRes.status).toBe(200);
+    const childToken = childLoginRes.body.token;
+    const decodedChildToken = jwt.decode(childToken);
+    expect(decodedChildToken.jti).toBeTruthy();
+    expect(decodedChildToken.credentialId).toBeTruthy();
+
+    let newChildCode = null;
+    for (let i = 0; i < 50; i += 1) {
+      const candidate = String(((Date.now() + i) % 9000) + 1000);
+      if (candidate === child.accessCode) continue;
+      const updateCodeRes = await request(app)
+        .put(`/api/children/${child.id}`)
+        .set('Authorization', `Bearer ${secondParentToken}`)
+        .send({ accessCode: candidate });
+      if (updateCodeRes.status === 200) {
+        newChildCode = updateCodeRes.body.child.accessCode;
+        break;
+      }
+      expect(updateCodeRes.status).toBe(409);
+    }
+    expect(newChildCode).toMatch(/^\d{4}$/);
+
+    const staleChildMeRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${childToken}`);
+    expect(staleChildMeRes.status).toBe(401);
+
+    const newChildLoginRes = await request(app)
+      .post('/api/auth/login-child')
+      .send({ accessCode: newChildCode });
+    expect(newChildLoginRes.status).toBe(200);
+    const childLogoutRes = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${newChildLoginRes.body.token}`);
+    expect(childLogoutRes.status).toBe(200);
+    const childAfterLogoutRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${newChildLoginRes.body.token}`);
+    expect(childAfterLogoutRes.status).toBe(401);
   });
 
   afterAll(async () => {
@@ -795,18 +909,16 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(bonusRes.status).toBe(201);
 
-    const originalUpdateMany = prisma.familyState.updateMany.bind(prisma.familyState);
+    const originalTransaction = prisma.$transaction.bind(prisma);
     let injectedConflict = false;
-    const updateManySpy = jest.spyOn(prisma.familyState, 'updateMany').mockImplementation(async (args) => {
-      const statePayload = args?.data?.data;
-      const hasRetryPenalty =
-        Array.isArray(statePayload?.pointAdjustments) &&
-        statePayload.pointAdjustments.some((adjustment) => adjustment.note === 'Retry konfliktu');
-      if (!injectedConflict && hasRetryPenalty) {
+    const transactionSpy = jest.spyOn(prisma, '$transaction').mockImplementation(async (...args) => {
+      if (!injectedConflict) {
         injectedConflict = true;
-        return { count: 0 };
+        const conflict = new Error('could not serialize access due to concurrent update');
+        conflict.code = 'P2034';
+        throw conflict;
       }
-      return originalUpdateMany(args);
+      return originalTransaction(...args);
     });
 
     try {
@@ -824,7 +936,7 @@ maybeDescribe('FamilyQuest API integration', () => {
       expect(penaltyRes.body.pointAdjustment.delta).toBe(-2);
       expect(penaltyRes.body.points[child.id]).toBe(3);
     } finally {
-      updateManySpy.mockRestore();
+      transactionSpy.mockRestore();
     }
 
     const adjustmentsRes = await request(app)
