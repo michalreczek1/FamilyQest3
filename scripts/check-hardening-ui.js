@@ -56,6 +56,32 @@ const runNetworkErrorCheck = async (browser, baseUrl) => {
   await page.close();
 };
 
+const runExpiredSessionCheck = async (browser, baseUrl) => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 720 } });
+  await page.route('**/api/auth/me', async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'Sesja wygasła. Zaloguj się ponownie.' }),
+    });
+  });
+  await page.route('**/api/auth/logout', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: 'Zaloguj się' }).waitFor({ state: 'visible', timeout: 10000 });
+  const genericLoadErrorVisible = await page
+    .getByText('Nie udało się załadować danych aplikacji')
+    .isVisible()
+    .catch(() => false);
+  assert.strictEqual(genericLoadErrorVisible, false, 'expired sessions should not render the generic load error');
+  await page.screenshot({ path: 'tmp/hardening-expired-session.png', fullPage: true });
+  await page.close();
+};
+
 const runErrorBoundaryCheck = async (browser, baseUrl) => {
   const page = await browser.newPage({ viewport: { width: 900, height: 720 } });
   const pageErrors = [];
@@ -155,13 +181,14 @@ const runErrorBoundaryCheck = async (browser, baseUrl) => {
   const browser = await chromium.launch();
   try {
     await runNetworkErrorCheck(browser, baseUrl);
+    await runExpiredSessionCheck(browser, baseUrl);
     await runErrorBoundaryCheck(browser, baseUrl);
   } finally {
     await browser.close();
     if (staticServer) staticServer.close();
   }
-  console.log('Hardening UI OK: network error banner and ErrorBoundary fallback render');
-  console.log('Screenshots: tmp/hardening-network-error.png, tmp/hardening-error-boundary.png');
+  console.log('Hardening UI OK: network error banner, expired session login fallback and ErrorBoundary render');
+  console.log('Screenshots: tmp/hardening-network-error.png, tmp/hardening-expired-session.png, tmp/hardening-error-boundary.png');
 })().catch((error) => {
   console.error(error);
   if (staticServer) staticServer.close();

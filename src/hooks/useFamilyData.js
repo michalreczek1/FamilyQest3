@@ -262,6 +262,23 @@ export const useFamilyData = ({
     } catch (e) {
       console.error('Load data error:', e);
       if (silent) return;
+      if (e?.status === 401) {
+        try {
+          await apiRequest('/api/auth/logout', {
+            method: 'POST',
+          });
+        } catch (logoutError) {
+          console.warn('Expired session cleanup failed:', logoutError.message);
+        }
+        clearLegacyAuthToken();
+        sessionStorage.removeItem(CHILD_SESSION_KEY);
+        setConnectionError('');
+        setUser(null);
+        resetFamilyData();
+        setView('login');
+        setHasLoadedSnapshot(false);
+        return;
+      }
       setConnectionError(e?.isNetworkError
         ? e.message
         : 'Nie udało się załadować danych aplikacji. Spróbuj odświeżyć za chwilę.');
