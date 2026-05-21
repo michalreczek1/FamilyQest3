@@ -7,6 +7,12 @@ import RewardOverlay from '../rewards/RewardOverlay.jsx';
 
 const POINT_LEDGER_PAGE_LIMIT = 20;
 
+const getCalendarDayClassName = (status) => {
+  if (status === 'PASSED') return 'passed';
+  if (status === 'FAILED') return 'failed';
+  return 'na';
+};
+
 const ChildView = ({
   selectedChild,
   user,
@@ -638,12 +644,12 @@ const ChildView = ({
       }
     }, "Ostatnie 14 dni"), React.createElement("div", {
       className: "calendar"
-    }, last14Days.map((day, i) => {
+    }, last14Days.map((day) => {
       const [, month, dayOfMonth] = day.date.split('-');
       const formattedDate = `${dayOfMonth}.${month}`;
       return React.createElement("div", {
-        key: i,
-        className: `calendar-day ${day.status.toLowerCase().replace('_', '')}`,
+        key: day.date,
+        className: `calendar-day ${getCalendarDayClassName(day.status)}`,
         title: day.date
       }, React.createElement("span", {
         className: "calendar-day-status"

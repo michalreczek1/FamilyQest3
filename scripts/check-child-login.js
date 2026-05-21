@@ -172,6 +172,29 @@ const startStaticServer = () =>
     await page.getByRole('heading', { name: child.name }).waitFor({ timeout: 10000 });
 
     assert.deepStrictEqual(loginPayload, { accessCode: child.accessCode });
+    const calendarDays = await page.locator('.calendar-day').evaluateAll((days) =>
+      days.map((day) => {
+        const style = getComputedStyle(day);
+        return {
+          className: day.className,
+          backgroundColor: style.backgroundColor,
+          borderColor: style.borderColor,
+          width: day.getBoundingClientRect().width,
+          height: day.getBoundingClientRect().height,
+        };
+      }),
+    );
+    assert.strictEqual(calendarDays.length, 14, 'child calendar should render 14 stable day tiles');
+    calendarDays.forEach((day, index) => {
+      assert(day.className.includes('calendar-day'), `calendar day ${index} should keep the base tile class`);
+      assert(
+        /\b(na|passed|failed)\b/.test(day.className),
+        `calendar day ${index} should have a visual status class, got "${day.className}"`,
+      );
+      assert.notStrictEqual(day.backgroundColor, 'rgba(0, 0, 0, 0)', `calendar day ${index} should have a visible background`);
+      assert.notStrictEqual(day.borderColor, 'rgba(0, 0, 0, 0)', `calendar day ${index} should have a visible border`);
+      assert(day.width > 20 && day.height > 20, `calendar day ${index} should keep visible tile dimensions`);
+    });
     await page.screenshot({ path: path.join(outDir, 'child-login.png'), fullPage: true });
     console.log('Child login UI OK: single 4-digit code field logs child in through /api/auth/login-child');
     console.log('Screenshot: tmp/child-login/child-login.png');
