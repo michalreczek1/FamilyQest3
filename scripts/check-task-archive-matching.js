@@ -130,7 +130,7 @@ const runApiCheck = async () => {
   const parent = {
     email: `archive.${suffix}@familyquest.local`,
     password: 'ArchiveParentPass123!',
-    pinCode: '2468',
+    pinCode: '246813',
     familyName: 'Archive Test Family',
   };
   const registerRes = await request(app).post('/api/auth/register').send(parent);
@@ -242,8 +242,13 @@ const runUiCheck = async () => {
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ user: { id: 'parent-ui', role: 'PARENT', familyId: 'family-ui' } }),
+        body: JSON.stringify({ user: { id: 'parent-ui', role: 'PARENT', familyId: 'family-ui', hasPinCode: true } }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -301,6 +306,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByRole('button', { name: /Zadania/ }).click();
   await page.getByRole('button', { name: /U wszystkich/ }).first().click();
   await page.waitForFunction(() => !document.body.innerText.includes('U wszystkich'));

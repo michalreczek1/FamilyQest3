@@ -43,7 +43,7 @@ http://localhost:8000
 ```
 Email: demo.parent@example.com
 Hasło: Demo-Change-This-Password
-PIN: 1234
+PIN: 123456
 ```
 
 ✅ **Gotowe!** Aplikacja działa w trybie demo z LocalStorage.

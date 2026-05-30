@@ -125,7 +125,7 @@ const runApiCheck = async () => {
     .send({
       email: `restore.${suffix}@familyquest.local`,
       password: 'RestoreParentPass123!',
-      pinCode: '2468',
+      pinCode: '246813',
       familyName: 'Restore Test Family',
     });
   assert.strictEqual(registerRes.status, 201);
@@ -245,8 +245,12 @@ const runUiCheck = async () => {
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ user: { id: 'parent-restore-ui', role: 'PARENT', familyId: 'family-restore-ui' } }),
+        body: JSON.stringify({ user: { id: 'parent-restore-ui', role: 'PARENT', familyId: 'family-restore-ui', hasPinCode: true } }),
       });
+      return;
+    }
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
     if (apiPath === '/api/auth/parents') {
@@ -320,6 +324,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByRole('button', { name: /Zadania/ }).click();
   await page.getByRole('button', { name: /Archiwum/ }).click();
   const archivedTaskTitles = page.getByText('Zadanie w archiwum');

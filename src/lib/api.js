@@ -46,6 +46,10 @@ export const apiRequest = async (path, options = {}) => {
     const message = data?.error || `HTTP ${response.status}`;
     const error = new Error(message);
     error.status = response.status;
+    error.data = data;
+    if (data?.retryAfterSeconds) {
+      error.retryAfterSeconds = data.retryAfterSeconds;
+    }
     throw error;
   }
   return data;

@@ -18,7 +18,7 @@ const TEST_RESET_PASSWORD = 'TestResetPass999!';
 const createParentPayload = (suffix) => ({
   email: `jest.parent.${suffix}@familyquest.local`,
   password: TEST_PARENT_PASSWORD,
-  pinCode: '2468',
+  pinCode: '246813',
   familyName: 'Jest Rodzina',
 });
 
@@ -199,6 +199,53 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(registerRes.body.token).toBeTruthy();
     expect(registerRes.body.user.email).toBe(parentPayload.email);
     expect(registerRes.body.user).not.toHaveProperty('pinCode');
+    expect(registerRes.body.user.hasPinCode).toBe(true);
+
+    const invalidParentPinRes = await request(app)
+      .post('/api/auth/parent-pin/verify')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ pinCode: '111111' });
+    expect(invalidParentPinRes.status).toBe(401);
+
+    const validParentPinRes = await request(app)
+      .post('/api/auth/parent-pin/verify')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ pinCode: parentPayload.pinCode });
+    expect(validParentPinRes.status).toBe(200);
+
+    const shortParentPinRes = await request(app)
+      .put('/api/auth/pin')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ currentPassword: parentPayload.password, pinCode: '1234' });
+    expect(shortParentPinRes.status).toBe(400);
+
+    const changedParentPinRes = await request(app)
+      .put('/api/auth/pin')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ currentPassword: parentPayload.password, pinCode: '135790' });
+    expect(changedParentPinRes.status).toBe(200);
+    expect(changedParentPinRes.body.user.hasPinCode).toBe(true);
+
+    const firstBadPinRes = await request(app)
+      .post('/api/auth/parent-pin/verify')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ pinCode: '000000' });
+    expect(firstBadPinRes.status).toBe(401);
+    expect(firstBadPinRes.body.attemptsRemaining).toBe(2);
+
+    const secondBadPinRes = await request(app)
+      .post('/api/auth/parent-pin/verify')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ pinCode: '000000' });
+    expect(secondBadPinRes.status).toBe(401);
+    expect(secondBadPinRes.body.attemptsRemaining).toBe(1);
+
+    const lockedPinRes = await request(app)
+      .post('/api/auth/parent-pin/verify')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .send({ pinCode: '000000' });
+    expect(lockedPinRes.status).toBe(429);
+    expect(lockedPinRes.body.retryAfterSeconds).toBeGreaterThan(0);
 
     const parentToken = registerRes.body.token;
     const csrfGuardRes = await request(app)

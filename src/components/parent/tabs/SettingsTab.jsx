@@ -11,6 +11,7 @@ const SettingsTab = ({
   addParentUser,
   setParentUserActive,
   changeMyPassword,
+  changeMyPin,
   resetParentPassword,
   updateFamilyGoal,
   exportFamilyBackup,
@@ -29,6 +30,7 @@ const SettingsTab = ({
       onAddParent: addParentUser,
       onToggleParent: setParentUserActive,
       onChangePassword: changeMyPassword,
+      onChangePin: changeMyPin,
       onResetPassword: resetParentPassword
     }), React.createElement(SettingsBackupPanel, {
       familyGoal: familyGoal,

@@ -101,8 +101,13 @@ const runUiCheck = async () => {
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ user: { id: 'parent-edit-ui', role: 'PARENT', familyId: 'family-edit-ui' } }),
+        body: JSON.stringify({ user: { id: 'parent-edit-ui', role: 'PARENT', familyId: 'family-edit-ui', hasPinCode: true } }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -157,6 +162,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByRole('button', { name: /Zadania/ }).click();
   await page.getByRole('button', { name: /Edytuj/ }).click();
 

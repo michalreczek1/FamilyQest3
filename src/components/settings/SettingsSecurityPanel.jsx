@@ -7,12 +7,17 @@ const SettingsSecurityPanel = ({
   onAddParent,
   onToggleParent,
   onChangePassword,
-  onResetPassword
+  onResetPassword,
+  onChangePin
 }) => {
   const [newParentEmail, setNewParentEmail] = useState('');
   const [newParentPassword, setNewParentPassword] = useState('');
+  const [newParentPin, setNewParentPin] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [pinPassword, setPinPassword] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [repeatPin, setRepeatPin] = useState('');
   const [resetPasswordValue, setResetPasswordValue] = useState('');
   const [resetTarget, setResetTarget] = useState('');
   const [message, setMessage] = useState('');
@@ -42,6 +47,14 @@ const SettingsSecurityPanel = ({
     type: "password",
     value: newParentPassword,
     onChange: e => setNewParentPassword(e.target.value)
+  }), React.createElement("input", {
+    className: "input",
+    placeholder: "PIN rodzica (6 cyfr, opcjonalnie)",
+    type: "password",
+    value: newParentPin,
+    onChange: e => setNewParentPin(e.target.value.replace(/\D/g, '').slice(0, 6)),
+    inputMode: "numeric",
+    maxLength: 6
   }), React.createElement("button", {
     className: "btn btn-primary",
     style: {
@@ -52,11 +65,13 @@ const SettingsSecurityPanel = ({
       try {
         await onAddParent({
           email: newParentEmail,
-          password: newParentPassword
+          password: newParentPassword,
+          pinCode: newParentPin || undefined
         });
         setMessage('Dodano konto rodzica. Czeka na aktywację.');
         setNewParentEmail('');
         setNewParentPassword('');
+        setNewParentPin('');
       } catch (e) {
         setMessage(e.message);
       }
@@ -84,10 +99,55 @@ const SettingsSecurityPanel = ({
       fontSize: '0.8rem',
       opacity: 0.8
     }
-  }, parent.active ? 'Aktywne' : 'Nieaktywne', " \u2022 ", (parent.createdAt || '').slice(0, 10), parent.id === user?.id ? ' • Twoje konto' : '')), React.createElement("button", {
+  }, parent.active ? 'Aktywne' : 'Nieaktywne', " \u2022 ", parent.hasPinCode ? 'PIN ustawiony' : 'Brak PIN-u', " \u2022 ", (parent.createdAt || '').slice(0, 10), parent.id === user?.id ? ' • Twoje konto' : '')), React.createElement("button", {
     className: parent.active ? 'btn btn-danger' : 'btn btn-success',
     onClick: () => onToggleParent(parent.id, !parent.active)
   }, parent.active ? 'Dezaktywuj' : 'Aktywuj')))), React.createElement("h4", {
+    style: {
+      marginBottom: '0.5rem'
+    }
+  }, "Zmie\u0144 PIN rodzica"), React.createElement("input", {
+    className: "input",
+    type: "password",
+    placeholder: "Aktualne has\u0142o",
+    value: pinPassword,
+    onChange: e => setPinPassword(e.target.value)
+  }), React.createElement("input", {
+    className: "input",
+    type: "password",
+    placeholder: "Nowy PIN (6 cyfr)",
+    value: newPin,
+    onChange: e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6)),
+    inputMode: "numeric",
+    maxLength: 6
+  }), React.createElement("input", {
+    className: "input",
+    type: "password",
+    placeholder: "Powt\u00F3rz PIN",
+    value: repeatPin,
+    onChange: e => setRepeatPin(e.target.value.replace(/\D/g, '').slice(0, 6)),
+    inputMode: "numeric",
+    maxLength: 6
+  }), React.createElement("button", {
+    className: "btn btn-secondary",
+    style: {
+      width: '100%',
+      marginBottom: '1rem'
+    },
+    onClick: async () => {
+      try {
+        if (newPin.length !== 6) throw new Error('PIN musi mieć dokładnie 6 cyfr');
+        if (newPin !== repeatPin) throw new Error('Powtórzony PIN jest inny');
+        await onChangePin(pinPassword, newPin);
+        setPinPassword('');
+        setNewPin('');
+        setRepeatPin('');
+        setMessage('PIN rodzica został zmieniony.');
+      } catch (e) {
+        setMessage(e.message);
+      }
+    }
+  }, "Zmie\u0144 PIN"), React.createElement("h4", {
     style: {
       marginBottom: '0.5rem'
     }

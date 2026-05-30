@@ -50,7 +50,7 @@ const run = async () => {
     body: {
       email: parentEmail,
       password: parentPassword,
-      pinCode: '1234',
+      pinCode: '123456',
       familyName: 'Smoke Family',
     },
   });

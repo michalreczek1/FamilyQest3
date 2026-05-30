@@ -30,6 +30,8 @@ const AUTH_RATE_LIMIT_MAX_REQUESTS = Number(process.env.AUTH_RATE_LIMIT_MAX_REQU
 const CHILD_LOGIN_FAILED_WINDOW_MS = Number(process.env.CHILD_LOGIN_FAILED_WINDOW_MS || 15 * 60 * 1000);
 const CHILD_LOGIN_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_FAILED_MAX_ATTEMPTS || 40);
 const CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS = Number(process.env.CHILD_LOGIN_CODE_FAILED_MAX_ATTEMPTS || 8);
+const PARENT_PIN_FAILED_MAX_ATTEMPTS = Number(process.env.PARENT_PIN_FAILED_MAX_ATTEMPTS || 3);
+const PARENT_PIN_LOCK_MS = Number(process.env.PARENT_PIN_LOCK_MS || 30 * 1000);
 const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
 const POINTS_PER_PASSED_DAY = 2;
 const IDEAL_WEEK_BONUS = 3;
@@ -161,6 +163,7 @@ const authRateLimit = rateLimit({
 });
 
 const childLoginFailures = new Map();
+const parentPinFailures = new Map();
 
 const getRateLimitKey = (req) =>
   req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
@@ -225,6 +228,58 @@ const recordChildLoginFailure = (req, codeLookupHash = null) => {
 };
 
 setInterval(cleanupChildLoginFailures, 60 * 1000).unref();
+
+const cleanupParentPinFailures = () => {
+  const now = Date.now();
+  for (const [storedKey, value] of parentPinFailures.entries()) {
+    if (value.lockedUntil <= now && value.resetAt <= now) {
+      parentPinFailures.delete(storedKey);
+    }
+  }
+};
+
+const getParentPinFailureKey = (req) => `parent-pin:${req.auth.user.id}:${getRateLimitKey(req)}`;
+
+const getParentPinFailure = (req) => {
+  cleanupParentPinFailures();
+  const key = getParentPinFailureKey(req);
+  const now = Date.now();
+  const current = parentPinFailures.get(key);
+  if (!current || (current.lockedUntil <= now && current.resetAt <= now)) {
+    const fresh = { count: 0, lockedUntil: 0, resetAt: now + PARENT_PIN_LOCK_MS };
+    parentPinFailures.set(key, fresh);
+    return { key, current: fresh };
+  }
+  return { key, current };
+};
+
+const getParentPinBlockedResponse = (req) => {
+  const { current } = getParentPinFailure(req);
+  const now = Date.now();
+  if (current.lockedUntil > now) {
+    return {
+      retryAfterSeconds: Math.max(1, Math.ceil((current.lockedUntil - now) / 1000)),
+    };
+  }
+  return null;
+};
+
+const recordParentPinFailure = (req) => {
+  const { current } = getParentPinFailure(req);
+  current.count += 1;
+  current.resetAt = Date.now() + PARENT_PIN_LOCK_MS;
+  if (current.count >= PARENT_PIN_FAILED_MAX_ATTEMPTS) {
+    current.lockedUntil = Date.now() + PARENT_PIN_LOCK_MS;
+    current.resetAt = current.lockedUntil;
+  }
+  return current;
+};
+
+const clearParentPinFailures = (req) => {
+  parentPinFailures.delete(getParentPinFailureKey(req));
+};
+
+setInterval(cleanupParentPinFailures, 60 * 1000).unref();
 
 const getPasswordResetTokenHash = (token) =>
   crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
@@ -297,6 +352,7 @@ const toPublicUser = (user) => ({
   email: user.email,
   role: user.role,
   familyId: user.familyId,
+  hasPinCode: Boolean(user.pinCode),
 });
 
 const parseCookieHeader = (header = '') =>
@@ -433,6 +489,7 @@ const authMiddleware = async (req, res, next) => {
         role: true,
         familyId: true,
         active: true,
+        pinCode: true,
       },
     });
 
@@ -441,7 +498,16 @@ const authMiddleware = async (req, res, next) => {
       return;
     }
 
-    req.auth = { user };
+    req.auth = {
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        familyId: user.familyId,
+        active: user.active,
+        hasPinCode: Boolean(user.pinCode),
+      },
+    };
     next();
   } catch (error) {
     if (isFamilyStateConflict(error)) {
@@ -487,7 +553,7 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   familyName: z.string().trim().max(120).optional(),
-  pinCode: z.string().regex(/^\d{4}$/).optional(),
+  pinCode: z.string().regex(/^\d{6}$/).optional(),
 });
 
 const loginSchema = z.object({
@@ -509,13 +575,18 @@ const resetPasswordByTokenSchema = z.object({
 });
 
 const changePinSchema = z.object({
-  pinCode: z.string().regex(/^\d{4}$/),
+  pinCode: z.string().regex(/^\d{6}$/),
+  currentPassword: z.string().min(1).optional(),
+});
+
+const verifyParentPinSchema = z.object({
+  pinCode: z.string().regex(/^\d{6}$/),
 });
 
 const createParentSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
-  pinCode: z.string().regex(/^\d{4}$/).optional(),
+  pinCode: z.string().regex(/^\d{6}$/).optional(),
 });
 
 const toggleParentSchema = z.object({
@@ -2181,6 +2252,7 @@ app.use('/api/auth/register', authRateLimit);
 app.use('/api/auth/forgot-password', authRateLimit);
 app.use('/api/auth/reset-password/token', authRateLimit);
 app.use('/api/auth/login-child', authRateLimit);
+app.use('/api/auth/parent-pin/verify', authRateLimit);
 
 app.get('/health', async (req, res) => {
   let db = 'ok';
@@ -2322,6 +2394,61 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json({ user: req.auth.user });
 });
 
+app.post('/api/auth/parent-pin/verify', authMiddleware, requireParent, async (req, res) => {
+  try {
+    const parsed = verifyParentPinSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'PIN musi mieć dokładnie 6 cyfr' });
+      return;
+    }
+    const blocked = getParentPinBlockedResponse(req);
+    if (blocked) {
+      res.status(429).json({
+        error: `Za dużo błędnych PIN-ów. Spróbuj za ${blocked.retryAfterSeconds} s.`,
+        retryAfterSeconds: blocked.retryAfterSeconds,
+      });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth.user.id },
+      select: { id: true, pinCode: true },
+    });
+    if (!user?.pinCode) {
+      res.status(409).json({ error: 'Najpierw ustaw 6-cyfrowy PIN rodzica' });
+      return;
+    }
+
+    const ok = await bcrypt.compare(parsed.data.pinCode, user.pinCode);
+    if (!ok) {
+      const failure = recordParentPinFailure(req);
+      const retryAfterSeconds = failure.lockedUntil > Date.now()
+        ? Math.max(1, Math.ceil((failure.lockedUntil - Date.now()) / 1000))
+        : null;
+      res.status(retryAfterSeconds ? 429 : 401).json({
+        error: retryAfterSeconds
+          ? `Za dużo błędnych PIN-ów. Spróbuj za ${retryAfterSeconds} s.`
+          : 'Nieprawidłowy PIN rodzica',
+        retryAfterSeconds,
+        attemptsRemaining: retryAfterSeconds
+          ? 0
+          : Math.max(0, PARENT_PIN_FAILED_MAX_ATTEMPTS - failure.count),
+      });
+      return;
+    }
+
+    clearParentPinFailures(req);
+    res.json({ ok: true });
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
+      return;
+    }
+    console.error('Parent PIN verify error:', error);
+    res.status(500).json({ error: 'Nie udało się sprawdzić PIN-u' });
+  }
+});
+
 app.post('/api/auth/logout', async (req, res) => {
   try {
     const token = readBearerToken(req);
@@ -2342,11 +2469,28 @@ app.post('/api/auth/logout', async (req, res) => {
   }
 });
 
-app.put('/api/auth/pin', authMiddleware, async (req, res) => {
+app.put('/api/auth/pin', authMiddleware, requireParent, async (req, res) => {
   try {
     const parsed = changePinSchema.safeParse(req.body || {});
     if (!parsed.success) {
-      res.status(400).json({ error: 'PIN musi mieć dokładnie 4 cyfry' });
+      res.status(400).json({ error: 'PIN musi mieć dokładnie 6 cyfr' });
+      return;
+    }
+    const existingUser = await prisma.user.findUnique({
+      where: { id: req.auth.user.id },
+      select: { id: true, passwordHash: true },
+    });
+    if (!existingUser) {
+      res.status(404).json({ error: 'Użytkownik nie istnieje' });
+      return;
+    }
+    if (!parsed.data.currentPassword) {
+      res.status(400).json({ error: 'Podaj aktualne hasło, aby zmienić PIN' });
+      return;
+    }
+    const passwordOk = await bcrypt.compare(parsed.data.currentPassword, existingUser.passwordHash);
+    if (!passwordOk) {
+      res.status(401).json({ error: 'Aktualne hasło jest nieprawidłowe' });
       return;
     }
     const pinCodeHash = await bcrypt.hash(parsed.data.pinCode, BCRYPT_ROUNDS);
@@ -2414,9 +2558,19 @@ app.get('/api/auth/parents', authMiddleware, requireParent, async (req, res) => 
         active: true,
         role: true,
         createdAt: true,
+        pinCode: true,
       },
     });
-    res.json({ users });
+    res.json({
+      users: users.map((user) => ({
+        id: user.id,
+        email: user.email,
+        active: user.active,
+        role: user.role,
+        createdAt: user.createdAt,
+        hasPinCode: Boolean(user.pinCode),
+      })),
+    });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2460,10 +2614,20 @@ app.post('/api/auth/parents', authMiddleware, requireParent, async (req, res) =>
         active: true,
         role: true,
         createdAt: true,
+        pinCode: true,
       },
     });
 
-    res.status(201).json({ user: created });
+    res.status(201).json({
+      user: {
+        id: created.id,
+        email: created.email,
+        active: created.active,
+        role: created.role,
+        createdAt: created.createdAt,
+        hasPinCode: Boolean(created.pinCode),
+      },
+    });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -2506,10 +2670,20 @@ app.put('/api/auth/parents/:id/active', authMiddleware, requireParent, async (re
         active: true,
         role: true,
         createdAt: true,
+        pinCode: true,
       },
     });
 
-    res.json({ user: updated });
+    res.json({
+      user: {
+        id: updated.id,
+        email: updated.email,
+        active: updated.active,
+        role: updated.role,
+        createdAt: updated.createdAt,
+        hasPinCode: Boolean(updated.pinCode),
+      },
+    });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);

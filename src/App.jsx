@@ -7,6 +7,7 @@ import LoginView from './components/auth/LoginView.jsx';
 import ChildSelectionView from './components/auth/ChildSelectionView.jsx';
 import ChildView from './components/child/ChildView.jsx';
 import ErrorBoundary from './components/common/ErrorBoundary.jsx';
+import ParentPinGate from './components/auth/ParentPinGate.jsx';
 import ParentPanel from './components/parent/ParentPanel.jsx';
 import { useAutosave } from './hooks/useAutosave.js';
 import { useFamilyData } from './hooks/useFamilyData.js';
@@ -66,6 +67,7 @@ const App = () => {
   const [showChildRewards, setShowChildRewards] = useState(false);
   const [showPointHistory, setShowPointHistory] = useState(false);
   const [pointAdjustmentModal, setPointAdjustmentModal] = useState(null);
+  const [parentPinGateOpen, setParentPinGateOpen] = useState(false);
   const serverMutationQueueRef = useRef(Promise.resolve());
   const autosaveSnapshot = useMemo(() => ({
     children,
@@ -419,6 +421,7 @@ const App = () => {
     clearLegacyAuthToken();
     sessionStorage.removeItem(CHILD_SESSION_KEY);
     setUser(null);
+    setParentPinGateOpen(false);
     resetFamilyData();
     setView('login');
   };
@@ -429,7 +432,56 @@ const App = () => {
   };
   const enterParentMode = () => {
     if (user?.role === 'CHILD') return;
+    setParentPinGateOpen(true);
+  };
+  const closeParentPinGate = () => {
+    setParentPinGateOpen(false);
+  };
+  const enterParentPanelAfterPin = () => {
+    setParentPinGateOpen(false);
+    setSelectedChild(null);
     setView('parent');
+  };
+  const leaveParentMode = () => {
+    setParentPinGateOpen(false);
+    setView('childSelect');
+  };
+  const handleParentPinVerify = async pinCode => {
+    try {
+      await apiRequest('/api/auth/parent-pin/verify', {
+        method: 'POST',
+        body: { pinCode }
+      });
+      enterParentPanelAfterPin();
+      return { success: true };
+    } catch (e) {
+      return {
+        success: false,
+        error: e.message || 'Nieprawidłowy PIN rodzica',
+        retryAfterSeconds: e.retryAfterSeconds || e.data?.retryAfterSeconds || null
+      };
+    }
+  };
+  const handleParentPinSetup = async ({ pinCode, currentPassword }) => {
+    try {
+      const response = await apiRequest('/api/auth/pin', {
+        method: 'PUT',
+        body: { pinCode, currentPassword }
+      });
+      if (response?.user) {
+        setUser(response.user);
+      } else {
+        setUser(prev => prev ? { ...prev, hasPinCode: true } : prev);
+      }
+      enterParentPanelAfterPin();
+      return { success: true };
+    } catch (e) {
+      return {
+        success: false,
+        error: e.message || 'Nie udało się zapisać PIN-u',
+        retryAfterSeconds: e.retryAfterSeconds || e.data?.retryAfterSeconds || null
+      };
+    }
   };
   const toggleTask = (taskId, date = getDateString()) => {
     if (!selectedChild) return;
@@ -959,13 +1011,15 @@ const App = () => {
   };
   const addParentUser = async ({
     email,
-    password
+    password,
+    pinCode
   }) => {
     await apiRequest('/api/auth/parents', {
       method: 'POST',
       body: {
         email,
-        password
+        password,
+        ...(pinCode ? { pinCode } : {})
       }
     });
     await loadParentUsers();
@@ -992,6 +1046,22 @@ const App = () => {
       }
     });
     addAuditLog('CHANGE_PASSWORD', 'USER', user?.id || 'self');
+  };
+  const changeMyPin = async (currentPassword, pinCode) => {
+    const response = await apiRequest('/api/auth/pin', {
+      method: 'PUT',
+      body: {
+        currentPassword,
+        pinCode
+      }
+    });
+    if (response?.user) {
+      setUser(response.user);
+    } else {
+      setUser(prev => prev ? { ...prev, hasPinCode: true } : prev);
+    }
+    await loadParentUsers();
+    addAuditLog('CHANGE_PIN', 'USER', user?.id || 'self');
   };
   const resetParentPassword = async (userId, newPassword) => {
     await apiRequest('/api/auth/password/reset', {
@@ -1079,7 +1149,7 @@ const App = () => {
   }
   if (view === 'childSelect') {
     const hasLeaderboard = familyLeaderboard.children.length > 0;
-    return React.createElement(ChildSelectionView, {
+    return React.createElement(React.Fragment, null, React.createElement(ChildSelectionView, {
       children: activeChildren,
       streaks: streaks,
       points: points,
@@ -1092,7 +1162,12 @@ const App = () => {
       onSelectChild: selectChild,
       onParentMode: enterParentMode,
       onLogout: handleLogout
-    });
+    }), parentPinGateOpen && React.createElement(ParentPinGate, {
+      hasPinCode: Boolean(user?.hasPinCode),
+      onVerify: handleParentPinVerify,
+      onSetup: handleParentPinSetup,
+      onCancel: closeParentPinGate
+    }));
   }
   if (view === 'child' && selectedChild) {
     return React.createElement(ErrorBoundary, {
@@ -1176,7 +1251,13 @@ const App = () => {
       syncing: syncing,
       user: user,
       parentUsers: parentUsers,
-      setView: setView,
+      setView: nextView => {
+        if (nextView === 'childSelect') {
+          leaveParentMode();
+          return;
+        }
+        setView(nextView);
+      },
       setParentTab: setParentTab,
       setApprovalFilterChildId: setApprovalFilterChildId,
       setApprovalFilterDate: setApprovalFilterDate,
@@ -1209,6 +1290,7 @@ const App = () => {
       addParentUser: addParentUser,
       setParentUserActive: setParentUserActive,
       changeMyPassword: changeMyPassword,
+      changeMyPin: changeMyPin,
       resetParentPassword: resetParentPassword,
       updateFamilyGoal: updateFamilyGoal,
       exportFamilyBackup: exportFamilyBackup,

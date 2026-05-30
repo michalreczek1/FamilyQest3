@@ -343,6 +343,66 @@ button.hero-metric:hover {
   overflow-y: auto;
 }
 
+.parent-pin-modal {
+  z-index: 2400;
+}
+
+.parent-pin-card {
+  max-width: 440px;
+}
+
+.parent-pin-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.parent-pin-header h2 {
+  margin: 0;
+}
+
+.parent-pin-header p {
+  margin-top: 0.25rem;
+  opacity: 0.78;
+  line-height: 1.35;
+}
+
+.parent-pin-icon {
+  width: 4rem;
+  height: 4rem;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 1rem;
+  background: rgba(254, 200, 75, 0.2);
+  border: 1px solid rgba(254, 200, 75, 0.42);
+  font-size: 2rem;
+}
+
+.parent-pin-input {
+  text-align: center;
+  letter-spacing: 0.22em;
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.parent-pin-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.parent-pin-lockout {
+  margin: -0.25rem 0 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.9rem;
+  background: rgba(249, 112, 102, 0.2);
+  border: 1px solid rgba(249, 112, 102, 0.55);
+  font-weight: 700;
+  text-align: center;
+}
+
 .child-approval-modal {
   align-items: center !important;
   padding-top: 1rem !important;
@@ -1061,6 +1121,12 @@ button.hero-metric:hover {
   .modal-content {
     padding: 1rem;
     max-height: calc(100dvh - 1.5rem);
+  }
+  .parent-pin-header {
+    align-items: flex-start;
+  }
+  .parent-pin-actions {
+    grid-template-columns: 1fr;
   }
   .point-history-modal-content {
     max-height: calc(100dvh - 1.5rem);

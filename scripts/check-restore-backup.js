@@ -176,9 +176,15 @@ const runUiCheck = async () => {
             role: 'PARENT',
             familyId: 'family-test',
             active: true,
+            hasPinCode: true,
           },
         }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -243,6 +249,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByRole('button', { name: 'Ustawienia' }).click();
   await page.waitForTimeout(1200);
   mergeCalled = false;

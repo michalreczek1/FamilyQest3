@@ -176,8 +176,13 @@ const runUiCheck = async () => {
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ user: { id: 'parent-reward-history', role: 'PARENT', familyId: 'family-reward-history' } }),
+        body: JSON.stringify({ user: { id: 'parent-reward-history', role: 'PARENT', familyId: 'family-reward-history', hasPinCode: true } }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -222,6 +227,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByRole('button', { name: /Nagrody/ }).click();
 
   await page.getByText('Historia nagród').waitFor({ state: 'visible', timeout: 10000 });

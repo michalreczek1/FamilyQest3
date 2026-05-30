@@ -218,7 +218,8 @@ function Invoke-ProductionPlaywrightTests {
     @{ Env = "RANKING_BASE_URL"; Script = "test:ranking" },
     @{ Env = "POINT_LEDGER_BASE_URL"; Script = "test:point-ledger" },
     @{ Env = "REWARD_HISTORY_BASE_URL"; Script = "test:reward-history" },
-    @{ Env = "TASK_EDIT_BASE_URL"; Script = "test:task-edit" }
+    @{ Env = "TASK_EDIT_BASE_URL"; Script = "test:task-edit" },
+    @{ Env = "PARENT_PIN_GATE_BASE_URL"; Script = "test:parent-pin-gate" }
   )
 
   foreach ($test in $tests) {

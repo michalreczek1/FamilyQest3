@@ -56,7 +56,7 @@ const run = async () => {
     .send({
       email: 'security-config@example.local',
       password: 'SecurityPass123!',
-      pinCode: '2468',
+      pinCode: '246813',
       familyName: 'Security Config',
     });
   assert.strictEqual(registrationRes.status, 403, 'public registration should default to disabled');

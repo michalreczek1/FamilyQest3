@@ -167,9 +167,15 @@ const runUiCheck = async () => {
             role: 'PARENT',
             familyId: 'family-test',
             active: true,
+            hasPinCode: true,
           },
         }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -255,6 +261,8 @@ const runUiCheck = async () => {
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /Panel rodzica/ }).click();
+  await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+  await page.getByRole('button', { name: 'Wejdź' }).click();
   await page.getByText('Zalicz zadania dziecku').waitFor({ state: 'visible', timeout: 10000 });
 
   const row = page.locator('.task-item').filter({ hasText: 'Poranne zadanie' }).first();

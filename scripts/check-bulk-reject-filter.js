@@ -127,9 +127,14 @@ const installApiMocks = async (page, state, bulkRequests) => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          user: { id: 'parent-test', role: 'PARENT', familyId: 'family-test', email: 'parent@test.local' },
+          user: { id: 'parent-test', role: 'PARENT', familyId: 'family-test', email: 'parent@test.local', hasPinCode: true },
         }),
       });
+      return;
+    }
+
+    if (apiPath === '/api/auth/parent-pin/verify') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
@@ -215,6 +220,8 @@ const installApiMocks = async (page, state, bulkRequests) => {
     await installApiMocks(page, state, bulkRequests);
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: '🔐 Panel rodzica' }).click();
+    await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
+    await page.getByRole('button', { name: 'Wejdź' }).click();
     await page.getByText('Zadania do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
     await page.getByRole('button', { name: '❌ Odrzuć wg filtra (2)' }).click();
     await page.getByText('Brak zadań do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
