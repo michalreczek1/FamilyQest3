@@ -40,6 +40,8 @@ const ParentPanel = ({
   pointAdjustmentModal,
   isOnline,
   syncing,
+  pendingCompletionActionIds = [],
+  pendingExtraTaskActionIds = [],
   user,
   parentUsers,
   setView,
@@ -88,8 +90,10 @@ const ParentPanel = ({
   updateReward,
   savePointAdjustment,
 }) => {
-    const pendingApprovals = completions.filter(c => c.doneByChild && !c.approvedByParent);
-    const pendingExtraTasks = extraTasks.filter(task => task.status === 'PENDING');
+    const pendingCompletionActionIdSet = new Set(pendingCompletionActionIds);
+    const pendingExtraTaskActionIdSet = new Set(pendingExtraTaskActionIds);
+    const pendingApprovals = completions.filter(c => c.doneByChild && !c.approvedByParent && !pendingCompletionActionIdSet.has(c.id));
+    const pendingExtraTasks = extraTasks.filter(task => task.status === 'PENDING' && !pendingExtraTaskActionIdSet.has(task.id));
     const activeRewards = rewards.filter(reward => reward.active !== false);
     const filteredPendingApprovals = pendingApprovals.filter(comp => {
       const childOk = approvalFilterChildId === 'ALL' || comp.childId === approvalFilterChildId;

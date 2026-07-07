@@ -1761,6 +1761,45 @@ const getRewardUnlockHistory = (data) => {
     .sort((a, b) => Date.parse(b.latestAt || 0) - Date.parse(a.latestAt || 0));
 };
 
+const buildFamilyStatePatch = (data, user) => {
+  recomputePointsAndGrants(data);
+  reconcileRewardUnlocksForAllChildren(data, user?.id);
+
+  const leaderboardChildren = data.children
+    .filter((child) => !child.archived)
+    .map((child) => ({
+      id: child.id,
+      name: child.name,
+      avatar: child.avatar,
+    }));
+  const leaderboardPoints = {};
+  const leaderboardStreaks = {};
+
+  leaderboardChildren.forEach((child) => {
+    leaderboardPoints[child.id] = Number(data.points[child.id] || 0);
+    leaderboardStreaks[child.id] = data.streaks[child.id] || calculateStreakForChildData(data, child.id);
+  });
+
+  return {
+    completions: filterStorageValueForUser('completions', data, user),
+    extraTasks: filterStorageValueForUser('extraTasks', data, user),
+    points: filterStorageValueForUser('points', data, user),
+    streaks: filterStorageValueForUser('streaks', data, user),
+    pointLedger: filterStorageValueForUser('pointLedger', data, user),
+    rewardUnlocks: filterStorageValueForUser('rewardUnlocks', data, user),
+    rewardUnlockHistory: user?.role === 'PARENT' ? getRewardUnlockHistory(data) : [],
+    dayPointGrants: filterStorageValueForUser('dayPointGrants', data, user),
+    weekBonusGrants: filterStorageValueForUser('weekBonusGrants', data, user),
+    taskPointGrants: filterStorageValueForUser('taskPointGrants', data, user),
+    auditLogs: filterStorageValueForUser('auditLogs', data, user),
+    familyLeaderboard: {
+      children: leaderboardChildren.slice().sort(compareChildrenForLeaderboard(leaderboardPoints, leaderboardStreaks)),
+      points: leaderboardPoints,
+      streaks: leaderboardStreaks,
+    },
+  };
+};
+
 const isRewardEligibleForChild = (data, reward, childId) => {
   const childPoints = Number(data.points[childId] || 0);
   const childStreak = data.streaks[childId] || { current: 0, idealWeeksInRow: 0 };
@@ -3636,9 +3675,10 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
         taskId: completion.taskId,
         date: completion.date,
       });
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
-      return { status: 200, body: { completion } };
+      return { status: 200, body: { completion, statePatch } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -3690,9 +3730,10 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
         taskId: completion.taskId,
         date: completion.date,
       });
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
-      return { status: 200, body: { completion } };
+      return { status: 200, body: { completion, statePatch } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -3783,9 +3824,10 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
         childId: parsed.data.childId || null,
         date: parsed.data.date || null,
       });
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
-      return { status: 200, body: { ok: true, approvedCount: approvedIds.length, approvedIds } };
+      return { status: 200, body: { ok: true, approvedCount: approvedIds.length, approvedIds, statePatch } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -3850,6 +3892,7 @@ app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (r
         childId: parsed.data.childId || null,
         date: parsed.data.date || null,
       });
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
       return {
@@ -3859,6 +3902,7 @@ app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (r
           rejectedCount: rejectedIds.length,
           rejectedIds,
           skippedApprovedIds,
+          statePatch,
         },
       };
     });
@@ -3980,7 +4024,8 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
         return { status: 404, body: { error: 'Zadanie dodatkowe nie istnieje' } };
       }
       if (extraTask.status === 'APPROVED') {
-        return { status: 200, body: { extraTask } };
+        const statePatch = buildFamilyStatePatch(data, req.auth.user);
+        return { status: 200, body: { extraTask, statePatch } };
       }
 
       const now = new Date().toISOString();
@@ -4000,9 +4045,10 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
         title: extraTask.title,
       });
 
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
-      return { status: 200, body: { extraTask } };
+      return { status: 200, body: { extraTask, statePatch } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {
@@ -4042,9 +4088,10 @@ app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (re
         title: extraTask.title,
       });
 
+      const statePatch = buildFamilyStatePatch(data, req.auth.user);
       const saveTxStateData = createSaveStateData(tx.familyState);
       await saveTxStateData(state, data);
-      return { status: 200, body: { extraTask } };
+      return { status: 200, body: { extraTask, statePatch } };
     });
     res.status(result.status).json(result.body);
   } catch (error) {

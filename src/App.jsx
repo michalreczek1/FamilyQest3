@@ -13,6 +13,8 @@ import { useAutosave } from './hooks/useAutosave.js';
 import { useFamilyData } from './hooks/useFamilyData.js';
 import { useRewardUnlocks } from './hooks/useRewardUnlocks.js';
 
+const COMPLETION_ACTION_BATCH_DELAY_MS = 350;
+
 const App = () => {
   const storage = useMemo(() => createStorageClient(), []);
   const [user, setUser] = useState(null);
@@ -68,7 +70,15 @@ const App = () => {
   const [showPointHistory, setShowPointHistory] = useState(false);
   const [pointAdjustmentModal, setPointAdjustmentModal] = useState(null);
   const [parentPinGateOpen, setParentPinGateOpen] = useState(false);
+  const [pendingCompletionActionIds, setPendingCompletionActionIds] = useState([]);
+  const [pendingExtraTaskActionIds, setPendingExtraTaskActionIds] = useState([]);
   const serverMutationQueueRef = useRef(Promise.resolve());
+  const completionActionBatchRef = useRef({
+    approve: new Map(),
+    reject: new Map(),
+    approveTimer: null,
+    rejectTimer: null,
+  });
   const autosaveSnapshot = useMemo(() => ({
     children,
     tasks,
@@ -181,6 +191,146 @@ const App = () => {
     skipNextAutoSave: true,
     ...options
   }), [loadData]);
+  const addPendingCompletionActions = useCallback(ids => {
+    const validIds = ids.filter(Boolean);
+    if (validIds.length === 0) return;
+    setPendingCompletionActionIds(prev => [...new Set([...prev, ...validIds])]);
+  }, []);
+  const clearPendingCompletionActions = useCallback(ids => {
+    const validIds = new Set(ids.filter(Boolean));
+    if (validIds.size === 0) return;
+    setPendingCompletionActionIds(prev => prev.filter(id => !validIds.has(id)));
+  }, []);
+  const addPendingExtraTaskActions = useCallback(ids => {
+    const validIds = ids.filter(Boolean);
+    if (validIds.length === 0) return;
+    setPendingExtraTaskActionIds(prev => [...new Set([...prev, ...validIds])]);
+  }, []);
+  const clearPendingExtraTaskActions = useCallback(ids => {
+    const validIds = new Set(ids.filter(Boolean));
+    if (validIds.size === 0) return;
+    setPendingExtraTaskActionIds(prev => prev.filter(id => !validIds.has(id)));
+  }, []);
+  const applyServerStatePatch = useCallback(result => {
+    const patch = result?.statePatch;
+    if (!patch || typeof patch !== 'object') {
+      return false;
+    }
+
+    skipNextSaveRef.current = true;
+    skipAutoSaveUntilRef.current = Date.now() + 2000;
+    setConnectionError('');
+
+    if (Array.isArray(patch.completions)) setCompletions(patch.completions);
+    if (Array.isArray(patch.extraTasks)) setExtraTasks(patch.extraTasks);
+    if (patch.points && typeof patch.points === 'object') setPoints(patch.points);
+    if (patch.streaks && typeof patch.streaks === 'object') setStreaks(patch.streaks);
+    if (Array.isArray(patch.pointLedger)) setPointLedger(patch.pointLedger);
+    if (Array.isArray(patch.rewardUnlocks)) setRewardUnlocks(patch.rewardUnlocks);
+    if (Array.isArray(patch.rewardUnlockHistory)) setRewardUnlockHistory(patch.rewardUnlockHistory);
+    if (patch.dayPointGrants && typeof patch.dayPointGrants === 'object') setDayPointGrants(patch.dayPointGrants);
+    if (patch.weekBonusGrants && typeof patch.weekBonusGrants === 'object') setWeekBonusGrants(patch.weekBonusGrants);
+    if (patch.taskPointGrants && typeof patch.taskPointGrants === 'object') setTaskPointGrants(patch.taskPointGrants);
+    if (Array.isArray(patch.auditLogs)) setAuditLogs(patch.auditLogs);
+    if (patch.familyLeaderboard && typeof patch.familyLeaderboard === 'object') {
+      setFamilyLeaderboard({
+        children: patch.familyLeaderboard.children || [],
+        points: patch.familyLeaderboard.points || {},
+        streaks: patch.familyLeaderboard.streaks || {},
+      });
+    }
+
+    return true;
+  }, [skipNextSaveRef, skipAutoSaveUntilRef]);
+  const applyServerStatePatchOrReload = useCallback(async result => {
+    if (applyServerStatePatch(result)) return true;
+    await reloadAfterServerMutation();
+    return false;
+  }, [applyServerStatePatch, reloadAfterServerMutation]);
+  const showConfetti = useCallback(() => {
+    for (let i = 0; i < 50; i++) {
+      setTimeout(() => {
+        const confetti = document.createElement('div');
+        confetti.className = 'confetti';
+        confetti.style.left = Math.random() * 100 + '%';
+        confetti.style.top = '-10px';
+        confetti.style.background = ['#FF6B9D', '#FEC84B', '#12B76A', '#7C3AED', '#F97316'][Math.floor(Math.random() * 5)];
+        document.body.appendChild(confetti);
+        setTimeout(() => confetti.remove(), 3000);
+      }, i * 30);
+    }
+  }, []);
+  const flushCompletionActionBatch = useCallback(actionType => {
+    const ref = completionActionBatchRef.current;
+    const isApprove = actionType === 'approve';
+    const queue = isApprove ? ref.approve : ref.reject;
+    const timer = isApprove ? ref.approveTimer : ref.rejectTimer;
+    if (timer) {
+      window.clearTimeout(timer);
+      if (isApprove) {
+        ref.approveTimer = null;
+      } else {
+        ref.rejectTimer = null;
+      }
+    }
+
+    const items = [...queue.values()];
+    queue.clear();
+    const ids = items.map(item => item.completion?.id).filter(Boolean);
+    const shouldCelebrate = isApprove && items.some(item => item.celebrate !== false);
+    if (ids.length === 0) return Promise.resolve();
+
+    return runServerMutation(async () => {
+      try {
+        const result = await apiRequest(`/api/completions/${isApprove ? 'approve-bulk' : 'reject-bulk'}`, {
+          method: 'POST',
+          body: { ids }
+        });
+        await applyServerStatePatchOrReload(result);
+
+        const changedCount = Number(isApprove ? result?.approvedCount || 0 : result?.rejectedCount || 0);
+        if (changedCount === 0) {
+          alert(isApprove
+            ? 'Nie zatwierdzono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.'
+            : 'Nie odrzucono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
+          return;
+        }
+        if (shouldCelebrate) {
+          showConfetti();
+        }
+      } catch (e) {
+        alert(e.message || (isApprove ? 'Nie udało się zatwierdzić zadania' : 'Nie udało się odrzucić zadania'));
+      } finally {
+        clearPendingCompletionActions(ids);
+      }
+    });
+  }, [runServerMutation, applyServerStatePatchOrReload, clearPendingCompletionActions, showConfetti]);
+  const enqueueCompletionAction = useCallback((actionType, completion, { celebrate = true } = {}) => {
+    if (!completion?.id) return Promise.resolve();
+    addPendingCompletionActions([completion.id]);
+    const ref = completionActionBatchRef.current;
+    const isApprove = actionType === 'approve';
+    const queue = isApprove ? ref.approve : ref.reject;
+    const timer = isApprove ? ref.approveTimer : ref.rejectTimer;
+    queue.set(completion.id, { completion, celebrate });
+    if (timer) {
+      window.clearTimeout(timer);
+    }
+    const nextTimer = window.setTimeout(() => {
+      flushCompletionActionBatch(actionType);
+    }, COMPLETION_ACTION_BATCH_DELAY_MS);
+    if (isApprove) {
+      ref.approveTimer = nextTimer;
+    } else {
+      ref.rejectTimer = nextTimer;
+    }
+    return Promise.resolve();
+  }, [addPendingCompletionActions, flushCompletionActionBatch]);
+  useEffect(() => () => {
+    const ref = completionActionBatchRef.current;
+    if (ref.approveTimer) window.clearTimeout(ref.approveTimer);
+    if (ref.rejectTimer) window.clearTimeout(ref.rejectTimer);
+  }, []);
   useEffect(() => {
     clearLegacyAuthToken();
     loadData();
@@ -523,34 +673,14 @@ const App = () => {
     }
   };
   const approveTask = async (completion, {
-    celebrate = true,
-    reload = true
+    celebrate = true
   } = {}) => {
     if (!completion || completion.approvedByParent) return;
-    return runServerMutation(async () => {
-      try {
-      await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/approve`, {
-        method: 'POST'
-      });
-      if (celebrate) showConfetti();
-      if (reload) await reloadAfterServerMutation();
-      } catch (e) {
-        alert(e.message || 'Nie udało się zatwierdzić zadania');
-      }
-    });
+    return enqueueCompletionAction('approve', completion, { celebrate });
   };
   const rejectTask = async completion => {
     if (!completion) return;
-    return runServerMutation(async () => {
-      try {
-      await apiRequest(`/api/completions/${encodeURIComponent(completion.id)}/reject`, {
-        method: 'POST'
-      });
-      await reloadAfterServerMutation();
-      } catch (e) {
-        alert(e.message || 'Nie udało się odrzucić zadania');
-      }
-    });
+    return enqueueCompletionAction('reject', completion);
   };
   const reverseApproval = async completion => {
     if (!completion || !completion.approvedByParent) return;
@@ -592,12 +722,14 @@ const App = () => {
       });
       const completionId = result?.completion?.id;
       if (completionId) {
-        await apiRequest(`/api/completions/${encodeURIComponent(completionId)}/approve`, {
+        const approvalResult = await apiRequest(`/api/completions/${encodeURIComponent(completionId)}/approve`, {
           method: 'POST'
         });
+        await applyServerStatePatchOrReload(approvalResult);
+      } else {
+        await reloadAfterServerMutation();
       }
       showConfetti();
-      await reloadAfterServerMutation();
       } catch (e) {
         alert(e.message || 'Nie udało się zaliczyć zadania');
       }
@@ -638,31 +770,37 @@ const App = () => {
       alert('Podaj poprawną liczbę punktów.');
       return;
     }
+    addPendingExtraTaskActions([extraTask.id]);
     return runServerMutation(async () => {
       try {
-      await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/approve`, {
+      const result = await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/approve`, {
         method: 'POST',
         body: {
           points: pointsToGrant
         }
       });
+      await applyServerStatePatchOrReload(result);
       showConfetti();
-      await reloadAfterServerMutation();
       } catch (e) {
         alert(e.message || 'Nie udało się zatwierdzić zadania dodatkowego');
+      } finally {
+        clearPendingExtraTaskActions([extraTask.id]);
       }
     });
   };
   const rejectExtraTask = async extraTask => {
     if (!extraTask) return;
+    addPendingExtraTaskActions([extraTask.id]);
     return runServerMutation(async () => {
       try {
-      await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/reject`, {
+      const result = await apiRequest(`/api/extra-tasks/${encodeURIComponent(extraTask.id)}/reject`, {
         method: 'POST'
       });
-      await reloadAfterServerMutation();
+      await applyServerStatePatchOrReload(result);
       } catch (e) {
         alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
+      } finally {
+        clearPendingExtraTaskActions([extraTask.id]);
       }
     });
   };
@@ -703,10 +841,12 @@ const App = () => {
   const approveAllPending = async (list = null) => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
+    const queueIds = queue.map(item => item.id).filter(Boolean);
+    addPendingCompletionActions(queueIds);
     return runServerMutation(async () => {
       try {
       const bulkRequest = {
-        ids: queue.map(item => item.id).filter(Boolean)
+        ids: queueIds
       };
       if (approvalFilterChildId !== 'ALL') {
         bulkRequest.childId = approvalFilterChildId;
@@ -719,7 +859,7 @@ const App = () => {
         body: bulkRequest
       });
       const approvedCount = Number(result?.approvedCount || 0);
-      await reloadAfterServerMutation();
+      await applyServerStatePatchOrReload(result);
       if (approvedCount === 0) {
         alert('Nie zatwierdzono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
         return;
@@ -727,16 +867,20 @@ const App = () => {
       showConfetti();
       } catch (e) {
         alert(e.message || 'Nie udało się zatwierdzić zadań');
+      } finally {
+        clearPendingCompletionActions(queueIds);
       }
     });
   };
   const rejectAllPending = async (list = null) => {
     const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
+    const queueIds = queue.map(item => item.id).filter(Boolean);
+    addPendingCompletionActions(queueIds);
     return runServerMutation(async () => {
       try {
       const bulkRequest = {
-        ids: queue.map(item => item.id).filter(Boolean)
+        ids: queueIds
       };
       if (approvalFilterChildId !== 'ALL') {
         bulkRequest.childId = approvalFilterChildId;
@@ -749,27 +893,16 @@ const App = () => {
         body: bulkRequest
       });
       const rejectedCount = Number(result?.rejectedCount || 0);
-      await reloadAfterServerMutation();
+      await applyServerStatePatchOrReload(result);
       if (rejectedCount === 0) {
         alert('Nie odrzucono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
       }
       } catch (e) {
         alert(e.message || 'Nie udało się odrzucić zadań');
+      } finally {
+        clearPendingCompletionActions(queueIds);
       }
     });
-  };
-  const showConfetti = () => {
-    for (let i = 0; i < 50; i++) {
-      setTimeout(() => {
-        const confetti = document.createElement('div');
-        confetti.className = 'confetti';
-        confetti.style.left = Math.random() * 100 + '%';
-        confetti.style.top = '-10px';
-        confetti.style.background = ['#FF6B9D', '#FEC84B', '#12B76A', '#7C3AED', '#F97316'][Math.floor(Math.random() * 5)];
-        document.body.appendChild(confetti);
-        setTimeout(() => confetti.remove(), 3000);
-      }, i * 30);
-    }
   };
   useEffect(() => {
     if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
@@ -824,7 +957,7 @@ const App = () => {
       showConfetti();
     }
     localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id), ...newPointAdjustments.map(adjustment => adjustment.id)].slice(-200)));
-  }, [view, user?.role, selectedChild?.id, completions, extraTasks, pointAdjustments, tasks]);
+  }, [view, user?.role, selectedChild, completions, extraTasks, pointAdjustments, tasks, showConfetti]);
   const addChild = async (name, avatar, activeDays) => {
     return runServerMutation(async () => {
       try {
@@ -1249,6 +1382,8 @@ const App = () => {
       pointAdjustmentModal: pointAdjustmentModal,
       isOnline: isOnline,
       syncing: syncing,
+      pendingCompletionActionIds: pendingCompletionActionIds,
+      pendingExtraTaskActionIds: pendingExtraTaskActionIds,
       user: user,
       parentUsers: parentUsers,
       setView: nextView => {

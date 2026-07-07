@@ -97,6 +97,25 @@ const startStaticServer = () =>
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const buildStatePatch = (state) => ({
+  completions: state.completions,
+  extraTasks: state.extraTasks,
+  points: state.points,
+  streaks: state.streaks,
+  pointLedger: state.pointLedger,
+  rewardUnlocks: state.rewardUnlocks,
+  rewardUnlockHistory: [],
+  dayPointGrants: state.dayPointGrants,
+  weekBonusGrants: state.weekBonusGrants,
+  taskPointGrants: state.taskPointGrants,
+  auditLogs: state.auditLogs,
+  familyLeaderboard: {
+    children: [{ id: child.id, name: child.name, avatar: child.avatar }],
+    points: state.points,
+    streaks: state.streaks,
+  },
+});
+
 const installApiMocks = async (page, state, metrics) => {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
@@ -144,6 +163,7 @@ const installApiMocks = async (page, state, metrics) => {
 
     const storageMatch = apiPath.match(/^\/api\/storage\/get\/([^/]+)$/);
     if (storageMatch) {
+      metrics.storageGets += 1;
       const key = decodeURIComponent(storageMatch[1]);
       await route.fulfill({
         contentType: 'application/json',
@@ -158,28 +178,40 @@ const installApiMocks = async (page, state, metrics) => {
       return;
     }
 
-    const rejectMatch = apiPath.match(/^\/api\/completions\/([^/]+)\/reject$/);
-    if (rejectMatch && route.request().method() === 'POST') {
-      metrics.inFlightRejects += 1;
-      metrics.maxConcurrentRejects = Math.max(metrics.maxConcurrentRejects, metrics.inFlightRejects);
-      metrics.rejectIds.push(decodeURIComponent(rejectMatch[1]));
-      await wait(180);
-      state.completions = state.completions.map((completion) =>
-        completion.id === decodeURIComponent(rejectMatch[1])
-          ? {
-              ...completion,
-              doneByChild: false,
-              approvedByParent: false,
-              rejectedByParent: true,
-              rejectedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            }
-          : completion,
-      );
-      metrics.inFlightRejects -= 1;
+    if (apiPath === '/api/completions/reject-bulk' && route.request().method() === 'POST') {
+      const body = JSON.parse(route.request().postData() || '{}');
+      metrics.bulkRejectRequests.push(body);
+      const requestedIds = new Set(body.ids || []);
+      const rejectedIds = [];
+      await wait(700);
+      state.completions = state.completions.map((completion) => {
+        if (
+          !completion.doneByChild ||
+          completion.approvedByParent ||
+          completion.rejectedByParent ||
+          (requestedIds.size > 0 && !requestedIds.has(completion.id))
+        ) {
+          return completion;
+        }
+        rejectedIds.push(completion.id);
+        return {
+          ...completion,
+          doneByChild: false,
+          approvedByParent: false,
+          rejectedByParent: true,
+          rejectedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      });
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ completion: state.completions.find((item) => item.id === decodeURIComponent(rejectMatch[1])) }),
+        body: JSON.stringify({
+          ok: true,
+          rejectedCount: rejectedIds.length,
+          rejectedIds,
+          skippedApprovedIds: [],
+          statePatch: buildStatePatch(state),
+        }),
       });
       return;
     }
@@ -195,9 +227,8 @@ const installApiMocks = async (page, state, metrics) => {
   const browser = await chromium.launch({ headless: true });
   const state = createState();
   const metrics = {
-    inFlightRejects: 0,
-    maxConcurrentRejects: 0,
-    rejectIds: [],
+    bulkRejectRequests: [],
+    storageGets: 0,
     mergeRequests: 0,
   };
   const dialogMessages = [];
@@ -217,10 +248,17 @@ const installApiMocks = async (page, state, metrics) => {
 
     const rejectButtons = await page.locator('.task-item').getByRole('button', { name: /Odrzuć/ }).elementHandles();
     assert.strictEqual(rejectButtons.length, 3, 'test fixture should show three reject buttons');
+    const storageGetsAfterInitialLoad = metrics.storageGets;
     const rejectButtonLocator = page.locator('.task-item').getByRole('button', { name: /Odrzuć/ });
-    await rejectButtonLocator.nth(0).click();
-    await rejectButtonLocator.nth(1).click();
-    await rejectButtonLocator.nth(2).click();
+    await rejectButtonLocator.evaluateAll((buttons) => {
+      buttons.forEach((button) => button.click());
+    });
+
+    await page.waitForFunction(() => document.body.innerText.includes('Brak zadań do zatwierdzenia'), null, {
+      timeout: 250,
+    });
+    assert(state.completions.every((completion) => !completion.rejectedByParent), 'UI should clear before the delayed backend response updates state');
+    await wait(1200);
 
     try {
       await page.waitForFunction(() => document.body.innerText.includes('Brak zadań do zatwierdzenia'), null, {
@@ -244,16 +282,17 @@ const installApiMocks = async (page, state, metrics) => {
     }
     await page.screenshot({ path: path.join(outDir, 'after-rapid-rejects.png'), fullPage: true });
 
-    assert.deepStrictEqual([...metrics.rejectIds].sort(), ['queue-comp-1', 'queue-comp-2', 'queue-comp-3']);
-    assert.strictEqual(metrics.maxConcurrentRejects, 1, 'rapid parent actions must be serialized before hitting the API');
+    assert.strictEqual(metrics.bulkRejectRequests.length, 1, 'rapid parent actions should be batched into one backend request');
+    assert.deepStrictEqual([...metrics.bulkRejectRequests[0].ids].sort(), ['queue-comp-1', 'queue-comp-2', 'queue-comp-3']);
+    assert.strictEqual(metrics.storageGets, storageGetsAfterInitialLoad, 'statePatch should avoid a full storage reload after batched action');
     assert(!dialogMessages.some((message) => message.includes('Stan rodziny zmienił')), 'version conflict dialog should not appear');
     assert(state.completions.every((completion) => completion.rejectedByParent), 'all clicked completions should be rejected');
 
     console.log(
       JSON.stringify(
         {
-          rejectIds: metrics.rejectIds,
-          maxConcurrentRejects: metrics.maxConcurrentRejects,
+          bulkRejectRequests: metrics.bulkRejectRequests,
+          storageGets: metrics.storageGets,
           mergeRequests: metrics.mergeRequests,
           dialogs: dialogMessages,
           screenshot: path.join(outDir, 'after-rapid-rejects.png'),
