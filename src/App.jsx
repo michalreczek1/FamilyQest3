@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CHILD_SESSION_KEY, HISTORY_DAYS } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, createStorageClient } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
-import { isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
+import { isTaskActiveForDate, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
 import LoginView from './components/auth/LoginView.jsx';
 import ChildSelectionView from './components/auth/ChildSelectionView.jsx';
 import ChildView from './components/child/ChildView.jsx';
@@ -11,7 +11,6 @@ import ParentPinGate from './components/auth/ParentPinGate.jsx';
 import ParentPanel from './components/parent/ParentPanel.jsx';
 import { useAutosave } from './hooks/useAutosave.js';
 import { useFamilyData } from './hooks/useFamilyData.js';
-import { useRewardUnlocks } from './hooks/useRewardUnlocks.js';
 
 const COMPLETION_ACTION_BATCH_DELAY_MS = 350;
 
@@ -108,6 +107,7 @@ const App = () => {
     hasLoadedSnapshot,
     snapshot: autosaveSnapshot,
     setSyncing,
+    enabled: false,
   });
   const { resetFamilyData, loadData } = useFamilyData({
     storage,
@@ -361,23 +361,22 @@ const App = () => {
   }, [user?.id, user?.role, hasLoadedSnapshot, view, parentTab, selectedChild?.id]);
   const getDateString = (date = new Date()) => toDateString(date);
   const activeChildren = children.filter(c => !c.archived);
-  const { claimReward } = useRewardUnlocks({
-    activeChildren,
-    rewards,
-    points,
-    streaks,
-    rewardUnlocks,
-    setRewardUnlocks,
-    setRewardUnlockHistory,
-    setShowRewardOverlay,
-    addAuditLog,
-  });
+  const claimReward = useCallback(async unlockId => runServerMutation(async () => {
+    try {
+      const result = await apiRequest(`/api/rewards/unlocks/${encodeURIComponent(unlockId)}/claim`, {
+        method: 'POST',
+      });
+      await applyServerStatePatchOrReload(result);
+    } catch (error) {
+      alert(error.message || 'Nie udało się oznaczyć nagrody jako wydanej');
+    }
+  }), [applyServerStatePatchOrReload, runServerMutation]);
   const evaluateDay = (childId, date) => {
     const child = children.find(c => c.id === childId);
     if (!child) return 'NOT_ACTIVE';
     const adjustedDay = getDayNumber(date);
     if (!child.activeDays.includes(adjustedDay)) return 'NOT_ACTIVE';
-    const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && t.active !== false && isTaskScheduledForDate(t, date));
+    const minTasks = tasks.filter(t => t.childId === childId && t.tier === 'MIN' && isTaskActiveForDate(t, date) && isTaskScheduledForDate(t, date));
     if (minTasks.length === 0) return 'NO_REQUIRED_TASKS';
     const approvedCount = minTasks.filter(task => {
       return completions.some(c => c.taskId === task.id && c.childId === childId && c.date === date && c.approvedByParent);
@@ -639,40 +638,23 @@ const App = () => {
     if (!selectedChild) return;
     const completionDate = date || getDateString();
     const existing = completions.find(c => c.taskId === taskId && c.date === completionDate && c.childId === selectedChild.id);
-    if (existing) {
-      if (existing.approvedByParent) return;
-      existing.doneByChild = !existing.doneByChild;
-      existing.updatedAt = new Date().toISOString();
-      if (!existing.doneByChild) {
-        existing.approvedByParent = false;
-        existing.approvedAt = null;
+    if (existing?.approvedByParent) return;
+    return runServerMutation(async () => {
+      try {
+        await apiRequest('/api/completions', {
+          method: 'POST',
+          body: {
+            taskId,
+            childId: selectedChild.id,
+            date: completionDate,
+            doneByChild: existing ? !existing.doneByChild : true,
+          },
+        });
+        await reloadAfterServerMutation({ preserveView: true });
+      } catch (error) {
+        alert(error.message || 'Nie udało się zapisać wykonania zadania');
       }
-      setCompletions([...completions]);
-      addAuditLog('TOGGLE_TASK', 'COMPLETION', existing.id, {
-        childId: selectedChild.id,
-        taskId,
-        date: completionDate,
-        doneByChild: existing.doneByChild
-      });
-    } else {
-      const newCompletion = {
-        id: `comp-${Date.now()}`,
-        taskId,
-        childId: selectedChild.id,
-        date: completionDate,
-        doneByChild: true,
-        approvedByParent: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setCompletions([...completions, newCompletion]);
-      addAuditLog('TOGGLE_TASK', 'COMPLETION', newCompletion.id, {
-        childId: selectedChild.id,
-        taskId,
-        date: completionDate,
-        doneByChild: true
-      });
-    }
+    });
   };
   const approveTask = async (completion, {
     celebrate = true
@@ -990,60 +972,63 @@ const App = () => {
       alert('Wybierz dziecko albo dodaj najpierw profil dziecka.');
       return;
     }
-    const now = new Date().toISOString();
-    const baseId = Date.now();
-    const newTasks = targetChildren.map((child, index) => ({
-      id: `task-${baseId}-${index}`,
-      childId: child.id,
-      title,
-      tier,
-      points: points || 0,
-      description,
-      daysOfWeek: normalizeTaskArchiveDays(daysOfWeek),
-      active: true,
-      createdAt: now
-    }));
-    setTasks(prev => [...prev, ...newTasks]);
-    newTasks.forEach(task => {
-      addAuditLog('ADD_TASK', 'TASK', task.id, {
-        childId: task.childId,
-        tier,
-        points: task.points,
-        bulk: childId === 'ALL'
-      });
+    return runServerMutation(async () => {
+      try {
+        for (const child of targetChildren) {
+          await apiRequest('/api/tasks', {
+            method: 'POST',
+            body: {
+              childId: child.id,
+              title: String(title || '').trim(),
+              tier,
+              points: Number(points || 0),
+              description: String(description || '').trim(),
+              daysOfWeek: normalizeTaskArchiveDays(daysOfWeek),
+            },
+          });
+        }
+        setShowModal(null);
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się dodać zadania');
+      }
     });
-    setShowModal(null);
   };
   const addReward = async (title, description, requiredPoints, requiredStreak, requiredIdealWeeks) => {
-    const newReward = {
-      id: `reward-${Date.now()}`,
-      title,
-      description,
-      requiredPoints,
-      requiredStreak,
-      requiredIdealWeeks,
-      active: true,
-      createdAt: new Date().toISOString()
-    };
-    setRewards([...rewards, newReward]);
-    addAuditLog('ADD_REWARD', 'REWARD', newReward.id, {
-      requiredPoints,
-      requiredStreak,
-      requiredIdealWeeks
+    return runServerMutation(async () => {
+      try {
+        await apiRequest('/api/rewards', {
+          method: 'POST',
+          body: { title, description, requiredPoints, requiredStreak, requiredIdealWeeks },
+        });
+        setShowModal(null);
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się dodać nagrody');
+      }
     });
-    setShowModal(null);
   };
   const updateReward = (rewardId, updates) => {
-    setRewards(prev => prev.map(reward => reward.id === rewardId ? {
-      ...reward,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    } : reward));
-    addAuditLog('UPDATE_REWARD', 'REWARD', rewardId, updates);
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(`/api/rewards/${encodeURIComponent(rewardId)}`, {
+          method: 'PUT',
+          body: updates,
+        });
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się zaktualizować nagrody');
+      }
+    });
   };
   const archiveReward = rewardId => {
-    updateReward(rewardId, {
-      active: false
+    return runServerMutation(async () => {
+      try {
+        await apiRequest(`/api/rewards/${encodeURIComponent(rewardId)}`, { method: 'DELETE' });
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się zarchiwizować nagrody');
+      }
     });
   };
   const updateChild = (childId, updates) => {
@@ -1097,7 +1082,6 @@ const App = () => {
           updatedAt: new Date().toISOString()
         } : task));
         await reloadAfterServerMutation();
-        addAuditLog('UPDATE_TASK', 'TASK', taskId, payload);
         return response.task;
       } catch (error) {
         alert(error.message || 'Nie udało się zapisać zadania');
@@ -1134,11 +1118,14 @@ const App = () => {
     });
   };
   const updateFamilyGoal = updates => {
-    setFamilyGoal(prev => ({
-      ...prev,
-      ...updates
-    }));
-    addAuditLog('UPDATE_FAMILY_GOAL', 'FAMILY_GOAL', 'family-goal', updates);
+    return runServerMutation(async () => {
+      try {
+        await apiRequest('/api/family-goal', { method: 'PUT', body: updates });
+        await reloadAfterServerMutation();
+      } catch (error) {
+        alert(error.message || 'Nie udało się zaktualizować celu rodzinnego');
+      }
+    });
   };
   const loadParentUsers = async () => {
     const response = await apiRequest('/api/auth/parents');

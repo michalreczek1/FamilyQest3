@@ -26,6 +26,7 @@ model User {
   id                  String               @id @default(uuid())
   email               String               @unique
   passwordHash        String
+  authVersion         Int                  @default(0)
   role                UserRole             @default(PARENT)
   active              Boolean              @default(true)
   pinCode             String?

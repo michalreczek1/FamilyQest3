@@ -1,4 +1,4 @@
-import { getDayNumber } from './dates.js';
+import { getDayNumber, toDateString } from './dates.js';
 
 export const TASK_TEMPLATES = [{
   id: 'tpl-bed',
@@ -50,6 +50,18 @@ export const findAvailableChildAccessCode = (children, preferredCode = null, exc
 export const isTaskScheduledForDate = (task, dateInput) => {
   if (!Array.isArray(task?.daysOfWeek) || task.daysOfWeek.length === 0) return true;
   return task.daysOfWeek.includes(getDayNumber(dateInput));
+};
+export const isTaskActiveForDate = (task, dateInput) => {
+  if (!task) return false;
+  const date = toDateString(dateInput);
+  const createdDate = task.createdAt ? toDateString(task.createdAt) : null;
+  if (createdDate && date < createdDate) return false;
+
+  const archivedDate = task.archivedAt || (task.active === false ? task.updatedAt : null);
+  if (!archivedDate) return task.active !== false;
+  if (date < toDateString(archivedDate)) return true;
+
+  return Boolean(task.active !== false && task.restoredAt && date >= toDateString(task.restoredAt));
 };
 export const normalizeTaskArchiveText = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl');
 export const normalizeTaskArchiveDays = days => Array.isArray(days) ? [...new Set(days.map(day => Number(day)).filter(day => Number.isInteger(day) && day >= 1 && day <= 7))].sort((a, b) => a - b) : [];

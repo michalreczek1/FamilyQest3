@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api.js';
-import { isTaskScheduledForDate } from '../../lib/tasks.js';
+import { isTaskActiveForDate, isTaskScheduledForDate } from '../../lib/tasks.js';
 import ModalOverlay from '../common/ModalOverlay.jsx';
 import WeeklyLeaderboardPanel from '../leaderboard/WeeklyLeaderboardPanel.jsx';
 import RewardOverlay from '../rewards/RewardOverlay.jsx';
@@ -50,7 +50,7 @@ const ChildView = ({
     const today = getDateString();
     const selectedTaskDate = childTaskDate || today;
     const selectedTaskDateLabel = selectedTaskDate === today ? 'dzisiaj' : selectedTaskDate;
-    const childTasks = tasks.filter(t => t.childId === selectedChild.id && t.active !== false);
+    const childTasks = tasks.filter(t => t.childId === selectedChild.id && isTaskActiveForDate(t, selectedTaskDate));
     const selectedDateTasks = childTasks.filter(t => isTaskScheduledForDate(t, selectedTaskDate));
     const selectedDateCompletions = completions.filter(c => c.childId === selectedChild.id && c.date === selectedTaskDate);
     const childExtraTasks = extraTasks.filter(task => task.childId === selectedChild.id).sort((a, b) => Date.parse(b.updatedAt || b.submittedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.submittedAt || a.createdAt || 0)).slice(0, 8);

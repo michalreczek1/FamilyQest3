@@ -61,7 +61,7 @@ const restoreFamilyState = async (parentToken, state) => {
 maybeDescribe('FamilyQuest API integration', () => {
   jest.setTimeout(60000);
 
-  test('storage sanitizer strips child access codes from children and audit logs', () => {
+test('storage sanitizer strips child access codes from children and audit logs', () => {
     const sanitized = __test.sanitizeStateDataForStorage(makeBackupState({
       children: [{ id: 'child-a', name: 'A', avatar: '⭐', activeDays: [1], accessCode: '1234' }],
       auditLogs: [{ id: 'audit-a', action: 'UPDATE_CHILD', details: { accessCode: '1234', name: 'A' } }],
@@ -1386,5 +1386,91 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(restoredUnlock).toBeTruthy();
     expect(restoredUnlock.id).toBe(firstUnlock.id);
     expect(restoredUnlock.restoredAt).toBeTruthy();
+  });
+});
+
+test('same-day task archiving keeps an already approved completion, points and passed day', () => {
+  const data = makeBackupState({
+    children: [{ id: 'child-a', name: 'A', avatar: '⭐', activeDays: [1, 2, 3, 4, 5, 6, 7], createdAt: '2026-01-01T08:00:00.000Z' }],
+    tasks: [{ id: 'task-a', childId: 'child-a', title: 'Minimum', tier: 'MIN', points: 2, daysOfWeek: [], active: true, createdAt: '2026-01-01T08:00:00.000Z' }],
+    completions: [{ id: 'completion-a', childId: 'child-a', taskId: 'task-a', date: '2026-01-05', doneByChild: true, approvedByParent: true, approvedAt: '2026-01-05T09:00:00.000Z' }],
+  });
+
+  __test.recomputePointsAndGrants(data);
+  expect(data.points['child-a']).toBe(4);
+
+  data.tasks[0] = {
+    ...data.tasks[0],
+    active: false,
+    archivedAt: '2026-01-05T18:00:00.000Z',
+    updatedAt: '2026-01-05T18:00:00.000Z',
+  };
+  __test.recomputePointsAndGrants(data);
+
+  expect(data.points['child-a']).toBeGreaterThanOrEqual(4);
+  expect(data.pointLedger.some((entry) => entry.type === 'TASK_APPROVED' && entry.delta === 2)).toBe(true);
+  expect(data.pointLedger.some((entry) => entry.type === 'DAY_PASSED')).toBe(true);
+});
+
+maybeDescribe('Task history invariants', () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  test('does not rewrite approved history after task rule changes and keeps same-day archive points', async () => {
+    const suffix = `history-${Date.now()}`;
+    const parentToken = await registerParent(suffix);
+    const childId = `history-child-${suffix}`;
+    const taskId = `history-task-${suffix}`;
+    const today = getToday();
+    const approvedAt = new Date(Date.now() - 60 * 1000).toISOString();
+
+    await restoreFamilyState(parentToken, {
+      children: [{
+        id: childId,
+        name: 'Historia',
+        avatar: '⭐',
+        activeDays: [1, 2, 3, 4, 5, 6, 7],
+        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      }],
+      tasks: [{
+        id: taskId,
+        childId,
+        title: 'Stare minimum',
+        tier: 'MIN',
+        points: 2,
+        daysOfWeek: [],
+        active: true,
+        createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      }],
+      completions: [{
+        id: `history-completion-${suffix}`,
+        taskId,
+        childId,
+        date: today,
+        doneByChild: true,
+        approvedByParent: true,
+        approvedAt,
+        createdAt: approvedAt,
+        updatedAt: approvedAt,
+      }],
+    });
+
+    const editRes = await request(app)
+      .put(`/api/tasks/${taskId}`)
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ points: 50 });
+    expect(editRes.status).toBe(409);
+
+    const archiveRes = await request(app)
+      .delete(`/api/tasks/${taskId}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(archiveRes.status).toBe(200);
+
+    const pointsRes = await request(app)
+      .get('/api/storage/get/points')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(pointsRes.status).toBe(200);
+    expect(pointsRes.body.value[childId]).toBeGreaterThanOrEqual(4);
   });
 });

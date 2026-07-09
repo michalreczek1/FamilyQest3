@@ -326,6 +326,7 @@ const signAuthToken = (user) =>
       familyId: user.familyId,
       role: user.role,
       tokenType: 'USER',
+      authVersion: Number(user.authVersion || 0),
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN },
@@ -490,10 +491,11 @@ const authMiddleware = async (req, res, next) => {
         familyId: true,
         active: true,
         pinCode: true,
+        authVersion: true,
       },
     });
 
-    if (!user || !user.active) {
+    if (!user || !user.active || Number(payload.authVersion) !== Number(user.authVersion || 0)) {
       res.status(401).json({ error: 'Sesja jest nieważna' });
       return;
     }
@@ -783,12 +785,23 @@ const getTaskArchiveFingerprint = (task) =>
 
 const isApprovedCompletionBeforeArchive = (task, completion) => {
   if (!task) return false;
-  const archivedDate = getTaskArchiveDate(task);
-  if (!archivedDate) return true;
-  if (completion?.date < archivedDate) return true;
-
+  const archivedAt = task.archivedAt || (task.active === false ? task.updatedAt : null);
+  if (!archivedAt) return true;
   const restoredDate = getTaskRestoreDate(task);
-  return Boolean(task.active !== false && restoredDate && completion?.date >= restoredDate);
+  if (task.active !== false && restoredDate && completion?.date >= restoredDate) {
+    return true;
+  }
+  const archivedTimestamp = Date.parse(archivedAt);
+  const completionTimestamp = Date.parse(
+    completion?.approvedAt || completion?.updatedAt || completion?.createdAt || '',
+  );
+  if (Number.isFinite(archivedTimestamp) && Number.isFinite(completionTimestamp)) {
+    return completionTimestamp < archivedTimestamp;
+  }
+
+  const archivedDate = getTaskArchiveDate(task);
+  if (completion?.date < archivedDate) return true;
+  return false;
 };
 
 const getWeekStart = (dateInput) => {
@@ -1264,7 +1277,15 @@ const evaluateDayForData = (data, childId, date) => {
     (task) =>
       task.childId === childId &&
       task.tier === 'MIN' &&
-      isTaskActiveForDate(task, date) &&
+      (isTaskActiveForDate(task, date) ||
+        data.completions.some(
+          (completion) =>
+            completion.taskId === task.id &&
+            completion.childId === childId &&
+            completion.date === date &&
+            completion.approvedByParent &&
+            isApprovedCompletionBeforeArchive(task, completion),
+        )) &&
       isTaskScheduledForDate(task, date),
   );
   if (minTasks.length === 0) return 'NO_REQUIRED_TASKS';
@@ -1506,7 +1527,13 @@ const recomputePointsAndGrants = (data) => {
     .forEach((completion) => {
       const child = childrenById.get(completion.childId);
       const task = tasksById.get(completion.taskId);
-      if (!child || !task || !isApprovedCompletionBeforeArchive(task, completion) || validateTaskCompletionDate(child, task, completion.date)) return;
+      if (
+        !child ||
+        !task ||
+        task.childId !== completion.childId ||
+        !isApprovedCompletionBeforeArchive(task, completion) ||
+        validateTaskCompletionDate(child, task, completion.date)
+      ) return;
 
       const taskPointKey = getTaskPointKey(completion.childId, completion.taskId, completion.date, task);
       if (Number(task.points || 0) > 0 && !taskPointGrants[taskPointKey]) {
@@ -2211,7 +2238,13 @@ const rejectInvalidPendingCompletions = (data, now = new Date().toISOString()) =
     }
     const child = childrenById.get(completion.childId);
     const task = tasksById.get(completion.taskId);
-    if (child && task && !validateTaskCompletionDate(child, task, completion.date)) {
+    if (
+      child &&
+      task &&
+      task.childId === completion.childId &&
+      isTaskActiveForDate(task, completion.date) &&
+      !validateTaskCompletionDate(child, task, completion.date)
+    ) {
       return completion;
     }
     return {
@@ -2602,7 +2635,7 @@ app.put('/api/auth/password', authMiddleware, async (req, res) => {
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_ROUNDS);
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash },
+      data: { passwordHash, authVersion: { increment: 1 } },
     });
 
     res.json({ ok: true });
@@ -2786,7 +2819,7 @@ app.put('/api/auth/password/reset', authMiddleware, requireParent, async (req, r
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_ROUNDS);
     await prisma.user.update({
       where: { id: target.id },
-      data: { passwordHash },
+      data: { passwordHash, authVersion: { increment: 1 } },
     });
     res.json({ ok: true });
   } catch (error) {
@@ -2861,7 +2894,7 @@ app.post('/api/auth/reset-password/token', async (req, res) => {
     await prisma.$transaction([
       prisma.user.update({
         where: { id: reset.userId },
-        data: { passwordHash },
+        data: { passwordHash, authVersion: { increment: 1 } },
       }),
       prisma.passwordResetToken.update({
         where: { id: reset.id },
@@ -3344,7 +3377,26 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
     }
     next.updatedAt = new Date().toISOString();
 
+    const current = data.tasks[index];
+    const hasApprovedHistory = data.completions.some(
+      (completion) => completion.taskId === taskId && completion.approvedByParent,
+    );
+    const changesHistoricalRules =
+      current.childId !== next.childId ||
+      current.tier !== next.tier ||
+      Number(current.points || 0) !== Number(next.points || 0) ||
+      JSON.stringify(normalizeTaskDaysOfWeek(current.daysOfWeek)) !==
+        JSON.stringify(normalizeTaskDaysOfWeek(next.daysOfWeek));
+    if (hasApprovedHistory && changesHistoricalRules) {
+      res.status(409).json({
+        error:
+          'Nie można zmienić punktów, typu, harmonogramu ani dziecka dla zadania z zatwierdzoną historią. Zarchiwizuj je i utwórz nowe zadanie.',
+      });
+      return;
+    }
+
     data.tasks[index] = next;
+    rejectInvalidPendingCompletions(data);
     recomputePointsAndGrants(data);
     reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
     data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);

@@ -7,6 +7,7 @@ export const useAutosave = ({
   hasLoadedSnapshot,
   snapshot,
   setSyncing,
+  enabled = false,
 }) => {
   const pendingSaveSnapshotRef = useRef(null);
   const saveInFlightRef = useRef(false);
@@ -43,7 +44,7 @@ export const useAutosave = ({
   }, [storage, setSyncing]);
 
   useEffect(() => {
-    if (!loading && user && hasLoadedSnapshot) {
+    if (enabled && !loading && user && hasLoadedSnapshot) {
       if (skipNextSaveRef.current) {
         skipNextSaveRef.current = false;
         suppressedSnapshotRef.current = JSON.stringify(snapshot);
@@ -58,7 +59,7 @@ export const useAutosave = ({
       saveRequestedRef.current = true;
       flushSaveQueue();
     }
-  }, [loading, user, hasLoadedSnapshot, snapshot, flushSaveQueue]);
+  }, [enabled, loading, user, hasLoadedSnapshot, snapshot, flushSaveQueue]);
 
   return {
     pendingSaveSnapshotRef,
