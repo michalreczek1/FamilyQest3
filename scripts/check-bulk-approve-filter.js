@@ -17,65 +17,45 @@ const child = {
   createdAt: '2024-01-01T00:00:00.000Z',
 };
 
-const createState = () => ({
-  children: [child],
-  tasks: [
-    {
-      id: 'bulk-task-1',
+const createState = () => {
+  const tasks = Array.from({ length: 23 }, (_, index) => ({
+      id: `bulk-task-${index + 1}`,
       childId: child.id,
-      title: 'Umyj zęby',
+      title: `Zadanie do zatwierdzenia ${index + 1}`,
       tier: 'MIN',
-      points: 1,
+      points: (index % 3) + 1,
       daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
       active: true,
       createdAt: '2024-01-01T00:00:00.000Z',
-    },
-    {
-      id: 'bulk-task-2',
-      childId: child.id,
-      title: 'Pościel łóżko',
-      tier: 'MIN',
-      points: 2,
-      daysOfWeek: [1, 2, 3, 4, 5, 6, 7],
-      active: true,
-      createdAt: '2024-01-01T00:00:00.000Z',
-    },
-  ],
-  completions: [
-    {
-      id: 'bulk-comp-1',
-      taskId: 'bulk-task-1',
+    }));
+  const completions = tasks.map((task, index) => ({
+      id: `bulk-comp-${index + 1}`,
+      taskId: task.id,
       childId: child.id,
       date: today,
       doneByChild: true,
       approvedByParent: false,
-      createdAt: `${today}T08:00:00.000Z`,
-      updatedAt: `${today}T08:00:00.000Z`,
-    },
-    {
-      id: 'bulk-comp-2',
-      taskId: 'bulk-task-2',
-      childId: child.id,
-      date: today,
-      doneByChild: true,
-      approvedByParent: false,
-      createdAt: `${today}T08:10:00.000Z`,
-      updatedAt: `${today}T08:10:00.000Z`,
-    },
-  ],
-  extraTasks: [],
-  pointAdjustments: [],
-  pointLedger: [],
-  rewards: [],
-  streaks: { [child.id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } },
-  points: { [child.id]: 0 },
-  rewardUnlocks: [],
-  familyGoal: { title: 'Cel rodzinny', target: 500, mode: 'points' },
-  auditLogs: [],
-  dayPointGrants: {},
-  weekBonusGrants: {},
-  taskPointGrants: {},
-});
+      createdAt: `${today}T08:${String(index).padStart(2, '0')}:00.000Z`,
+      updatedAt: `${today}T08:${String(index).padStart(2, '0')}:00.000Z`,
+    }));
+  return {
+    children: [child],
+    tasks,
+    completions,
+    extraTasks: [],
+    pointAdjustments: [],
+    pointLedger: [],
+    rewards: [],
+    streaks: { [child.id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } },
+    points: { [child.id]: 0 },
+    rewardUnlocks: [],
+    familyGoal: { title: 'Cel rodzinny', target: 500, mode: 'points' },
+    auditLogs: [],
+    dayPointGrants: {},
+    weekBonusGrants: {},
+    taskPointGrants: {},
+  };
+};
 
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -116,7 +96,28 @@ const startStaticServer = () =>
     });
   });
 
-const installApiMocks = async (page, state, bulkRequests) => {
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const buildStatePatch = (state) => ({
+  completions: state.completions,
+  extraTasks: state.extraTasks,
+  points: state.points,
+  streaks: state.streaks,
+  pointLedger: state.pointLedger,
+  rewardUnlocks: state.rewardUnlocks,
+  rewardUnlockHistory: [],
+  dayPointGrants: state.dayPointGrants,
+  weekBonusGrants: state.weekBonusGrants,
+  taskPointGrants: state.taskPointGrants,
+  auditLogs: state.auditLogs,
+  familyLeaderboard: {
+    children: [{ id: child.id, name: child.name, avatar: child.avatar }],
+    points: state.points,
+    streaks: state.streaks,
+  },
+});
+
+const installApiMocks = async (page, state, metrics) => {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
@@ -155,6 +156,7 @@ const installApiMocks = async (page, state, bulkRequests) => {
 
     const storageMatch = apiPath.match(/^\/api\/storage\/get\/([^/]+)$/);
     if (storageMatch) {
+      metrics.storageGets += 1;
       const key = decodeURIComponent(storageMatch[1]);
       await route.fulfill({
         contentType: 'application/json',
@@ -164,13 +166,14 @@ const installApiMocks = async (page, state, bulkRequests) => {
     }
 
     if (apiPath === '/api/storage/merge') {
+      metrics.mergeRequests += 1;
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
       return;
     }
 
     if (apiPath === '/api/completions/approve-bulk' && route.request().method() === 'POST') {
       const body = JSON.parse(route.request().postData() || '{}');
-      bulkRequests.push(body);
+      metrics.bulkRequests.push(body);
       const requestedIds = new Set(body.ids || []);
       const approvedIds = [];
       state.completions = state.completions.map((completion) => {
@@ -193,7 +196,7 @@ const installApiMocks = async (page, state, bulkRequests) => {
       });
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, approvedCount: approvedIds.length, approvedIds }),
+        body: JSON.stringify({ ok: true, approvedCount: approvedIds.length, approvedIds, statePatch: buildStatePatch(state) }),
       });
       return;
     }
@@ -207,28 +210,41 @@ const installApiMocks = async (page, state, bulkRequests) => {
   const { server, baseUrl } = await startStaticServer();
   const browser = await chromium.launch({ headless: true });
   const state = createState();
-  const bulkRequests = [];
+  const metrics = {
+    bulkRequests: [],
+    storageGets: 0,
+    mergeRequests: 0,
+  };
 
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
-    await installApiMocks(page, state, bulkRequests);
+    await installApiMocks(page, state, metrics);
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: '🔐 Panel rodzica' }).click();
     await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
     await page.getByRole('button', { name: 'Wejdź' }).click();
     await page.getByText('Zadania do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByRole('button', { name: '✅ Zatwierdź wg filtra (2)' }).click();
+    const storageGetsAfterInitialLoad = metrics.storageGets;
+    await page.getByRole('button', { name: '✅ Zatwierdź wg filtra (23)' }).click();
     await page.getByText('Brak zadań do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
-    assert.strictEqual(await page.getByRole('button', { name: '✅ Zatwierdź wg filtra (2)' }).count(), 0);
+    assert.strictEqual(await page.getByRole('button', { name: /Zatwierdź wg filtra/ }).count(), 0);
     await page.screenshot({ path: path.join(outDir, 'after-bulk-approve.png'), fullPage: true });
 
-    assert.strictEqual(bulkRequests.length, 1, 'bulk approve should call one backend endpoint');
-    assert.deepStrictEqual([...bulkRequests[0].ids].sort(), ['bulk-comp-1', 'bulk-comp-2']);
+    assert.strictEqual(metrics.bulkRequests.length, 1, 'bulk approve should call one backend endpoint');
+    assert.strictEqual(metrics.bulkRequests[0].ids.length, 23, 'bulk approve should include every visible completion');
+    assert.strictEqual(metrics.storageGets, storageGetsAfterInitialLoad, 'statePatch should avoid a full storage reload after bulk approve');
+    const mergeRequestsAfterAction = metrics.mergeRequests;
+    await wait(5600);
+    assert(metrics.storageGets > storageGetsAfterInitialLoad, 'silent polling refresh should still read fresh server state');
+    assert.strictEqual(metrics.mergeRequests, mergeRequestsAfterAction, 'silent polling refresh must not autosave loaded approval state');
+    assert.strictEqual(await page.getByText('Brak zadań do zatwierdzenia').count(), 1, 'empty approval state should stay stable after polling refresh');
     assert(state.completions.every((completion) => completion.approvedByParent), 'all visible completions should be approved');
     console.log(
       JSON.stringify(
         {
-          bulkRequests,
+          bulkRequests: metrics.bulkRequests,
+          storageGets: metrics.storageGets,
+          mergeRequests: metrics.mergeRequests,
           screenshot: path.join(outDir, 'after-bulk-approve.png'),
         },
         null,

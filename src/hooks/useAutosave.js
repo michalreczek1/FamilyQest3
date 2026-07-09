@@ -13,6 +13,7 @@ export const useAutosave = ({
   const saveRequestedRef = useRef(false);
   const skipNextSaveRef = useRef(false);
   const skipAutoSaveUntilRef = useRef(0);
+  const suppressedSnapshotRef = useRef('');
 
   const flushSaveQueue = useCallback(async () => {
     if (saveInFlightRef.current) {
@@ -45,11 +46,14 @@ export const useAutosave = ({
     if (!loading && user && hasLoadedSnapshot) {
       if (skipNextSaveRef.current) {
         skipNextSaveRef.current = false;
+        suppressedSnapshotRef.current = JSON.stringify(snapshot);
         return;
       }
-      if (Date.now() < skipAutoSaveUntilRef.current) {
+      const snapshotKey = JSON.stringify(snapshot);
+      if (Date.now() < skipAutoSaveUntilRef.current && snapshotKey === suppressedSnapshotRef.current) {
         return;
       }
+      suppressedSnapshotRef.current = '';
       pendingSaveSnapshotRef.current = snapshot;
       saveRequestedRef.current = true;
       flushSaveQueue();

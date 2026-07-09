@@ -285,6 +285,10 @@ const installApiMocks = async (page, state, metrics) => {
     assert.strictEqual(metrics.bulkRejectRequests.length, 1, 'rapid parent actions should be batched into one backend request');
     assert.deepStrictEqual([...metrics.bulkRejectRequests[0].ids].sort(), ['queue-comp-1', 'queue-comp-2', 'queue-comp-3']);
     assert.strictEqual(metrics.storageGets, storageGetsAfterInitialLoad, 'statePatch should avoid a full storage reload after batched action');
+    const mergeRequestsAfterAction = metrics.mergeRequests;
+    await wait(5600);
+    assert(metrics.storageGets > storageGetsAfterInitialLoad, 'silent polling refresh should still read fresh server state');
+    assert.strictEqual(metrics.mergeRequests, mergeRequestsAfterAction, 'silent polling refresh must not echo the loaded snapshot back through autosave');
     assert(!dialogMessages.some((message) => message.includes('Stan rodziny zmienił')), 'version conflict dialog should not appear');
     assert(state.completions.every((completion) => completion.rejectedByParent), 'all clicked completions should be rejected');
 

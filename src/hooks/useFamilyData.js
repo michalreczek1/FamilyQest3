@@ -154,11 +154,23 @@ export const useFamilyData = ({
         setHasLoadedSnapshot(false);
         return;
       }
-      if (skipNextAutoSave) {
-        skipNextSaveRef.current = true;
-        skipAutoSaveUntilRef.current = Date.now() + 2000;
-      }
-      setUser(session.user);
+      skipNextSaveRef.current = true;
+      skipAutoSaveUntilRef.current = Date.now() + (skipNextAutoSave ? 2000 : 1000);
+      setUser(prev => {
+        const nextUser = session.user || null;
+        if (
+          prev &&
+          nextUser &&
+          prev.id === nextUser.id &&
+          prev.role === nextUser.role &&
+          prev.familyId === nextUser.familyId &&
+          prev.childId === nextUser.childId &&
+          prev.hasPinCode === nextUser.hasPinCode
+        ) {
+          return prev;
+        }
+        return nextUser;
+      });
       const [
         savedChildren,
         savedTasks,

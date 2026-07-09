@@ -453,8 +453,10 @@ const App = () => {
         idealWeeksInRow
       };
     });
+    skipNextSaveRef.current = true;
+    skipAutoSaveUntilRef.current = Date.now() + 500;
     setStreaks(next);
-  }, [children, tasks, completions]);
+  }, [children, tasks, completions, skipAutoSaveUntilRef, skipNextSaveRef]);
   const handleLogin = async (email, password) => {
     try {
       await apiRequest('/api/auth/login', {
