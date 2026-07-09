@@ -2198,6 +2198,34 @@ const mergeAuditLogs = (existing, incoming) =>
     .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
     .slice(0, 500);
 
+const rejectInvalidPendingCompletions = (data, now = new Date().toISOString()) => {
+  const children = Array.isArray(data.children) ? data.children : [];
+  const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  const completions = Array.isArray(data.completions) ? data.completions : [];
+  const childrenById = new Map(children.map((child) => [child.id, child]));
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+
+  data.completions = completions.map((completion) => {
+    if (!completion?.doneByChild || completion.approvedByParent) {
+      return completion;
+    }
+    const child = childrenById.get(completion.childId);
+    const task = tasksById.get(completion.taskId);
+    if (child && task && !validateTaskCompletionDate(child, task, completion.date)) {
+      return completion;
+    }
+    return {
+      ...completion,
+      doneByChild: false,
+      approvedByParent: false,
+      approvedAt: null,
+      rejectedByParent: true,
+      rejectedAt: completion.rejectedAt || now,
+      updatedAt: now,
+    };
+  });
+};
+
 const mergeParentStorageValues = (data, values) => {
   const nextData = { ...data, ...values };
   if (Object.prototype.hasOwnProperty.call(values, 'children')) {
@@ -2247,6 +2275,7 @@ const mergeParentStorageValues = (data, values) => {
     Object.prototype.hasOwnProperty.call(values, 'completions') ||
     Object.prototype.hasOwnProperty.call(values, 'streaks')
   ) {
+    rejectInvalidPendingCompletions(nextData);
     refreshAllStreaks(nextData);
   }
   return nextData;
@@ -2261,6 +2290,7 @@ const mergeStorageValuesForUser = (data, values, user) => {
   const childId = user.childId;
   if (Object.prototype.hasOwnProperty.call(values, 'completions')) {
     nextData.completions = mergeChildCompletions(data, values.completions, childId);
+    rejectInvalidPendingCompletions(nextData);
   }
   if (Object.prototype.hasOwnProperty.call(values, 'rewardUnlocks')) {
     nextData.rewardUnlocks = mergeChildRewardUnlocks(data, values.rewardUnlocks, childId);

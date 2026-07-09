@@ -434,6 +434,26 @@ maybeDescribe('FamilyQuest API integration', () => {
       });
     expect(staleParentMergeRes.status).toBe(200);
 
+    const invalidPendingMergeRes = await request(app)
+      .post('/api/storage/merge')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({
+        values: {
+          completions: [
+            {
+              id: 'storage-invalid-past-completion',
+              taskId: task.id,
+              childId: child.id,
+              date: '2000-01-01',
+              doneByChild: true,
+              approvedByParent: false,
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    expect(invalidPendingMergeRes.status).toBe(200);
+
     const parentStorageChildrenRes = await request(app)
       .get('/api/storage/get/children')
       .set('Authorization', `Bearer ${parentToken}`);
@@ -446,6 +466,12 @@ maybeDescribe('FamilyQuest API integration', () => {
     expect(childStorageCompletionsRes.status).toBe(200);
     expect(childStorageCompletionsRes.body.value.some((item) => item.id === 'storage-own-completion')).toBe(true);
     expect(childStorageCompletionsRes.body.value.some((item) => item.id === 'storage-sibling-completion')).toBe(false);
+    const invalidPastCompletion = childStorageCompletionsRes.body.value.find(
+      (item) => item.id === 'storage-invalid-past-completion',
+    );
+    expect(invalidPastCompletion.doneByChild).toBe(false);
+    expect(invalidPastCompletion.approvedByParent).toBe(false);
+    expect(invalidPastCompletion.rejectedByParent).toBe(true);
 
     const markDoneRes = await request(app)
       .post('/api/completions')
