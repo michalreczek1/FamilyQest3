@@ -90,7 +90,10 @@ const startStaticServer = () => new Promise((resolve) => {
 });
 
 (async () => {
-  const { server, baseUrl } = await startStaticServer();
+  const externalBaseUrl = process.env.CHILD_TASK_TOGGLE_BASE_URL || '';
+  const { server, baseUrl } = externalBaseUrl
+    ? { server: null, baseUrl: externalBaseUrl }
+    : await startStaticServer();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   let loggedIn = false;
@@ -230,7 +233,7 @@ const startStaticServer = () => new Promise((resolve) => {
   } finally {
     releaseCompletionResponse();
     await browser.close();
-    server.close();
+    if (server) server.close();
   }
 })().catch((error) => {
   console.error(error);
