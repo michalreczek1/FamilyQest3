@@ -157,6 +157,22 @@ const runUiCheck = async () => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
 
+    if (apiPath === '/api/family-state') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          familyId: 'family-test', version: 1, generatedAt: `${today}T09:00:00.000Z`,
+          viewer: { id: 'parent-test', email: 'parent@example.test', role: 'PARENT', familyId: 'family-test', hasPinCode: true, sessionRef: 'reverse-session' },
+          permissions: { canManageFamily: true },
+          family: {
+            ...storageValues, pointLedger: [], rewardUnlockHistory: [], parentUsers: [],
+            familyLeaderboard: { children: [{ id: child.id, name: child.name, avatar: child.avatar }], points: storageValues.points, streaks: storageValues.streaks },
+          },
+        }),
+      });
+      return;
+    }
+
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',

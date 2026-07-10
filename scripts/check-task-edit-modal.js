@@ -98,6 +98,22 @@ const runUiCheck = async () => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
 
+    if (apiPath === '/api/family-state') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          familyId: 'family-edit-ui', version: 1, generatedAt: '2026-05-01T00:00:00.000Z',
+          viewer: { id: 'parent-edit-ui', role: 'PARENT', familyId: 'family-edit-ui', hasPinCode: true, sessionRef: 'task-edit-session' },
+          permissions: { canManageFamily: true },
+          family: {
+            ...storageValues, pointLedger: [], rewardUnlockHistory: [], parentUsers: [],
+            familyLeaderboard: { children, points: {}, streaks: {} },
+          },
+        }),
+      });
+      return;
+    }
+
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',

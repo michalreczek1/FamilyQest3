@@ -173,6 +173,22 @@ const runUiCheck = async () => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
 
+    if (apiPath === '/api/family-state') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          familyId: 'family-reward-history', version: 1, generatedAt: '2026-05-01T00:00:00.000Z',
+          viewer: { id: 'parent-reward-history', role: 'PARENT', familyId: 'family-reward-history', hasPinCode: true, sessionRef: 'reward-history-session' },
+          permissions: { canManageFamily: true },
+          family: {
+            ...storageValues, pointLedger: [], rewardUnlockHistory, parentUsers: [],
+            familyLeaderboard: { children, points: storageValues.points, streaks: {} },
+          },
+        }),
+      });
+      return;
+    }
+
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',

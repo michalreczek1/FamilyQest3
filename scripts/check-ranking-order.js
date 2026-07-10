@@ -104,6 +104,22 @@ const expectedRanking = ['Ignacy', 'Franek', 'Filip', 'Józek', 'Łucja'];
     const url = new URL(route.request().url());
     const path = url.pathname;
 
+    if (path === '/api/family-state') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          familyId: 'family-test', version: 1, generatedAt: '2026-05-01T00:00:00.000Z',
+          viewer: { id: 'parent-test', email: 'parent@example.test', role: 'PARENT', familyId: 'family-test', hasPinCode: true, sessionRef: 'ranking-session' },
+          permissions: { canManageFamily: true },
+          family: {
+            ...storageValues, pointLedger: [], rewardUnlockHistory: [], parentUsers: [],
+            familyLeaderboard: { children, points, streaks },
+          },
+        }),
+      });
+      return;
+    }
+
     if (path === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',

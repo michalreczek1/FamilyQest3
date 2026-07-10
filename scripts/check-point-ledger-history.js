@@ -242,6 +242,22 @@ const runUiCheck = async () => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
 
+    if (apiPath === '/api/family-state') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          familyId: 'family-test', version: 1, generatedAt: '2026-05-01T00:00:00.000Z',
+          viewer: { id: `child:${child.id}`, role: 'CHILD', familyId: 'family-test', childId: child.id, childName: child.name, sessionRef: 'ledger-session' },
+          permissions: { canManageOwnChildTasks: true },
+          family: {
+            ...storageValues, pointLedger: storageValues.pointLedger, rewardUnlockHistory: [], parentUsers: [],
+            familyLeaderboard: { children: [{ id: child.id, name: child.name, avatar: child.avatar }], points: storageValues.points, streaks: storageValues.streaks },
+          },
+        }),
+      });
+      return;
+    }
+
     if (apiPath === '/api/auth/me') {
       await route.fulfill({
         contentType: 'application/json',
