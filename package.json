@@ -37,6 +37,7 @@
     "test:parent-pin-gate": "node scripts/check-parent-pin-gate.js",
     "test:frontend-source": "node scripts/check-frontend-source.js",
     "test:child-login": "node scripts/check-child-login.js",
+    "test:child-task-toggle": "node scripts/check-child-task-toggle-latency.js",
     "test:child-actions": "node scripts/check-child-actions-layout.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
     "lint": "eslint . --ext .js,.jsx",

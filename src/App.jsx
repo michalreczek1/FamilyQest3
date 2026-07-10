@@ -72,6 +72,7 @@ const App = () => {
   const [pendingCompletionActionIds, setPendingCompletionActionIds] = useState([]);
   const [pendingExtraTaskActionIds, setPendingExtraTaskActionIds] = useState([]);
   const serverMutationQueueRef = useRef(Promise.resolve());
+  const childCompletionMutationVersionsRef = useRef(new Map());
   const completionActionBatchRef = useRef({
     approve: new Map(),
     reject: new Map(),
@@ -341,7 +342,11 @@ const App = () => {
     }
     const refreshData = () => {
       if (document.visibilityState === 'hidden') return;
-      if (saveInFlightRef.current || saveRequestedRef.current) return;
+      if (
+        saveInFlightRef.current ||
+        saveRequestedRef.current ||
+        childCompletionMutationVersionsRef.current.size > 0
+      ) return;
       loadData({
         preserveView: true,
         silent: true
@@ -637,22 +642,73 @@ const App = () => {
   const toggleTask = (taskId, date = getDateString()) => {
     if (!selectedChild) return;
     const completionDate = date || getDateString();
-    const existing = completions.find(c => c.taskId === taskId && c.date === completionDate && c.childId === selectedChild.id);
+    const childId = selectedChild.id;
+    const existing = completions.find(c => c.taskId === taskId && c.date === completionDate && c.childId === childId);
     if (existing?.approvedByParent) return;
+
+    const doneByChild = existing ? !existing.doneByChild : true;
+    const mutationKey = `${childId}\u0000${taskId}\u0000${completionDate}`;
+    const mutationVersion = (childCompletionMutationVersionsRef.current.get(mutationKey) || 0) + 1;
+    childCompletionMutationVersionsRef.current.set(mutationKey, mutationVersion);
+
+    const previousCompletion = existing ? { ...existing } : null;
+    const optimisticCompletion = {
+      ...(existing || {}),
+      id: existing?.id || `optimistic-${Date.now()}-${mutationVersion}`,
+      taskId,
+      childId,
+      date: completionDate,
+      doneByChild,
+      approvedByParent: false,
+      approvedAt: null,
+      doneAt: doneByChild ? new Date().toISOString() : existing?.doneAt || null,
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setCompletions(prev => {
+      const matchingIndex = prev.findIndex(item =>
+        item.taskId === taskId && item.date === completionDate && item.childId === childId
+      );
+      if (matchingIndex === -1) return [...prev, optimisticCompletion];
+      return prev.map((item, index) => index === matchingIndex ? optimisticCompletion : item);
+    });
+
     return runServerMutation(async () => {
       try {
-        await apiRequest('/api/completions', {
+        const result = await apiRequest('/api/completions', {
           method: 'POST',
           body: {
             taskId,
-            childId: selectedChild.id,
+            childId,
             date: completionDate,
-            doneByChild: existing ? !existing.doneByChild : true,
+            doneByChild,
           },
         });
-        await reloadAfterServerMutation({ preserveView: true });
+        if (childCompletionMutationVersionsRef.current.get(mutationKey) !== mutationVersion) return;
+        if (result?.completion) {
+          setCompletions(prev => {
+            const matchingIndex = prev.findIndex(item =>
+              item.taskId === taskId && item.date === completionDate && item.childId === childId
+            );
+            if (matchingIndex === -1) return [...prev, result.completion];
+            return prev.map((item, index) => index === matchingIndex ? result.completion : item);
+          });
+        }
       } catch (error) {
-        alert(error.message || 'Nie udało się zapisać wykonania zadania');
+        const isCurrentMutation = childCompletionMutationVersionsRef.current.get(mutationKey) === mutationVersion;
+        if (isCurrentMutation) {
+          setCompletions(prev => {
+            const withoutCurrent = prev.filter(item =>
+              !(item.taskId === taskId && item.date === completionDate && item.childId === childId)
+            );
+            return previousCompletion ? [...withoutCurrent, previousCompletion] : withoutCurrent;
+          });
+          alert(error.message || 'Nie udało się zapisać wykonania zadania');
+        }
+      } finally {
+        if (childCompletionMutationVersionsRef.current.get(mutationKey) === mutationVersion) {
+          childCompletionMutationVersionsRef.current.delete(mutationKey);
+        }
       }
     });
   };
