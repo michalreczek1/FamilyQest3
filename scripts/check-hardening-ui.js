@@ -49,7 +49,7 @@ const startStaticServer = () =>
 
 const runNetworkErrorCheck = async (browser, baseUrl) => {
   const page = await browser.newPage({ viewport: { width: 900, height: 720 } });
-  await page.route('**/api/auth/me', (route) => route.abort('failed'));
+  await page.route('**/api/family-state', (route) => route.abort('failed'));
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.getByText('Brak połączenia z serwerem domowym').waitFor({ state: 'visible', timeout: 10000 });
   await page.screenshot({ path: 'tmp/hardening-network-error.png', fullPage: true });
@@ -58,7 +58,7 @@ const runNetworkErrorCheck = async (browser, baseUrl) => {
 
 const runExpiredSessionCheck = async (browser, baseUrl) => {
   const page = await browser.newPage({ viewport: { width: 900, height: 720 } });
-  await page.route('**/api/auth/me', async (route) => {
+  await page.route('**/api/family-state', async (route) => {
     await route.fulfill({
       status: 401,
       contentType: 'application/json',
@@ -121,38 +121,30 @@ const runErrorBoundaryCheck = async (browser, baseUrl) => {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const apiPath = url.pathname;
-    if (apiPath === '/api/auth/me') {
+    if (apiPath === '/api/family-state') {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          user: {
+          familyId: 'family-boundary',
+          version: 1,
+          generatedAt: '2026-05-01T00:00:00.000Z',
+          viewer: {
             id: `child:${child.id}`,
             role: 'CHILD',
             familyId: 'family-boundary',
             childId: child.id,
             childName: child.name,
+            sessionRef: 'session-boundary',
+          },
+          permissions: {},
+          family: {
+            ...values,
+            pointLedger: [],
+            familyLeaderboard: { children: [null], points: values.points, streaks: values.streaks },
+            rewardUnlockHistory: [],
+            parentUsers: [],
           },
         }),
-      });
-      return;
-    }
-    if (apiPath === '/api/leaderboard') {
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({
-          children: [null],
-          points: values.points,
-          streaks: values.streaks,
-        }),
-      });
-      return;
-    }
-    const storageMatch = apiPath.match(/^\/api\/storage\/get\/([^/]+)$/);
-    if (storageMatch) {
-      const key = decodeURIComponent(storageMatch[1]);
-      await route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ key, value: values[key] ?? null }),
       });
       return;
     }

@@ -1,6 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { CHILD_SESSION_KEY } from '../constants.js';
-import { apiRequest, clearLegacyAuthToken } from '../lib/api.js';
+import { apiRequest, clearLegacyAuthToken, isRequestAbortError } from '../lib/api.js';
 
 const defaultFamilyGoal = {
   title: 'Cel rodzinny',
@@ -56,7 +56,16 @@ export const useFamilyData = ({
   setShowPointHistory,
   setPointAdjustmentModal,
   setConnectionError,
+  getSessionGeneration = () => 0,
+  isSnapshotCurrent = () => true,
+  onSnapshotViewer = () => {},
+  onSnapshotRejected = () => {},
+  onUnauthorized = () => {},
 }) => {
+  const activeSnapshotRef = useRef(null);
+  const latestSnapshotRequestRef = useRef(0);
+  const latestSnapshotVersionRef = useRef(new Map());
+  const latestSnapshotEtagRef = useRef(null);
   const resetFamilyData = useCallback(() => {
     setChildren([]);
     setChildAccessCodes({});
@@ -335,8 +344,164 @@ export const useFamilyData = ({
     setConnectionError,
   ]);
 
+  const loadSnapshot = useCallback(({
+    preserveView = false,
+    silent = false,
+    skipNextAutoSave = false,
+    force = false,
+  } = {}) => {
+    const generation = getSessionGeneration();
+    const active = activeSnapshotRef.current;
+    if (active && active.generation === generation && !force) {
+      return active.promise;
+    }
+    if (active && force) {
+      active.controller.abort('superseded');
+    }
+    const controller = new AbortController();
+    const requestId = latestSnapshotRequestRef.current + 1;
+    latestSnapshotRequestRef.current = requestId;
+    if (!silent) {
+      setLoading(true);
+      setHasLoadedSnapshot(false);
+    }
+    const promise = (async () => {
+      try {
+        const snapshot = await apiRequest('/api/family-state', {
+          signal: controller.signal,
+          timeoutMs: 12000,
+          headers: latestSnapshotEtagRef.current
+            ? { 'If-None-Match': latestSnapshotEtagRef.current }
+            : undefined,
+        });
+        if (snapshot?.notModified) return snapshot;
+        if (!snapshot?.familyId || !snapshot?.viewer || !snapshot?.family) {
+          return loadData({ preserveView, silent, skipNextAutoSave });
+        }
+        if (!isSnapshotCurrent({ generation, requestId, snapshot })) return null;
+        if (onSnapshotRejected(snapshot.viewer)) return null;
+
+        const scope = snapshot.viewer?.role === 'CHILD'
+          ? `child:${snapshot.viewer.childId}`
+          : `parent:${snapshot.viewer?.id}`;
+        const versionKey = `${generation}:${snapshot.familyId}:${scope}`;
+        const previousVersion = latestSnapshotVersionRef.current.get(versionKey);
+        if (Number.isInteger(previousVersion) && Number(snapshot.version) < previousVersion) return null;
+        latestSnapshotVersionRef.current.set(versionKey, Number(snapshot.version));
+        latestSnapshotEtagRef.current = snapshot.__etag || null;
+
+        const family = snapshot.family || {};
+        skipNextSaveRef.current = true;
+        skipAutoSaveUntilRef.current = Date.now() + (skipNextAutoSave ? 2000 : 1000);
+        setConnectionError('');
+        setUser(snapshot.viewer || null);
+        onSnapshotViewer(snapshot.viewer || null);
+        setChildren(family.children || []);
+        setTasks(family.tasks || []);
+        setCompletions(family.completions || []);
+        setExtraTasks(family.extraTasks || []);
+        setPointAdjustments(family.pointAdjustments || []);
+        setPointLedger(family.pointLedger || []);
+        setRewards(family.rewards || []);
+        setStreaks(family.streaks || {});
+        setPoints(family.points || {});
+        setFamilyLeaderboard(family.familyLeaderboard || defaultLeaderboard);
+        setRewardUnlocks(family.rewardUnlocks || []);
+        setRewardUnlockHistory(family.rewardUnlockHistory || []);
+        setFamilyGoal(family.familyGoal || defaultFamilyGoal);
+        setAuditLogs(family.auditLogs || []);
+        setDayPointGrants(family.dayPointGrants || {});
+        setWeekBonusGrants(family.weekBonusGrants || {});
+        setTaskPointGrants(family.taskPointGrants || {});
+        setParentUsers(family.parentUsers || []);
+
+        if (snapshot.viewer?.role === 'CHILD') {
+          const ownChild = (family.children || []).find((child) => child.id === snapshot.viewer.childId && !child.archived);
+          if (!ownChild) throw new Error('Profil dziecka nie istnieje lub jest zarchiwizowany');
+          setSelectedChild(ownChild);
+          setView('child');
+        } else if (preserveView) {
+          setSelectedChild((current) => current
+            ? (family.children || []).find((child) => child.id === current.id) || current
+            : current);
+        } else {
+          setSelectedChild(null);
+          setView('childSelect');
+        }
+        setHasLoadedSnapshot(true);
+        return snapshot;
+      } catch (error) {
+        if (isRequestAbortError(error)) return null;
+        if (!isSnapshotCurrent({ generation, requestId, snapshot: null })) return null;
+        if (error?.status === 404) {
+          // Transitional compatibility only: an older backend can still serve
+          // the legacy read API while the snapshot feature is rolled out.
+          return loadData({ preserveView, silent, skipNextAutoSave });
+        }
+        if (error?.status === 401) {
+          onUnauthorized(error);
+          return null;
+        }
+        if (!silent) {
+          setConnectionError(error?.isTimeout || error?.isNetworkError
+            ? error.message
+            : 'Nie udało się załadować danych aplikacji. Spróbuj odświeżyć za chwilę.');
+        }
+        return null;
+      } finally {
+        if (activeSnapshotRef.current?.requestId === requestId) {
+          activeSnapshotRef.current = null;
+        }
+        if (!silent && isSnapshotCurrent({ generation, requestId, snapshot: null })) {
+          setLoading(false);
+        }
+      }
+    })();
+    activeSnapshotRef.current = { generation, requestId, controller, promise };
+    return promise;
+  }, [
+    getSessionGeneration,
+    isSnapshotCurrent,
+    onSnapshotViewer,
+    onSnapshotRejected,
+    onUnauthorized,
+    loadData,
+    skipNextSaveRef,
+    skipAutoSaveUntilRef,
+    setUser,
+    setChildren,
+    setTasks,
+    setCompletions,
+    setExtraTasks,
+    setPointAdjustments,
+    setPointLedger,
+    setRewards,
+    setStreaks,
+    setPoints,
+    setFamilyLeaderboard,
+    setRewardUnlocks,
+    setRewardUnlockHistory,
+    setFamilyGoal,
+    setAuditLogs,
+    setDayPointGrants,
+    setWeekBonusGrants,
+    setTaskPointGrants,
+    setParentUsers,
+    setLoading,
+    setHasLoadedSnapshot,
+    setView,
+    setSelectedChild,
+    setConnectionError,
+  ]);
+
+  const abortSnapshot = useCallback((reason = 'cancelled') => {
+    activeSnapshotRef.current?.controller.abort(reason);
+  }, []);
+
   return {
     resetFamilyData,
     loadData,
+    loadSnapshot,
+    abortSnapshot,
   };
 };

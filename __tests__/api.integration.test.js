@@ -184,6 +184,84 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(childAfterLogoutRes.status).toBe(401);
   });
 
+  test('family snapshot is role-filtered, versioned and supports ETag revalidation', async () => {
+    const suffix = `snapshot-${Date.now()}`;
+    const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));
+    expect(registerRes.status).toBe(201);
+    const parentToken = registerRes.body.token;
+    expect(registerRes.body.user.sessionRef).toBe(jwt.decode(parentToken).jti);
+
+    const snapshotRes = await request(app)
+      .get('/api/family-state')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(snapshotRes.status).toBe(200);
+    expect(snapshotRes.body.familyId).toBe(registerRes.body.user.familyId);
+    expect(snapshotRes.body.version).toBe(0);
+    expect(snapshotRes.body.viewer.sessionRef).toBe(jwt.decode(parentToken).jti);
+    expect(snapshotRes.body.family).toHaveProperty('children');
+    expect(snapshotRes.headers.etag).toContain(`family-${registerRes.body.user.familyId}`);
+
+    const notModified = await request(app)
+      .get('/api/family-state')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .set('If-None-Match', snapshotRes.headers.etag);
+    expect(notModified.status).toBe(304);
+  });
+
+  test('idempotency returns the original result and rejects key reuse with another payload', async () => {
+    const parentToken = await registerParent(`idempotency-${Date.now()}`);
+    const idempotencyKey = crypto.randomUUID();
+    const payload = { title: 'Spójny cel', target: 333, mode: 'points' };
+    const first = await request(app)
+      .put('/api/family-goal')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload);
+    expect(first.status).toBe(200);
+
+    const repeated = await request(app)
+      .put('/api/family-goal')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body).toEqual(first.body);
+
+    const reused = await request(app)
+      .put('/api/family-goal')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send({ ...payload, target: 444 });
+    expect(reused.status).toBe(409);
+    expect(reused.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
+  });
+
+  test('idempotency bounds waiting for an unresolved competing operation', async () => {
+    const suffix = `idempotency-pending-${Date.now()}`;
+    const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));
+    expect(registerRes.status).toBe(201);
+    const payload = { title: 'Cel oczekujący', target: 123, mode: 'points' };
+    const idempotencyKey = crypto.randomUUID();
+    await prisma.idempotencyOperation.create({
+      data: {
+        userId: registerRes.body.user.id,
+        familyId: registerRes.body.user.familyId,
+        operationCode: 'PUT:/family-goal',
+        idempotencyKey,
+        requestHash: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+        expiresAt: new Date(Date.now() + 60000),
+      },
+    });
+    const result = await request(app)
+      .put('/api/family-goal')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload);
+    expect(result.status).toBe(409);
+    expect(result.headers['retry-after']).toBe('2');
+    expect(result.body.code).toBe('IDEMPOTENCY_RESULT_PENDING');
+  });
+
   afterAll(async () => {
     await prisma.$disconnect();
   });

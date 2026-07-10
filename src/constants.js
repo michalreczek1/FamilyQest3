@@ -1,6 +1,7 @@
 export const LEGACY_AUTH_TOKEN_KEY = 'fq_auth_token';
 export const API_BASE_KEY = 'fq_api_base';
 export const CHILD_SESSION_KEY = 'fq_child_session_active';
+export const LOGOUT_PENDING_KEY = 'fq_logout_pending';
 export const POINTS_PER_PASSED_DAY = 2;
 export const IDEAL_WEEK_BONUS = 3;
 export const HISTORY_DAYS = 3650;

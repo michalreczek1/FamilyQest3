@@ -39,6 +39,11 @@ const STREAK_HISTORY_DAYS = 3650;
 const ALLOW_DEBUG_RESET_TOKEN = process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEBUG_RESET_TOKEN === 'true';
 const ALLOW_PUBLIC_REGISTRATION = process.env.ALLOW_PUBLIC_REGISTRATION === 'true';
 const AUTH_COOKIE_NAME = 'familyquest_session';
+const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS || 24 * 60 * 60 * 1000);
+const IDEMPOTENCY_WAIT_MS = Number(process.env.IDEMPOTENCY_WAIT_MS || 1500);
+const IDEMPOTENCY_POLL_MS = Number(process.env.IDEMPOTENCY_POLL_MS || 75);
+const FAMILY_STATE_TRANSACTION_MAX_WAIT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_MAX_WAIT_MS || 1000);
+const FAMILY_STATE_TRANSACTION_TIMEOUT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_TIMEOUT_MS || 5000);
 
 const validateSecret = (name, value, forbiddenValues = []) => {
   if (!value || value.length < 32 || forbiddenValues.includes(value)) {
@@ -318,6 +323,13 @@ const cleanupExpiredRevokedTokens = () =>
 
 setInterval(cleanupExpiredRevokedTokens, 60 * 1000).unref();
 
+const cleanupExpiredIdempotencyOperations = () =>
+  prisma.idempotencyOperation
+    .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+    .catch((error) => console.warn('Idempotency cleanup failed:', error.message));
+
+setInterval(cleanupExpiredIdempotencyOperations, 60 * 1000).unref();
+
 const signAuthToken = (user) =>
   jwt.sign(
     {
@@ -348,13 +360,19 @@ const signChildToken = ({ familyId, childId, childName, credentialId }) =>
     { expiresIn: CHILD_JWT_EXPIRES_IN },
   );
 
-const toPublicUser = (user) => ({
+const toPublicUser = (user, sessionRef = null) => ({
   id: user.id,
   email: user.email,
   role: user.role,
   familyId: user.familyId,
   hasPinCode: Boolean(user.pinCode),
+  ...(sessionRef ? { sessionRef } : {}),
 });
+
+const getSessionRef = (token) => {
+  const payload = jwt.decode(token);
+  return typeof payload?.jti === 'string' ? payload.jti : null;
+};
 
 const parseCookieHeader = (header = '') =>
   String(header || '')
@@ -476,6 +494,7 @@ const authMiddleware = async (req, res, next) => {
           active: true,
           childId: payload.childId,
           childName: child.name,
+          sessionRef: payload.jti,
         },
       };
       next();
@@ -508,6 +527,7 @@ const authMiddleware = async (req, res, next) => {
         familyId: user.familyId,
         active: user.active,
         hasPinCode: Boolean(user.pinCode),
+        sessionRef: payload.jti,
       },
     };
     next();
@@ -802,6 +822,135 @@ const isApprovedCompletionBeforeArchive = (task, completion) => {
   const archivedDate = getTaskArchiveDate(task);
   if (completion?.date < archivedDate) return true;
   return false;
+};
+
+const getIdempotencyOperationCode = (req) => `${req.method}:${req.path}`;
+const getRequestHash = (req) =>
+  crypto
+    .createHash('sha256')
+    .update(JSON.stringify(req.body || {}))
+    .digest('hex');
+
+const waitForIdempotencyResult = async (where) => {
+  const deadline = Date.now() + IDEMPOTENCY_WAIT_MS;
+  while (Date.now() < deadline) {
+    const existing = await prisma.idempotencyOperation.findUnique({ where });
+    if (!existing) return null;
+    if (existing.completedAt) return existing;
+    await new Promise((resolve) => setTimeout(resolve, IDEMPOTENCY_POLL_MS));
+  }
+  return undefined;
+};
+
+const idempotencyMiddleware = async (req, res, next) => {
+  if (!unsafeApiMethods.has(req.method) || req.path.startsWith('/auth/')) {
+    next();
+    return;
+  }
+
+  const idempotencyKey = String(req.get('Idempotency-Key') || '').trim();
+  if (!idempotencyKey) {
+    next();
+    return;
+  }
+  if (idempotencyKey.length < 16 || idempotencyKey.length > 200) {
+    res.status(400).json({ error: 'Nieprawidłowy Idempotency-Key' });
+    return;
+  }
+
+  let payload;
+  try {
+    payload = jwt.verify(readBearerToken(req), JWT_SECRET);
+  } catch {
+    // The endpoint's auth middleware remains the authoritative authentication
+    // check and returns the normal error payload.
+    next();
+    return;
+  }
+  if (!payload?.sub || !payload?.familyId) {
+    next();
+    return;
+  }
+
+  const operationCode = getIdempotencyOperationCode(req);
+  const where = {
+    userId_familyId_operationCode_idempotencyKey: {
+      userId: String(payload.sub),
+      familyId: String(payload.familyId),
+      operationCode,
+      idempotencyKey,
+    },
+  };
+  const requestHash = getRequestHash(req);
+  let created = false;
+  try {
+    await prisma.idempotencyOperation.create({
+      data: {
+        userId: String(payload.sub),
+        familyId: String(payload.familyId),
+        operationCode,
+        idempotencyKey,
+        requestHash,
+        expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+      },
+    });
+    created = true;
+  } catch (error) {
+    if (error?.code !== 'P2002') {
+      next(error);
+      return;
+    }
+  }
+
+  if (!created) {
+    const existing = await prisma.idempotencyOperation.findUnique({ where });
+    if (!existing) {
+      next();
+      return;
+    }
+    if (existing.requestHash !== requestHash) {
+      res.status(409).json({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        error: 'Ten Idempotency-Key został użyty dla innego żądania.',
+      });
+      return;
+    }
+    const resolved = existing.completedAt ? existing : await waitForIdempotencyResult(where);
+    if (resolved?.completedAt) {
+      res.status(resolved.responseStatus || 200).json(resolved.responseBody);
+      return;
+    }
+    res.set('Retry-After', '2');
+    res.status(409).json({
+      code: 'IDEMPOTENCY_RESULT_PENDING',
+      error: 'Operacja z tym kluczem jest nadal przetwarzana.',
+      retryable: true,
+    });
+    return;
+  }
+
+  const originalJson = res.json.bind(res);
+  let persisted = false;
+  res.json = (body) => {
+    if (persisted) return originalJson(body);
+    persisted = true;
+    const status = res.statusCode;
+    const persist = status < 500
+      ? prisma.idempotencyOperation.update({
+        where,
+        data: {
+          responseStatus: status,
+          responseBody: body,
+          completedAt: new Date(),
+        },
+      })
+      : prisma.idempotencyOperation.delete({ where }).catch(() => null);
+    persist
+      .catch((error) => console.error('Idempotency result persistence error:', error))
+      .finally(() => originalJson(body));
+    return res;
+  };
+  next();
 };
 
 const getWeekStart = (dateInput) => {
@@ -1184,6 +1333,8 @@ const runFamilyStateTransaction = async (action) => {
     try {
       return await prisma.$transaction(action, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: FAMILY_STATE_TRANSACTION_MAX_WAIT_MS,
+        timeout: FAMILY_STATE_TRANSACTION_TIMEOUT_MS,
       });
     } catch (error) {
       if (attempt < 2 && isSerializableTransactionConflict(error)) {
@@ -2259,6 +2410,90 @@ const rejectInvalidPendingCompletions = (data, now = new Date().toISOString()) =
   });
 };
 
+const buildFamilySnapshot = async (familyId, viewer) =>
+  prisma.$transaction(
+    async (tx) => {
+      const state = await tx.familyState.findUnique({ where: { familyId } });
+      if (!state) {
+        throw new Error('Brak stanu rodziny');
+      }
+      const data = normalizeStateData(state.data);
+      // Derived values are computed for this representation only. GET endpoints
+      // never persist this work or increment the aggregate version.
+      recomputePointsAndGrants(data);
+      const leaderboardChildren = data.children
+        .filter((child) => !child.archived)
+        .map((child) => ({ id: child.id, name: child.name, avatar: child.avatar }));
+      const leaderboardPoints = Object.fromEntries(leaderboardChildren.map((child) => [child.id, Number(data.points[child.id] || 0)]));
+      const leaderboardStreaks = Object.fromEntries(leaderboardChildren.map((child) => [child.id, data.streaks[child.id] || calculateStreakForChildData(data, child.id)]));
+      const parentUsers = viewer.role === 'PARENT'
+        ? await tx.user.findMany({
+          where: { familyId, role: 'PARENT' },
+          select: { id: true, email: true, active: true, pinCode: true },
+          orderBy: { createdAt: 'asc' },
+        })
+        : [];
+      const family = {
+        children: filterStorageValueForUser('children', data, viewer),
+        tasks: filterStorageValueForUser('tasks', data, viewer),
+        completions: filterStorageValueForUser('completions', data, viewer),
+        extraTasks: filterStorageValueForUser('extraTasks', data, viewer),
+        pointAdjustments: filterStorageValueForUser('pointAdjustments', data, viewer),
+        pointLedger: filterStorageValueForUser('pointLedger', data, viewer),
+        rewards: filterStorageValueForUser('rewards', data, viewer),
+        streaks: filterStorageValueForUser('streaks', data, viewer),
+        points: filterStorageValueForUser('points', data, viewer),
+        rewardUnlocks: filterStorageValueForUser('rewardUnlocks', data, viewer),
+        familyGoal: filterStorageValueForUser('familyGoal', data, viewer),
+        auditLogs: filterStorageValueForUser('auditLogs', data, viewer),
+        dayPointGrants: filterStorageValueForUser('dayPointGrants', data, viewer),
+        weekBonusGrants: filterStorageValueForUser('weekBonusGrants', data, viewer),
+        taskPointGrants: filterStorageValueForUser('taskPointGrants', data, viewer),
+        familyLeaderboard: {
+          children: leaderboardChildren.slice().sort(compareChildrenForLeaderboard(leaderboardPoints, leaderboardStreaks)),
+          points: leaderboardPoints,
+          streaks: leaderboardStreaks,
+        },
+        rewardUnlockHistory: viewer.role === 'PARENT' ? getRewardUnlockHistory(data) : [],
+        parentUsers: parentUsers.map((user) => ({
+          id: user.id,
+          email: user.email,
+          active: user.active,
+          hasPinCode: Boolean(user.pinCode),
+        })),
+      };
+      return {
+        familyId,
+        version: getFamilyStateVersion(state),
+        generatedAt: state.updatedAt.toISOString(),
+        viewer: {
+          id: viewer.id,
+          email: viewer.email || null,
+          role: viewer.role,
+          familyId: viewer.familyId,
+          childId: viewer.childId || null,
+          childName: viewer.childName || null,
+          hasPinCode: Boolean(viewer.hasPinCode),
+          sessionRef: viewer.sessionRef,
+        },
+        permissions: {
+          canManageFamily: viewer.role === 'PARENT',
+          canManageOwnChildTasks: viewer.role === 'CHILD',
+        },
+        family,
+      };
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
+
+const buildFamilySnapshotEtag = (snapshot) => {
+  const scope = snapshot.viewer.role === 'CHILD'
+    ? `child-${snapshot.viewer.childId}`
+    : 'parent';
+  const computedForDay = new Date().toISOString().slice(0, 10);
+  return `"family-${snapshot.familyId}-viewer-${snapshot.viewer.id}-role-${snapshot.viewer.role.toLowerCase()}-scope-${scope}-v${snapshot.version}-day-${computedForDay}"`;
+};
+
 const mergeParentStorageValues = (data, values) => {
   const nextData = { ...data, ...values };
   if (Object.prototype.hasOwnProperty.call(values, 'children')) {
@@ -2355,6 +2590,7 @@ app.use('/api/auth/forgot-password', authRateLimit);
 app.use('/api/auth/reset-password/token', authRateLimit);
 app.use('/api/auth/login-child', authRateLimit);
 app.use('/api/auth/parent-pin/verify', authRateLimit);
+app.use('/api', idempotencyMiddleware);
 
 app.get('/health', async (req, res) => {
   let db = 'ok';
@@ -2437,7 +2673,7 @@ app.post('/api/auth/register', async (req, res) => {
     setAuthCookie(req, res, token);
     res.status(201).json({
       token,
-      user: toPublicUser(created),
+      user: toPublicUser(created, getSessionRef(token)),
     });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
@@ -2480,7 +2716,7 @@ app.post('/api/auth/login', async (req, res) => {
     setAuthCookie(req, res, token);
     res.json({
       token,
-      user: toPublicUser(user),
+      user: toPublicUser(user, getSessionRef(token)),
     });
   } catch (error) {
     if (isFamilyStateConflict(error)) {
@@ -2494,6 +2730,23 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json({ user: req.auth.user });
+});
+
+app.get('/api/family-state', authMiddleware, async (req, res) => {
+  try {
+    const snapshot = await buildFamilySnapshot(req.auth.user.familyId, req.auth.user);
+    const etag = buildFamilySnapshotEtag(snapshot);
+    res.set('ETag', etag);
+    res.set('Cache-Control', 'private, must-revalidate');
+    if (req.get('If-None-Match') === etag) {
+      res.status(304).end();
+      return;
+    }
+    res.json(snapshot);
+  } catch (error) {
+    console.error('Family snapshot error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać spójnego stanu rodziny' });
+  }
 });
 
 app.post('/api/auth/parent-pin/verify', authMiddleware, requireParent, async (req, res) => {
@@ -2973,6 +3226,7 @@ app.post('/api/auth/login-child', async (req, res) => {
         familyId: credential.familyId,
         childId: child.id,
         childName: child.name,
+        sessionRef: getSessionRef(token),
       },
     });
   } catch (error) {
@@ -2991,10 +3245,8 @@ app.get('/api/task-templates', authMiddleware, async (req, res) => {
 
 app.get('/api/leaderboard', authMiddleware, async (req, res) => {
   try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    if (recomputePointsAndGrantsIfChanged(data)) {
-      await saveStateData(state, data, { skipOnConflict: true });
-    }
+    const { data } = await loadStateData(req.auth.user.familyId);
+    recomputePointsAndGrants(data);
     const children = data.children
       .filter((child) => !child.archived)
       .map((child) => ({
@@ -4283,12 +4535,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
 
 app.get('/api/rewards', authMiddleware, async (req, res) => {
   try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-    if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
-      await saveStateData(state, data, { skipOnConflict: true });
-    }
+    const { data } = await loadStateData(req.auth.user.familyId);
     const visibleUnlocks = getVisibleRewardUnlocks(data.rewardUnlocks);
     const unlocks =
       req.auth.user.role === 'CHILD'
@@ -4311,12 +4558,7 @@ app.get('/api/rewards', authMiddleware, async (req, res) => {
 
 app.get('/api/rewards/history', authMiddleware, requireParent, async (req, res) => {
   try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-    if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
-      await saveStateData(state, data, { skipOnConflict: true });
-    }
+    const { data } = await loadStateData(req.auth.user.familyId);
 
     res.json({
       rewardUnlockHistory: getRewardUnlockHistory(data),
@@ -4595,18 +4837,9 @@ app.get('/api/storage/get/:key', authMiddleware, async (req, res) => {
   }
 
   try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
+    const { data } = await loadStateData(req.auth.user.familyId);
     if (['points', 'streaks', 'pointLedger', 'taskPointGrants', 'dayPointGrants', 'weekBonusGrants'].includes(key)) {
-      if (recomputePointsAndGrantsIfChanged(data)) {
-        await saveStateData(state, data, { skipOnConflict: true });
-      }
-    }
-    if (key === 'rewardUnlocks') {
-      const beforeUnlocks = JSON.stringify(data.rewardUnlocks);
-      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-      if (JSON.stringify(data.rewardUnlocks) !== beforeUnlocks) {
-        await saveStateData(state, data, { skipOnConflict: true });
-      }
+      recomputePointsAndGrants(data);
     }
     res.json({
       key,

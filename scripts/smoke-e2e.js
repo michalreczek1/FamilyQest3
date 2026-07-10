@@ -58,6 +58,11 @@ const run = async () => {
   const parentToken = register.data?.token;
   assertOk(Boolean(parentToken), 'Missing parent token', register.data);
 
+  const snapshot = await requestJson('/api/family-state', { token: parentToken });
+  assertOk(snapshot.status === 200, 'Family snapshot failed', snapshot);
+  assertOk(Number.isInteger(snapshot.data?.version), 'Snapshot missing version', snapshot.data);
+  assertOk(snapshot.data?.viewer?.sessionRef, 'Snapshot missing sessionRef', snapshot.data);
+
   const childCreate = await requestJson('/api/children', {
     method: 'POST',
     token: parentToken,

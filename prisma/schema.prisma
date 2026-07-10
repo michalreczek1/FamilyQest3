@@ -89,3 +89,20 @@ model RevokedToken {
   @@index([expiresAt])
   @@index([subjectId])
 }
+
+model IdempotencyOperation {
+  id             String   @id @default(uuid())
+  userId         String
+  familyId       String
+  operationCode  String
+  idempotencyKey String
+  requestHash    String
+  responseStatus Int?
+  responseBody   Json?
+  completedAt    DateTime?
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, familyId, operationCode, idempotencyKey])
+  @@index([expiresAt])
+}

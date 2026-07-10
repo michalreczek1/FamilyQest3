@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CHILD_SESSION_KEY, HISTORY_DAYS } from './constants.js';
-import { apiRequest, clearLegacyAuthToken, createStorageClient } from './lib/api.js';
+import { CHILD_SESSION_KEY, HISTORY_DAYS, LOGOUT_PENDING_KEY } from './constants.js';
+import { apiRequest, clearLegacyAuthToken, createStorageClient, setApiRequestContextProvider } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
 import { isTaskActiveForDate, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
 import LoginView from './components/auth/LoginView.jsx';
@@ -13,6 +13,19 @@ import { useAutosave } from './hooks/useAutosave.js';
 import { useFamilyData } from './hooks/useFamilyData.js';
 
 const COMPLETION_ACTION_BATCH_DELAY_MS = 350;
+const LOGOUT_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+
+const readPendingLogout = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(LOGOUT_PENDING_KEY) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    localStorage.removeItem(LOGOUT_PENDING_KEY);
+    return null;
+  }
+};
+
+const writePendingLogout = (value) => localStorage.setItem(LOGOUT_PENDING_KEY, JSON.stringify(value));
 
 const App = () => {
   const storage = useMemo(() => createStorageClient(), []);
@@ -71,7 +84,13 @@ const App = () => {
   const [parentPinGateOpen, setParentPinGateOpen] = useState(false);
   const [pendingCompletionActionIds, setPendingCompletionActionIds] = useState([]);
   const [pendingExtraTaskActionIds, setPendingExtraTaskActionIds] = useState([]);
+  const [authState, setAuthState] = useState('active');
   const serverMutationQueueRef = useRef(Promise.resolve());
+  const sessionGenerationRef = useRef(0);
+  const sessionRefRef = useRef(null);
+  const authStateRef = useRef('active');
+  const resetFamilyDataRef = useRef(null);
+  const abortSnapshotRef = useRef(() => {});
   const childCompletionMutationVersionsRef = useRef(new Map());
   const completionActionBatchRef = useRef({
     approve: new Map(),
@@ -79,6 +98,78 @@ const App = () => {
     approveTimer: null,
     rejectTimer: null,
   });
+  const setAuthLifecycle = useCallback((nextState) => {
+    authStateRef.current = nextState;
+    setAuthState(nextState);
+  }, []);
+  const getSessionGeneration = useCallback(() => sessionGenerationRef.current, []);
+  const isSnapshotCurrent = useCallback(({ generation }) =>
+    generation === sessionGenerationRef.current && authStateRef.current === 'active', []);
+  const retryPendingLogout = useCallback(async (pending = readPendingLogout()) => {
+    if (!pending?.sessionRef || pending.revocationState !== 'pending') return false;
+    if (Number(pending.expiresAt || 0) <= Date.now()) {
+      writePendingLogout({ ...pending, revocationState: 'expired' });
+      return false;
+    }
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST', timeoutMs: 5000 });
+      writePendingLogout({ ...pending, revocationState: 'confirmed', confirmedAt: new Date().toISOString() });
+      return true;
+    } catch (error) {
+      writePendingLogout({ ...pending, retryCount: Number(pending.retryCount || 0) + 1 });
+      return false;
+    }
+  }, []);
+  const discardLocalSession = useCallback((sessionRef, { revoke = true } = {}) => {
+    sessionGenerationRef.current += 1;
+    setAuthLifecycle('loggedOut');
+    abortSnapshotRef.current('logout');
+    clearLegacyAuthToken();
+    sessionStorage.removeItem(CHILD_SESSION_KEY);
+    sessionRefRef.current = null;
+    setUser(null);
+    setParentPinGateOpen(false);
+    resetFamilyDataRef.current?.();
+    setHasLoadedSnapshot(false);
+    setLoading(false);
+    setView('login');
+    if (revoke && sessionRef) {
+      const pending = {
+        sessionRef,
+        revocationState: 'pending',
+        createdAt: new Date().toISOString(),
+        expiresAt: Date.now() + LOGOUT_PENDING_TTL_MS,
+        retryCount: 0,
+      };
+      writePendingLogout(pending);
+      void retryPendingLogout(pending);
+    }
+  }, [retryPendingLogout, setAuthLifecycle]);
+  const activateSession = useCallback((sessionRef) => {
+    sessionGenerationRef.current += 1;
+    sessionRefRef.current = sessionRef || null;
+    setAuthLifecycle('active');
+    const pending = readPendingLogout();
+    if (pending && pending.sessionRef !== sessionRef) {
+      localStorage.removeItem(LOGOUT_PENDING_KEY);
+    }
+  }, [setAuthLifecycle]);
+  const onSnapshotRejected = useCallback((viewer) => {
+    const pending = readPendingLogout();
+    const pendingForThisSession = pending?.revocationState === 'pending' && pending.sessionRef === viewer?.sessionRef;
+    const unexpectedChildSession = viewer?.role === 'CHILD' && sessionStorage.getItem(CHILD_SESSION_KEY) !== '1';
+    if (!pendingForThisSession && !unexpectedChildSession) return false;
+    discardLocalSession(viewer?.sessionRef, { revoke: true });
+    return true;
+  }, [discardLocalSession]);
+  const onSnapshotViewer = useCallback((viewer) => {
+    if (!viewer?.sessionRef) return;
+    sessionRefRef.current = viewer.sessionRef;
+    setAuthLifecycle('active');
+  }, [setAuthLifecycle]);
+  const onUnauthorized = useCallback(() => {
+    discardLocalSession(sessionRefRef.current, { revoke: false });
+  }, [discardLocalSession]);
   const autosaveSnapshot = useMemo(() => ({
     children,
     tasks,
@@ -110,7 +201,7 @@ const App = () => {
     setSyncing,
     enabled: false,
   });
-  const { resetFamilyData, loadData } = useFamilyData({
+  const { resetFamilyData, loadSnapshot, abortSnapshot } = useFamilyData({
     storage,
     skipNextSaveRef,
     skipAutoSaveUntilRef,
@@ -152,11 +243,28 @@ const App = () => {
     setShowPointHistory,
     setPointAdjustmentModal,
     setConnectionError,
+    getSessionGeneration,
+    isSnapshotCurrent,
+    onSnapshotViewer,
+    onSnapshotRejected,
+    onUnauthorized,
   });
+  useEffect(() => {
+    resetFamilyDataRef.current = resetFamilyData;
+    abortSnapshotRef.current = abortSnapshot;
+  }, [abortSnapshot, resetFamilyData]);
+  useEffect(() => {
+    setApiRequestContextProvider(() => ({
+      sessionGeneration: sessionGenerationRef.current,
+      correlationId: sessionRefRef.current || undefined,
+    }));
+    return () => setApiRequestContextProvider(null);
+  }, []);
   useEffect(() => {
     const goOnline = () => {
       setIsOnline(true);
       setConnectionError('');
+      void retryPendingLogout();
     };
     const goOffline = () => {
       setIsOnline(false);
@@ -168,7 +276,7 @@ const App = () => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
     };
-  }, []);
+  }, [retryPendingLogout]);
   const addAuditLog = useCallback((action, entityType, entityId, details = {}) => {
     const entry = {
       id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -182,16 +290,20 @@ const App = () => {
     setAuditLogs(prev => [entry, ...prev].slice(0, 500));
   }, [user?.id]);
   const runServerMutation = useCallback(action => {
+    if (authState !== 'active' || authStateRef.current !== 'active') {
+      return Promise.reject(new Error('Sesja nie jest aktywna. Zaloguj się ponownie.'));
+    }
     const queued = serverMutationQueueRef.current.catch(() => {}).then(action);
     serverMutationQueueRef.current = queued.catch(() => {});
     return queued;
-  }, []);
-  const reloadAfterServerMutation = useCallback((options = {}) => loadData({
+  }, [authState]);
+  const reloadAfterServerMutation = useCallback((options = {}) => loadSnapshot({
     preserveView: true,
     silent: true,
     skipNextAutoSave: true,
+    force: true,
     ...options
-  }), [loadData]);
+  }), [loadSnapshot]);
   const addPendingCompletionActions = useCallback(ids => {
     const validIds = ids.filter(Boolean);
     if (validIds.length === 0) return;
@@ -334,7 +446,7 @@ const App = () => {
   }, []);
   useEffect(() => {
     clearLegacyAuthToken();
-    loadData();
+    loadSnapshot();
   }, []);
   useEffect(() => {
     if (!user || !hasLoadedSnapshot || view !== 'parent' && view !== 'child') {
@@ -347,9 +459,10 @@ const App = () => {
         saveRequestedRef.current ||
         childCompletionMutationVersionsRef.current.size > 0
       ) return;
-      loadData({
+      loadSnapshot({
         preserveView: true,
-        silent: true
+        silent: true,
+        force: false,
       });
     };
     const handleVisibility = () => {
@@ -463,14 +576,15 @@ const App = () => {
   }, [children, tasks, completions, skipAutoSaveUntilRef, skipNextSaveRef]);
   const handleLogin = async (email, password) => {
     try {
-      await apiRequest('/api/auth/login', {
+      const result = await apiRequest('/api/auth/login', {
         method: 'POST',
         body: {
           email,
           password
         }
       }, false);
-      await loadData();
+      activateSession(result?.user?.sessionRef);
+      await loadSnapshot({ force: true });
       return {
         success: true
       };
@@ -487,7 +601,7 @@ const App = () => {
     familyName
   }) => {
     try {
-      await apiRequest('/api/auth/register', {
+      const result = await apiRequest('/api/auth/register', {
         method: 'POST',
         body: {
           email,
@@ -495,7 +609,8 @@ const App = () => {
           familyName
         }
       }, false);
-      await loadData();
+      activateSession(result?.user?.sessionRef);
+      await loadSnapshot({ force: true });
       return {
         success: true
       };
@@ -508,14 +623,15 @@ const App = () => {
   };
   const handleChildLogin = async accessCode => {
     try {
-      await apiRequest('/api/auth/login-child', {
+      const result = await apiRequest('/api/auth/login-child', {
         method: 'POST',
         body: {
           accessCode
         }
       }, false);
       sessionStorage.setItem(CHILD_SESSION_KEY, '1');
-      await loadData();
+      activateSession(result?.user?.sessionRef);
+      await loadSnapshot({ force: true });
       return {
         success: true
       };
@@ -567,19 +683,7 @@ const App = () => {
     }
   };
   const handleLogout = async () => {
-    try {
-      await apiRequest('/api/auth/logout', {
-        method: 'POST'
-      }, false);
-    } catch (e) {
-      console.warn('Logout request failed:', e.message);
-    }
-    clearLegacyAuthToken();
-    sessionStorage.removeItem(CHILD_SESSION_KEY);
-    setUser(null);
-    setParentPinGateOpen(false);
-    resetFamilyData();
-    setView('login');
+    discardLocalSession(sessionRefRef.current || user?.sessionRef, { revoke: true });
   };
   const selectChild = child => {
     if (user?.role === 'CHILD' && child.id !== user.childId) return;
@@ -1301,10 +1405,11 @@ const App = () => {
     if (Array.isArray(result?.childAccessCodes)) {
       setChildAccessCodes(Object.fromEntries(result.childAccessCodes.map(item => [item.childId, item.accessCode])));
     }
-    await loadData({
+    await loadSnapshot({
       preserveView: true,
       silent: true,
-      skipNextAutoSave: true
+      skipNextAutoSave: true,
+      force: true,
     });
     return result;
   };
@@ -1351,9 +1456,10 @@ const App = () => {
     return React.createElement(ErrorBoundary, {
       title: "Widok dziecka wymaga odświeżenia",
       message: "Coś poszło nie tak podczas renderowania panelu dziecka.",
-      onReset: () => loadData({
+      onReset: () => loadSnapshot({
         preserveView: true,
-        skipNextAutoSave: true
+        skipNextAutoSave: true,
+        force: true,
       }),
       onLogout: handleLogout
     }, React.createElement(ChildView, {
@@ -1395,9 +1501,10 @@ const App = () => {
     return React.createElement(ErrorBoundary, {
       title: "Panel rodzica wymaga odświeżenia",
       message: "Coś poszło nie tak podczas renderowania panelu rodzica.",
-      onReset: () => loadData({
+      onReset: () => loadSnapshot({
         preserveView: true,
-        skipNextAutoSave: true
+        skipNextAutoSave: true,
+        force: true,
       }),
       onLogout: handleLogout
     }, React.createElement(ParentPanel, {
