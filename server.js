@@ -46,6 +46,23 @@ const IDEMPOTENCY_POLL_MS = Number(process.env.IDEMPOTENCY_POLL_MS || 75);
 const FAMILY_STATE_TRANSACTION_MAX_WAIT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_MAX_WAIT_MS || 1000);
 const FAMILY_STATE_TRANSACTION_TIMEOUT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_TIMEOUT_MS || 5000);
 const FAMILY_SNAPSHOT_ENABLED = process.env.FAMILY_SNAPSHOT_ENABLED !== 'false';
+const FAMILY_SNAPSHOT_ROLLOUT_PERCENT = (() => {
+  const value = Number(process.env.FAMILY_SNAPSHOT_ROLLOUT_PERCENT || 100);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 100;
+})();
+const FAMILY_SNAPSHOT_ROLLOUT_INCLUDE_FAMILIES = new Set(
+  String(process.env.FAMILY_SNAPSHOT_ROLLOUT_INCLUDE_FAMILIES || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const FAMILY_SNAPSHOT_ROLLOUT_EXCLUDE_FAMILIES = new Set(
+  String(process.env.FAMILY_SNAPSHOT_ROLLOUT_EXCLUDE_FAMILIES || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const SYNC_METRICS_FLUSH_MS = Math.max(1000, Number(process.env.SYNC_METRICS_FLUSH_MS || 5000));
 
 const validateSecret = (name, value, forbiddenValues = []) => {
   if (!value || value.length < 32 || forbiddenValues.includes(value)) {
@@ -110,8 +127,101 @@ const corsOptions = {
 };
 
 const syncMetrics = new Map();
-const recordSyncMetric = (name, value = 1) => {
+const pendingSyncMetrics = new Map();
+let syncMetricsFlushTimer = null;
+let syncMetricsFlushPromise = null;
+
+const getSyncMetricBucketStart = (date = new Date()) => {
+  const bucketStart = new Date(date);
+  bucketStart.setUTCMinutes(0, 0, 0);
+  return bucketStart;
+};
+
+const getFamilySnapshotRollout = (familyId, options = {}) => {
+  const enabled = options.enabled ?? FAMILY_SNAPSHOT_ENABLED;
+  const percent = options.percent ?? FAMILY_SNAPSHOT_ROLLOUT_PERCENT;
+  const includeFamilies = options.includeFamilies ?? FAMILY_SNAPSHOT_ROLLOUT_INCLUDE_FAMILIES;
+  const excludeFamilies = options.excludeFamilies ?? FAMILY_SNAPSHOT_ROLLOUT_EXCLUDE_FAMILIES;
+  if (!enabled) return { enabled: false, cohort: 'disabled' };
+  if (includeFamilies.has(familyId)) return { enabled: true, cohort: 'include' };
+  if (excludeFamilies.has(familyId)) return { enabled: false, cohort: 'exclude' };
+
+  const bucket = crypto.createHash('sha256').update(`family-snapshot:${familyId}`).digest().readUInt32BE(0) % 100;
+  return {
+    enabled: bucket < percent,
+    cohort: bucket < percent ? `snapshot-${percent}` : `legacy-${percent}`,
+  };
+};
+
+const flushSyncMetrics = async () => {
+  if (syncMetricsFlushPromise) return syncMetricsFlushPromise;
+  if (pendingSyncMetrics.size === 0) return undefined;
+
+  const entries = [...pendingSyncMetrics.values()];
+  pendingSyncMetrics.clear();
+  syncMetricsFlushPromise = Promise.all(
+    entries.map((entry) => prisma.syncMetricBucket.upsert({
+      where: {
+        bucketStart_metric_cohort: {
+          bucketStart: entry.bucketStart,
+          metric: entry.metric,
+          cohort: entry.cohort,
+        },
+      },
+      create: {
+        bucketStart: entry.bucketStart,
+        metric: entry.metric,
+        cohort: entry.cohort,
+        count: BigInt(entry.count),
+        total: entry.total,
+      },
+      update: {
+        count: { increment: BigInt(entry.count) },
+        total: { increment: entry.total },
+      },
+    })),
+  )
+    .catch((error) => {
+      entries.forEach((entry) => {
+        const key = `${entry.bucketStart.toISOString()}\u0000${entry.metric}\u0000${entry.cohort}`;
+        const pending = pendingSyncMetrics.get(key);
+        pendingSyncMetrics.set(key, {
+          ...entry,
+          count: entry.count + Number(pending?.count || 0),
+          total: entry.total + Number(pending?.total || 0),
+        });
+      });
+      console.error('Sync metrics persistence error:', error);
+    })
+    .finally(() => {
+      syncMetricsFlushPromise = null;
+      if (pendingSyncMetrics.size > 0) scheduleSyncMetricsFlush();
+    });
+  return syncMetricsFlushPromise;
+};
+
+const scheduleSyncMetricsFlush = () => {
+  if (syncMetricsFlushTimer) return;
+  syncMetricsFlushTimer = setTimeout(() => {
+    syncMetricsFlushTimer = null;
+    void flushSyncMetrics();
+  }, SYNC_METRICS_FLUSH_MS);
+  syncMetricsFlushTimer.unref?.();
+};
+
+const recordSyncMetric = (name, value = 1, cohort = 'global') => {
   syncMetrics.set(name, Number(syncMetrics.get(name) || 0) + value);
+  const bucketStart = getSyncMetricBucketStart();
+  const key = `${bucketStart.toISOString()}\u0000${name}\u0000${cohort}`;
+  const pending = pendingSyncMetrics.get(key);
+  pendingSyncMetrics.set(key, {
+    bucketStart,
+    metric: name,
+    cohort,
+    count: Number(pending?.count || 0) + 1,
+    total: Number(pending?.total || 0) + value,
+  });
+  scheduleSyncMetricsFlush();
 };
 const getSyncMetrics = () => Object.fromEntries(syncMetrics.entries());
 const idempotencyRequestStorage = new AsyncLocalStorage();
@@ -3102,7 +3212,9 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/family-state', authMiddleware, async (req, res) => {
-  if (!FAMILY_SNAPSHOT_ENABLED) {
+  const rollout = getFamilySnapshotRollout(req.auth.user.familyId);
+  if (!rollout.enabled) {
+    recordSyncMetric('snapshot_rollout_legacy', 1, rollout.cohort);
     res.status(404).json({ code: 'FAMILY_SNAPSHOT_DISABLED', error: 'Snapshot synchronizacji jest tymczasowo wyłączony.' });
     return;
   }
@@ -3113,23 +3225,43 @@ app.get('/api/family-state', authMiddleware, async (req, res) => {
     res.set('ETag', etag);
     res.set('Cache-Control', 'private, must-revalidate');
     if (req.get('If-None-Match') === etag) {
-      recordSyncMetric('snapshot_not_modified');
+      recordSyncMetric('snapshot_not_modified', 1, rollout.cohort);
       res.status(304).end();
       return;
     }
-    recordSyncMetric('snapshot_success');
+    recordSyncMetric('snapshot_success', 1, rollout.cohort);
     res.json(snapshot);
   } catch (error) {
-    recordSyncMetric('snapshot_error');
+    recordSyncMetric('snapshot_error', 1, rollout.cohort);
     console.error('Family snapshot error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać spójnego stanu rodziny' });
   } finally {
-    recordSyncMetric('snapshot_duration_ms', Date.now() - startedAt);
+    recordSyncMetric('snapshot_duration_ms', Date.now() - startedAt, rollout.cohort);
   }
 });
 
-app.get('/api/sync/metrics', authMiddleware, requireParent, (req, res) => {
-  res.json({ metrics: getSyncMetrics() });
+app.get('/api/sync/metrics', authMiddleware, requireParent, async (req, res) => {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  try {
+    await flushSyncMetrics();
+    const buckets = await prisma.syncMetricBucket.findMany({
+      where: { bucketStart: { gte: since } },
+      orderBy: [{ bucketStart: 'asc' }, { metric: 'asc' }, { cohort: 'asc' }],
+    });
+    res.json({
+      metrics: getSyncMetrics(),
+      durable: buckets.map((bucket) => ({
+        bucketStart: bucket.bucketStart.toISOString(),
+        metric: bucket.metric,
+        cohort: bucket.cohort,
+        count: Number(bucket.count),
+        total: bucket.total,
+      })),
+    });
+  } catch (error) {
+    console.error('Sync metrics read error:', error);
+    res.status(500).json({ error: 'Nie udało się pobrać metryk synchronizacji' });
+  }
 });
 
 app.post('/api/auth/parent-pin/verify', authMiddleware, requireParent, async (req, res) => {
@@ -5409,6 +5541,7 @@ const gracefulShutdown = async () => {
       httpServer.close(() => resolve());
     });
   }
+  await flushSyncMetrics();
   await prisma.$disconnect();
   process.exit(0);
 };
@@ -5435,6 +5568,9 @@ module.exports = {
     bootstrapChildAccessCredentials,
     normalizeStateData,
     reconcileRewardUnlocksForAllChildren,
+    getFamilySnapshotRollout,
+    recordSyncMetric,
+    flushSyncMetrics,
     parseDateInput,
     toDateString,
     isValidDateString,

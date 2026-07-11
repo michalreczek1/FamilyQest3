@@ -213,6 +213,25 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(metricsRes.status).toBe(200);
     expect(metricsRes.body.metrics.snapshot_success).toBeGreaterThanOrEqual(1);
     expect(metricsRes.body.metrics.snapshot_not_modified).toBeGreaterThanOrEqual(1);
+    const rollout = __test.getFamilySnapshotRollout(registerRes.body.user.familyId);
+    expect(rollout).toEqual({ enabled: true, cohort: 'snapshot-100' });
+    expect(__test.getFamilySnapshotRollout(registerRes.body.user.familyId, { percent: 0 })).toEqual({
+      enabled: false,
+      cohort: 'legacy-0',
+    });
+    expect(__test.getFamilySnapshotRollout(registerRes.body.user.familyId, {
+      percent: 0,
+      includeFamilies: new Set([registerRes.body.user.familyId]),
+    })).toEqual({ enabled: true, cohort: 'include' });
+    expect(__test.getFamilySnapshotRollout(registerRes.body.user.familyId, {
+      percent: 100,
+      excludeFamilies: new Set([registerRes.body.user.familyId]),
+    })).toEqual({ enabled: false, cohort: 'exclude' });
+    expect(metricsRes.body.durable.some((bucket) => (
+      bucket.metric === 'snapshot_success'
+      && bucket.cohort === rollout.cohort
+      && bucket.count >= 1
+    ))).toBe(true);
 
     const childRes = await request(app)
       .post('/api/children')

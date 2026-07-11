@@ -106,3 +106,17 @@ model IdempotencyOperation {
   @@unique([userId, familyId, operationCode, idempotencyKey])
   @@index([expiresAt])
 }
+
+model SyncMetricBucket {
+  id          String   @id @default(uuid())
+  bucketStart DateTime
+  metric      String
+  cohort      String
+  count       BigInt   @default(0)
+  total       Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([bucketStart, metric, cohort])
+  @@index([bucketStart])
+}
