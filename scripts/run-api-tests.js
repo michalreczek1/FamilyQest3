@@ -58,6 +58,23 @@ const waitForPort = (host, port, timeoutMs = 15000) =>
     tryConnect();
   });
 
+const waitForHealthyServer = async (baseUrl, timeoutMs = 15000) => {
+  const startedAt = Date.now();
+  let lastError = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${baseUrl}/health`);
+      const health = await response.json();
+      if (response.ok && health?.db === 'ok') return;
+      lastError = new Error(`health=${response.status}, db=${health?.db || 'unknown'}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Test smoke server did not become healthy: ${lastError?.message || 'unknown error'}`);
+};
+
 const isPortOpen = (host, port) =>
   new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
@@ -98,6 +115,33 @@ const runSshScript = (script) => {
   });
   if (result.status !== 0) {
     throw new Error(`ssh ${SSH_HOST} pct exec ${POSTGRES_CT} failed with status ${result.status}`);
+  }
+};
+
+const runSmokeTest = async () => {
+  const port = Number(process.env.FAMILYQUEST_SMOKE_PORT || 3011);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const smokeEnv = {
+    ...process.env,
+    PORT: String(port),
+    NODE_ENV: 'test',
+    BCRYPT_ROUNDS: '4',
+    CORS_ORIGINS: baseUrl,
+    ALLOW_PUBLIC_REGISTRATION: 'true',
+    ALLOW_DEBUG_RESET_TOKEN: 'true',
+    SMOKE_BASE_URL: baseUrl,
+  };
+  const server = spawn(process.execPath, ['server.js'], {
+    stdio: 'inherit',
+    shell: false,
+    env: smokeEnv,
+  });
+
+  try {
+    await waitForHealthyServer(baseUrl);
+    run('node', ['scripts/smoke-e2e.js'], { env: smokeEnv });
+  } finally {
+    server.kill();
   }
 };
 
@@ -197,6 +241,7 @@ pg_ctlcluster ${POSTGRES_VERSION} main reload
   try {
     run('npx', ['prisma', 'db', 'push', '--skip-generate']);
     run('npx', ['jest', '--coverage', '--runInBand']);
+    await runSmokeTest();
   } finally {
     if (tunnel) {
       tunnel.kill();

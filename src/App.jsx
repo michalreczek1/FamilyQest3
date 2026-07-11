@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CHILD_SESSION_KEY, HISTORY_DAYS, LOGOUT_PENDING_KEY } from './constants.js';
+import { CHILD_SESSION_KEY, HISTORY_DAYS, LOGOUT_PENDING_KEY, PENDING_MUTATIONS_KEY } from './constants.js';
 import { apiRequest, clearLegacyAuthToken, createStorageClient, setApiRequestContextProvider } from './lib/api.js';
 import { getDayNumber, getWeekStart, toDateString } from './lib/dates.js';
 import { isTaskActiveForDate, isTaskScheduledForDate, normalizeTaskArchiveDays } from './lib/tasks.js';
@@ -14,6 +14,7 @@ import { useFamilyData } from './hooks/useFamilyData.js';
 
 const COMPLETION_ACTION_BATCH_DELAY_MS = 350;
 const LOGOUT_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+const PENDING_MUTATION_TTL_MS = 24 * 60 * 60 * 1000;
 
 const readPendingLogout = () => {
   try {
@@ -26,6 +27,25 @@ const readPendingLogout = () => {
 };
 
 const writePendingLogout = (value) => localStorage.setItem(LOGOUT_PENDING_KEY, JSON.stringify(value));
+
+const readPendingMutations = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(PENDING_MUTATIONS_KEY) || '[]');
+    return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+  } catch {
+    localStorage.removeItem(PENDING_MUTATIONS_KEY);
+    return [];
+  }
+};
+
+const writePendingMutations = (items) => {
+  const retained = items.filter((item) => Number(item?.expiresAt || 0) > Date.now());
+  if (retained.length === 0) {
+    localStorage.removeItem(PENDING_MUTATIONS_KEY);
+    return;
+  }
+  localStorage.setItem(PENDING_MUTATIONS_KEY, JSON.stringify(retained));
+};
 
 const App = () => {
   const storage = useMemo(() => createStorageClient(), []);
@@ -85,12 +105,15 @@ const App = () => {
   const [pendingCompletionActionIds, setPendingCompletionActionIds] = useState([]);
   const [pendingExtraTaskActionIds, setPendingExtraTaskActionIds] = useState([]);
   const [authState, setAuthState] = useState('active');
+  const [mutationOutcomeNotice, setMutationOutcomeNotice] = useState('');
   const serverMutationQueueRef = useRef(Promise.resolve());
   const sessionGenerationRef = useRef(0);
   const sessionRefRef = useRef(null);
+  const viewerRef = useRef(null);
   const authStateRef = useRef('active');
   const resetFamilyDataRef = useRef(null);
   const abortSnapshotRef = useRef(() => {});
+  const activeRequestControllersRef = useRef(new Map());
   const childCompletionMutationVersionsRef = useRef(new Map());
   const completionActionBatchRef = useRef({
     approve: new Map(),
@@ -103,6 +126,53 @@ const App = () => {
     setAuthState(nextState);
   }, []);
   const getSessionGeneration = useCallback(() => sessionGenerationRef.current, []);
+  const registerActiveRequest = useCallback((request) => {
+    activeRequestControllersRef.current.set(request.requestId, request);
+  }, []);
+  const unregisterActiveRequest = useCallback((request) => {
+    activeRequestControllersRef.current.delete(request.requestId);
+  }, []);
+  const abortActiveRequests = useCallback((reason = 'cancelled') => {
+    activeRequestControllersRef.current.forEach((request) => request.controller.abort(reason));
+    activeRequestControllersRef.current.clear();
+  }, []);
+  const registerUnknownMutation = useCallback((request) => {
+    if (!request?.idempotencyKey || !request?.sessionRef) return;
+    const now = Date.now();
+    const current = readPendingMutations().filter((item) => Number(item.expiresAt || 0) > now);
+    const duplicate = current.some((item) => item.idempotencyKey === request.idempotencyKey && item.sessionRef === request.sessionRef);
+    if (!duplicate) {
+      current.push({
+        idempotencyKey: request.idempotencyKey,
+        path: request.path,
+        method: request.method,
+        body: request.body,
+        sessionRef: request.sessionRef,
+        familyId: request.familyId || null,
+        sessionGeneration: request.sessionGeneration,
+        createdAt: now,
+        expiresAt: now + PENDING_MUTATION_TTL_MS,
+        retryCount: 0,
+      });
+      writePendingMutations(current);
+    }
+    if (
+      request.sessionGeneration === sessionGenerationRef.current &&
+      request.sessionRef === sessionRefRef.current
+    ) {
+      setMutationOutcomeNotice('Sprawdzam wynik operacji…');
+      setSyncing(true);
+    }
+  }, []);
+  const resolveKnownMutation = useCallback((request) => {
+    if (!request?.idempotencyKey) return;
+    const remaining = readPendingMutations().filter((item) => item.idempotencyKey !== request.idempotencyKey);
+    writePendingMutations(remaining);
+    if (request.sessionRef === sessionRefRef.current && remaining.every((item) => item.sessionRef !== request.sessionRef)) {
+      setMutationOutcomeNotice('');
+      setSyncing(false);
+    }
+  }, []);
   const isSnapshotCurrent = useCallback(({ generation }) =>
     generation === sessionGenerationRef.current && authStateRef.current === 'active', []);
   const retryPendingLogout = useCallback(async (pending = readPendingLogout()) => {
@@ -124,9 +194,11 @@ const App = () => {
     sessionGenerationRef.current += 1;
     setAuthLifecycle('loggedOut');
     abortSnapshotRef.current('logout');
+    abortActiveRequests('logout');
     clearLegacyAuthToken();
     sessionStorage.removeItem(CHILD_SESSION_KEY);
     sessionRefRef.current = null;
+    viewerRef.current = null;
     setUser(null);
     setParentPinGateOpen(false);
     resetFamilyDataRef.current?.();
@@ -144,10 +216,11 @@ const App = () => {
       writePendingLogout(pending);
       void retryPendingLogout(pending);
     }
-  }, [retryPendingLogout, setAuthLifecycle]);
-  const activateSession = useCallback((sessionRef) => {
+  }, [abortActiveRequests, retryPendingLogout, setAuthLifecycle]);
+  const activateSession = useCallback((sessionRef, viewer = null) => {
     sessionGenerationRef.current += 1;
     sessionRefRef.current = sessionRef || null;
+    viewerRef.current = viewer || null;
     setAuthLifecycle('active');
     const pending = readPendingLogout();
     if (pending && pending.sessionRef !== sessionRef) {
@@ -165,6 +238,7 @@ const App = () => {
   const onSnapshotViewer = useCallback((viewer) => {
     if (!viewer?.sessionRef) return;
     sessionRefRef.current = viewer.sessionRef;
+    viewerRef.current = viewer;
     setAuthLifecycle('active');
   }, [setAuthLifecycle]);
   const onUnauthorized = useCallback(() => {
@@ -257,9 +331,20 @@ const App = () => {
     setApiRequestContextProvider(() => ({
       sessionGeneration: sessionGenerationRef.current,
       correlationId: sessionRefRef.current || undefined,
+      sessionRef: sessionRefRef.current || undefined,
+      familyId: viewerRef.current?.familyId || undefined,
+      representationScope: viewerRef.current?.role === 'CHILD'
+        ? `child:${viewerRef.current.childId}`
+        : viewerRef.current?.role === 'PARENT'
+          ? `parent:${viewerRef.current.id}`
+          : 'bootstrap',
+      onRequestStart: registerActiveRequest,
+      onRequestFinish: unregisterActiveRequest,
+      onOutcomeUnknown: registerUnknownMutation,
+      onOutcomeResolved: resolveKnownMutation,
     }));
     return () => setApiRequestContextProvider(null);
-  }, []);
+  }, [registerActiveRequest, registerUnknownMutation, resolveKnownMutation, unregisterActiveRequest]);
   useEffect(() => {
     const goOnline = () => {
       setIsOnline(true);
@@ -304,6 +389,57 @@ const App = () => {
     force: true,
     ...options
   }), [loadSnapshot]);
+  const retryPendingMutationOutcomes = useCallback(async () => {
+    const sessionRef = sessionRefRef.current;
+    if (authStateRef.current !== 'active' || !sessionRef || !navigator.onLine) return;
+    const entries = readPendingMutations().filter((item) => item.sessionRef === sessionRef);
+    if (entries.length === 0) return;
+    setMutationOutcomeNotice('Sprawdzam wynik operacji…');
+    setSyncing(true);
+    for (const entry of entries) {
+      try {
+        await apiRequest(entry.path, {
+          method: entry.method,
+          body: entry.body,
+          idempotencyKey: entry.idempotencyKey,
+          timeoutMs: 10000,
+        });
+      } catch (error) {
+        if (error?.isOutcomeUnknown || error?.isNetworkError || error?.isTimeout) continue;
+        const remaining = readPendingMutations().filter((item) => item.idempotencyKey !== entry.idempotencyKey);
+        writePendingMutations(remaining);
+      }
+    }
+    const stillPending = readPendingMutations().some((item) => item.sessionRef === sessionRef);
+    setMutationOutcomeNotice(stillPending ? 'Nie udało się jeszcze rozstrzygnąć operacji. Spróbuję ponownie po odzyskaniu połączenia.' : '');
+    setSyncing(stillPending);
+    if (!stillPending) await reloadAfterServerMutation();
+  }, [reloadAfterServerMutation]);
+  useEffect(() => {
+    if (user?.sessionRef) void retryPendingMutationOutcomes();
+  }, [retryPendingMutationOutcomes, user?.sessionRef]);
+  useEffect(() => {
+    const retryAfterReconnect = () => {
+      void retryPendingMutationOutcomes();
+    };
+    window.addEventListener('online', retryAfterReconnect);
+    return () => window.removeEventListener('online', retryAfterReconnect);
+  }, [retryPendingMutationOutcomes]);
+  const showMutationError = useCallback((error, fallbackMessage) => {
+    if (error?.isAborted) return false;
+    if (error?.isOutcomeUnknown) {
+      setMutationOutcomeNotice('Sprawdzam wynik operacji…');
+      setSyncing(true);
+      return false;
+    }
+    if (error?.status === 409 && error?.data?.code === 'FAMILY_STATE_VERSION_CONFLICT') {
+      setMutationOutcomeNotice('Stan rodziny zmienił się na innym urządzeniu. Odświeżam dane…');
+      void reloadAfterServerMutation().finally(() => setMutationOutcomeNotice(''));
+      return false;
+    }
+    window.alert(error?.message || fallbackMessage);
+    return true;
+  }, [reloadAfterServerMutation]);
   const addPendingCompletionActions = useCallback(ids => {
     const validIds = ids.filter(Boolean);
     if (validIds.length === 0) return;
@@ -412,12 +548,12 @@ const App = () => {
           showConfetti();
         }
       } catch (e) {
-        alert(e.message || (isApprove ? 'Nie udało się zatwierdzić zadania' : 'Nie udało się odrzucić zadania'));
+        showMutationError(e, isApprove ? 'Nie udało się zatwierdzić zadania' : 'Nie udało się odrzucić zadania');
       } finally {
         clearPendingCompletionActions(ids);
       }
     });
-  }, [runServerMutation, applyServerStatePatchOrReload, clearPendingCompletionActions, showConfetti]);
+  }, [runServerMutation, applyServerStatePatchOrReload, clearPendingCompletionActions, showConfetti, showMutationError]);
   const enqueueCompletionAction = useCallback((actionType, completion, { celebrate = true } = {}) => {
     if (!completion?.id) return Promise.resolve();
     addPendingCompletionActions([completion.id]);
@@ -486,9 +622,9 @@ const App = () => {
       });
       await applyServerStatePatchOrReload(result);
     } catch (error) {
-      alert(error.message || 'Nie udało się oznaczyć nagrody jako wydanej');
+      showMutationError(error, 'Nie udało się oznaczyć nagrody jako wydanej');
     }
-  }), [applyServerStatePatchOrReload, runServerMutation]);
+  }), [applyServerStatePatchOrReload, runServerMutation, showMutationError]);
   const evaluateDay = (childId, date) => {
     const child = children.find(c => c.id === childId);
     if (!child) return 'NOT_ACTIVE';
@@ -583,7 +719,7 @@ const App = () => {
           password
         }
       }, false);
-      activateSession(result?.user?.sessionRef);
+      activateSession(result?.user?.sessionRef, result?.user || null);
       await loadSnapshot({ force: true });
       return {
         success: true
@@ -609,7 +745,7 @@ const App = () => {
           familyName
         }
       }, false);
-      activateSession(result?.user?.sessionRef);
+      activateSession(result?.user?.sessionRef, result?.user || null);
       await loadSnapshot({ force: true });
       return {
         success: true
@@ -630,7 +766,7 @@ const App = () => {
         }
       }, false);
       sessionStorage.setItem(CHILD_SESSION_KEY, '1');
-      activateSession(result?.user?.sessionRef);
+      activateSession(result?.user?.sessionRef, result?.user || null);
       await loadSnapshot({ force: true });
       return {
         success: true
@@ -807,7 +943,7 @@ const App = () => {
             );
             return previousCompletion ? [...withoutCurrent, previousCompletion] : withoutCurrent;
           });
-          alert(error.message || 'Nie udało się zapisać wykonania zadania');
+          showMutationError(error, 'Nie udało się zapisać wykonania zadania');
         }
       } finally {
         if (childCompletionMutationVersionsRef.current.get(mutationKey) === mutationVersion) {
@@ -847,7 +983,7 @@ const App = () => {
       window.alert(`Cofnięto zatwierdzenie.\nEfekt punktowy: ${deltaText} pkt (${reversal.previousPoints ?? '?'} → ${reversal.newPoints ?? '?'}).`);
       await reloadAfterServerMutation();
       } catch (e) {
-        alert(e.message || 'Nie udało się cofnąć zatwierdzenia');
+        showMutationError(e, 'Nie udało się cofnąć zatwierdzenia');
       }
     });
   };
@@ -875,7 +1011,7 @@ const App = () => {
       }
       showConfetti();
       } catch (e) {
-        alert(e.message || 'Nie udało się zaliczyć zadania');
+        showMutationError(e, 'Nie udało się zaliczyć zadania');
       }
     });
   };
@@ -899,7 +1035,7 @@ const App = () => {
       setExtraTaskTitle('');
       await reloadAfterServerMutation();
       } catch (e) {
-        alert(e.message || 'Nie udało się zgłosić zadania dodatkowego');
+        showMutationError(e, 'Nie udało się zgłosić zadania dodatkowego');
       }
     });
   };
@@ -926,7 +1062,7 @@ const App = () => {
       await applyServerStatePatchOrReload(result);
       showConfetti();
       } catch (e) {
-        alert(e.message || 'Nie udało się zatwierdzić zadania dodatkowego');
+        showMutationError(e, 'Nie udało się zatwierdzić zadania dodatkowego');
       } finally {
         clearPendingExtraTaskActions([extraTask.id]);
       }
@@ -942,7 +1078,7 @@ const App = () => {
       });
       await applyServerStatePatchOrReload(result);
       } catch (e) {
-        alert(e.message || 'Nie udało się odrzucić zadania dodatkowego');
+        showMutationError(e, 'Nie udało się odrzucić zadania dodatkowego');
       } finally {
         clearPendingExtraTaskActions([extraTask.id]);
       }
@@ -978,6 +1114,14 @@ const App = () => {
       setPointAdjustmentModal(null);
       await reloadAfterServerMutation();
       } catch (e) {
+        if (e?.isAborted || e?.isOutcomeUnknown) {
+          if (e?.isOutcomeUnknown) {
+            setPointAdjustmentModal(null);
+            setMutationOutcomeNotice('Sprawdzam wynik operacji…');
+            setSyncing(true);
+          }
+          return;
+        }
         throw new Error(e.message || `Nie udało się zapisać ${label}`);
       }
     });
@@ -1010,7 +1154,7 @@ const App = () => {
       }
       showConfetti();
       } catch (e) {
-        alert(e.message || 'Nie udało się zatwierdzić zadań');
+        showMutationError(e, 'Nie udało się zatwierdzić zadań');
       } finally {
         clearPendingCompletionActions(queueIds);
       }
@@ -1042,7 +1186,7 @@ const App = () => {
         alert('Nie odrzucono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
       }
       } catch (e) {
-        alert(e.message || 'Nie udało się odrzucić zadań');
+        showMutationError(e, 'Nie udało się odrzucić zadań');
       } finally {
         clearPendingCompletionActions(queueIds);
       }
@@ -1122,7 +1266,7 @@ const App = () => {
         setShowModal(null);
         await reloadAfterServerMutation();
       } catch (e) {
-        alert(e.message || 'Nie udało się dodać dziecka');
+        showMutationError(e, 'Nie udało się dodać dziecka');
       }
     });
   };
@@ -1150,7 +1294,7 @@ const App = () => {
         setShowModal(null);
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się dodać zadania');
+        showMutationError(error, 'Nie udało się dodać zadania');
       }
     });
   };
@@ -1164,7 +1308,7 @@ const App = () => {
         setShowModal(null);
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się dodać nagrody');
+        showMutationError(error, 'Nie udało się dodać nagrody');
       }
     });
   };
@@ -1177,7 +1321,7 @@ const App = () => {
         });
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się zaktualizować nagrody');
+        showMutationError(error, 'Nie udało się zaktualizować nagrody');
       }
     });
   };
@@ -1187,7 +1331,7 @@ const App = () => {
         await apiRequest(`/api/rewards/${encodeURIComponent(rewardId)}`, { method: 'DELETE' });
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się zarchiwizować nagrody');
+        showMutationError(error, 'Nie udało się zarchiwizować nagrody');
       }
     });
   };
@@ -1206,7 +1350,7 @@ const App = () => {
         }
         await reloadAfterServerMutation();
       } catch (e) {
-        alert(e.message || 'Nie udało się zaktualizować dziecka');
+        showMutationError(e, 'Nie udało się zaktualizować dziecka');
       }
     });
   };
@@ -1218,7 +1362,7 @@ const App = () => {
         });
         await reloadAfterServerMutation();
       } catch (e) {
-        alert(e.message || 'Nie udało się zarchiwizować dziecka');
+        showMutationError(e, 'Nie udało się zarchiwizować dziecka');
       }
     });
   };
@@ -1244,7 +1388,7 @@ const App = () => {
         await reloadAfterServerMutation();
         return response.task;
       } catch (error) {
-        alert(error.message || 'Nie udało się zapisać zadania');
+        showMutationError(error, 'Nie udało się zapisać zadania');
         throw error;
       }
     });
@@ -1259,7 +1403,7 @@ const App = () => {
         });
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się zarchiwizować zadania');
+        showMutationError(error, 'Nie udało się zarchiwizować zadania');
       }
     });
   };
@@ -1273,7 +1417,7 @@ const App = () => {
         });
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się przywrócić zadania');
+        showMutationError(error, 'Nie udało się przywrócić zadania');
       }
     });
   };
@@ -1283,7 +1427,7 @@ const App = () => {
         await apiRequest('/api/family-goal', { method: 'PUT', body: updates });
         await reloadAfterServerMutation();
       } catch (error) {
-        alert(error.message || 'Nie udało się zaktualizować celu rodzinnego');
+        showMutationError(error, 'Nie udało się zaktualizować celu rodzinnego');
       }
     });
   };
@@ -1476,6 +1620,7 @@ const App = () => {
       childTaskDate: childTaskDate,
       isOnline: isOnline,
       syncing: syncing,
+      mutationOutcomeNotice: mutationOutcomeNotice,
       childApprovalNotice: childApprovalNotice,
       showPointHistory: showPointHistory,
       showChildRewards: showChildRewards,
@@ -1534,6 +1679,7 @@ const App = () => {
       pointAdjustmentModal: pointAdjustmentModal,
       isOnline: isOnline,
       syncing: syncing,
+      mutationOutcomeNotice: mutationOutcomeNotice,
       pendingCompletionActionIds: pendingCompletionActionIds,
       pendingExtraTaskActionIds: pendingExtraTaskActionIds,
       user: user,

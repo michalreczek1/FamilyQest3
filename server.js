@@ -44,6 +44,7 @@ const IDEMPOTENCY_WAIT_MS = Number(process.env.IDEMPOTENCY_WAIT_MS || 1500);
 const IDEMPOTENCY_POLL_MS = Number(process.env.IDEMPOTENCY_POLL_MS || 75);
 const FAMILY_STATE_TRANSACTION_MAX_WAIT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_MAX_WAIT_MS || 1000);
 const FAMILY_STATE_TRANSACTION_TIMEOUT_MS = Number(process.env.FAMILY_STATE_TRANSACTION_TIMEOUT_MS || 5000);
+const FAMILY_SNAPSHOT_ENABLED = process.env.FAMILY_SNAPSHOT_ENABLED !== 'false';
 
 const validateSecret = (name, value, forbiddenValues = []) => {
   if (!value || value.length < 32 || forbiddenValues.includes(value)) {
@@ -106,6 +107,12 @@ const corsOptions = {
   },
   credentials: true,
 };
+
+const syncMetrics = new Map();
+const recordSyncMetric = (name, value = 1) => {
+  syncMetrics.set(name, Number(syncMetrics.get(name) || 0) + value);
+};
+const getSyncMetrics = () => Object.fromEntries(syncMetrics.entries());
 
 app.set('trust proxy', 1);
 
@@ -833,12 +840,19 @@ const getRequestHash = (req) =>
 
 const waitForIdempotencyResult = async (where) => {
   const deadline = Date.now() + IDEMPOTENCY_WAIT_MS;
+  const startedAt = Date.now();
   while (Date.now() < deadline) {
     const existing = await prisma.idempotencyOperation.findUnique({ where });
     if (!existing) return null;
-    if (existing.completedAt) return existing;
+    if (existing.completedAt) {
+      recordSyncMetric('idempotency_wait_resolved');
+      recordSyncMetric('idempotency_wait_ms', Date.now() - startedAt);
+      return existing;
+    }
     await new Promise((resolve) => setTimeout(resolve, IDEMPOTENCY_POLL_MS));
   }
+  recordSyncMetric('idempotency_wait_timed_out');
+  recordSyncMetric('idempotency_wait_ms', Date.now() - startedAt);
   return undefined;
 };
 
@@ -909,6 +923,7 @@ const idempotencyMiddleware = async (req, res, next) => {
       return;
     }
     if (existing.requestHash !== requestHash) {
+      recordSyncMetric('idempotency_key_reused');
       res.status(409).json({
         code: 'IDEMPOTENCY_KEY_REUSED',
         error: 'Ten Idempotency-Key został użyty dla innego żądania.',
@@ -917,10 +932,12 @@ const idempotencyMiddleware = async (req, res, next) => {
     }
     const resolved = existing.completedAt ? existing : await waitForIdempotencyResult(where);
     if (resolved?.completedAt) {
+      recordSyncMetric('idempotency_replay');
       res.status(resolved.responseStatus || 200).json(resolved.responseBody);
       return;
     }
     res.set('Retry-After', '2');
+    recordSyncMetric('idempotency_result_pending');
     res.status(409).json({
       code: 'IDEMPOTENCY_RESULT_PENDING',
       error: 'Operacja z tym kluczem jest nadal przetwarzana.',
@@ -1150,10 +1167,10 @@ const addAuditLogEntry = (data, actorUserId, action, entityType, entityId, detai
 const isFamilyStateConflict = (error) => error?.code === 'FAMILY_STATE_VERSION_CONFLICT';
 
 const sendFamilyStateConflict = (res) =>
-  res.status(409).json({
+  (recordSyncMetric('family_state_conflict'), res.status(409).json({
     error: 'Stan rodziny zmienił się na innym urządzeniu. Odśwież dane i spróbuj ponownie.',
     code: 'FAMILY_STATE_VERSION_CONFLICT',
-  });
+  }));
 
 const ensureUniqueChildAccessCode = (children, preferredCode = null, excludeChildId = null) => {
   const usedCodes = new Set(
@@ -2733,20 +2750,34 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/family-state', authMiddleware, async (req, res) => {
+  if (!FAMILY_SNAPSHOT_ENABLED) {
+    res.status(404).json({ code: 'FAMILY_SNAPSHOT_DISABLED', error: 'Snapshot synchronizacji jest tymczasowo wyłączony.' });
+    return;
+  }
+  const startedAt = Date.now();
   try {
     const snapshot = await buildFamilySnapshot(req.auth.user.familyId, req.auth.user);
     const etag = buildFamilySnapshotEtag(snapshot);
     res.set('ETag', etag);
     res.set('Cache-Control', 'private, must-revalidate');
     if (req.get('If-None-Match') === etag) {
+      recordSyncMetric('snapshot_not_modified');
       res.status(304).end();
       return;
     }
+    recordSyncMetric('snapshot_success');
     res.json(snapshot);
   } catch (error) {
+    recordSyncMetric('snapshot_error');
     console.error('Family snapshot error:', error);
     res.status(500).json({ error: 'Nie udało się pobrać spójnego stanu rodziny' });
+  } finally {
+    recordSyncMetric('snapshot_duration_ms', Date.now() - startedAt);
   }
+});
+
+app.get('/api/sync/metrics', authMiddleware, requireParent, (req, res) => {
+  res.json({ metrics: getSyncMetrics() });
 });
 
 app.post('/api/auth/parent-pin/verify', authMiddleware, requireParent, async (req, res) => {

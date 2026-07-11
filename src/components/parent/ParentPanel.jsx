@@ -40,6 +40,7 @@ const ParentPanel = ({
   pointAdjustmentModal,
   isOnline,
   syncing,
+  mutationOutcomeNotice,
   pendingCompletionActionIds = [],
   pendingExtraTaskActionIds = [],
   user,
@@ -123,7 +124,7 @@ const ParentPanel = ({
       className: `network-badge ${isOnline ? '' : 'offline'}`
     }, isOnline ? '🟢 Online' : '🔴 Offline'), syncing && React.createElement("div", {
       className: "network-badge syncing"
-    }, "\u23F3 Synchronizacja...")), React.createElement("button", {
+    }, mutationOutcomeNotice || "\u23F3 Synchronizacja...")), React.createElement("button", {
       className: "btn btn-danger",
       onClick: handleLogout
     }, "Wyloguj")), React.createElement("div", {

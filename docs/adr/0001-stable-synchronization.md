@@ -34,9 +34,17 @@ lub przywrócić widok po lokalnym wylogowaniu.
 - Dla krótkich mutacji konkurencyjne żądanie może czekać tylko w ograniczonym
   czasie. Po jego przekroczeniu API zwraca `409 IDEMPOTENCY_RESULT_PENDING`
   oraz `Retry-After`; klient zachowuje ten sam klucz i nie zakłada porażki.
+- Po timeoutie, utracie połączenia lub anulowaniu oczekiwania klient zapisuje
+  lokalnie nieznany wynik razem z `sessionRef` i `Idempotency-Key`. Po powrocie
+  sieci albo restarcie sesji wznawia wyłącznie to samo żądanie z tym samym
+  kluczem; nie uruchamia nowej operacji.
 - Retry serwerowy dotyczy wyłącznie przejściowych błędów serializacji. Retry
   klienta po konflikcie jest klasyfikowany per operacja jako `automaticRetry`,
   `refreshAndConfirm` albo `neverRetryAutomatically`.
+- Snapshot jest objęty odwracalną flagą `FAMILY_SNAPSHOT_ENABLED`; jej
+  wyłączenie pozwala bez migracji danych wrócić klientowi do kompatybilnego
+  odczytu. Serwer zbiera zagregowane metryki snapshotów, konfliktów oraz
+  idempotencji, bez zapisywania danych sesji lub treści żądań.
 
 ## Konsekwencje
 
@@ -44,5 +52,7 @@ lub przywrócić widok po lokalnym wylogowaniu.
 - Frontend przestaje budować widok z wielu `/api/storage/get/*`.
 - Timeout lub anulowanie oczekiwania nie oznacza anulowania mutacji po stronie
   serwera; wynik jest rozstrzygany tym samym kluczem idempotencji.
+- Bieżące metryki są pamięcią procesu i służą do obserwacji wdrożenia. Przed
+  pełnym rolloutem należy podłączyć je do trwałego systemu telemetrycznego.
 - SSE/WebSocket mogą później wyłącznie sygnalizować nową wersję i wywołać
   odświeżenie. Nie zastępują snapshotów ani kontroli wersji.

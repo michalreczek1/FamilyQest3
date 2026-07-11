@@ -67,6 +67,18 @@ export const apiRequest = async (path, options = {}) => {
     headers['Idempotency-Key'] = idempotencyKey || createRequestId();
   }
   let response = null;
+  const requestDescriptor = {
+    requestId,
+    path,
+    method,
+    isMutation,
+    controller,
+    sessionGeneration: context.sessionGeneration ?? null,
+    sessionRef: context.sessionRef || null,
+    familyId: context.familyId || null,
+    representationScope: context.representationScope || null,
+  };
+  context.onRequestStart?.(requestDescriptor);
   try {
     response = await fetch(buildApiUrl(path), {
       ...fetchOptions,
@@ -76,12 +88,25 @@ export const apiRequest = async (path, options = {}) => {
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
   } catch (e) {
+    const outcomeUnknown = isMutation && !path.startsWith('/api/auth/') && (
+      timeoutTriggered ||
+      !controller.signal.aborted ||
+      controller.signal.reason !== 'superseded'
+    );
+    if (outcomeUnknown) {
+      context.onOutcomeUnknown?.({
+        ...requestDescriptor,
+        idempotencyKey: headers['Idempotency-Key'] || null,
+        body,
+      });
+    }
     if (controller.signal.aborted) {
       const error = new Error(timeoutTriggered ? 'Przekroczono czas oczekiwania na odpowiedź serwera.' : 'Żądanie zostało anulowane.');
       error.isAborted = !timeoutTriggered;
       error.isTimeout = timeoutTriggered;
       error.requestId = requestId;
       error.idempotencyKey = headers['Idempotency-Key'] || null;
+      error.isOutcomeUnknown = outcomeUnknown;
       throw error;
     }
     const error = new Error('Brak połączenia z serwerem domowym. Sprawdź Wi-Fi i spróbuj ponownie.');
@@ -89,10 +114,12 @@ export const apiRequest = async (path, options = {}) => {
     error.cause = e;
     error.requestId = requestId;
     error.idempotencyKey = headers['Idempotency-Key'] || null;
+    error.isOutcomeUnknown = outcomeUnknown;
     throw error;
   } finally {
     globalThis.clearTimeout(timeout);
     externalSignal?.removeEventListener('abort', abortFromExternalSignal);
+    context.onRequestFinish?.(requestDescriptor);
   }
   let data = null;
   if (response.status === 304) {
@@ -126,6 +153,13 @@ export const apiRequest = async (path, options = {}) => {
       });
     }
     const message = data?.error || `HTTP ${response.status}`;
+    if (isMutation && data?.code === 'IDEMPOTENCY_RESULT_PENDING') {
+      context.onOutcomeUnknown?.({
+        ...requestDescriptor,
+        idempotencyKey: headers['Idempotency-Key'] || null,
+        body,
+      });
+    }
     const error = new Error(message);
     error.status = response.status;
     error.data = data;
@@ -141,6 +175,12 @@ export const apiRequest = async (path, options = {}) => {
     Object.defineProperty(data, '__etag', {
       value: response.headers.get('ETag') || null,
       enumerable: false,
+    });
+  }
+  if (isMutation && headers['Idempotency-Key']) {
+    context.onOutcomeResolved?.({
+      ...requestDescriptor,
+      idempotencyKey: headers['Idempotency-Key'],
     });
   }
   return data;

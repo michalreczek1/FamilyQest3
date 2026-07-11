@@ -206,6 +206,13 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .set('Authorization', `Bearer ${parentToken}`)
       .set('If-None-Match', snapshotRes.headers.etag);
     expect(notModified.status).toBe(304);
+
+    const metricsRes = await request(app)
+      .get('/api/sync/metrics')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(metricsRes.status).toBe(200);
+    expect(metricsRes.body.metrics.snapshot_success).toBeGreaterThanOrEqual(1);
+    expect(metricsRes.body.metrics.snapshot_not_modified).toBeGreaterThanOrEqual(1);
   });
 
   test('idempotency returns the original result and rejects key reuse with another payload', async () => {
