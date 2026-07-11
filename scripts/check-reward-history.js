@@ -105,6 +105,8 @@ const rewardUnlockHistory = [
     rewardTitle: 'Kino rodzinne',
     rewardDescription: 'Wspólny seans w weekend',
     requiredPoints: 80,
+    cycle: 2,
+    thresholdPoints: 160,
     status: 'RESTORED',
     latestAt: '2026-05-12T12:00:00.000Z',
     events: [
@@ -257,6 +259,7 @@ const runUiCheck = async () => {
   assert((await page.getByText('Cofnięta').count()) >= 1, 'revoked status should be visible');
   assert((await page.getByText('Dostępna').count()) >= 1, 'available status should be visible');
   assert((await page.getByText('Odblokowana').count()) >= 1, 'unlocked event should be visible');
+  assert.strictEqual(await page.getByText('Próg 2: 160 pkt').count(), 1, 'a repeated reward should identify its threshold in history');
 
   await page.screenshot({ path: 'tmp/reward-history-check.png', fullPage: true });
   await browser.close();

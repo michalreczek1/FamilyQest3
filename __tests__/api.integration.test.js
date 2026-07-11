@@ -1510,7 +1510,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(Object.keys(dayPointGrantsRes.body.value)).toHaveLength(0);
   });
 
-  test('point rewards are revoked after point loss and restored after points are regained', async () => {
+  test('point rewards unlock once per completed points threshold and restore the affected cycle', async () => {
     const suffix = `reward-threshold-${Date.now()}`;
     const parentToken = await registerParent(suffix);
     const addChildRes = await request(app)
@@ -1572,37 +1572,95 @@ test('storage sanitizer strips child access codes from children and audit logs',
       (unlock) => unlock.childId === child.id && unlock.rewardId === reward.id,
     );
     expect(firstUnlock).toBeTruthy();
+    expect(firstUnlock.cycle).toBe(1);
 
-    await applyPenalty(2, 'Spadek poniżej progu');
+    await grantBonus(5, 'Drugi próg nagrody');
+
+    const repeatedRewardsRes = await request(app)
+      .get('/api/rewards')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(repeatedRewardsRes.status).toBe(200);
+    const repeatedUnlocks = repeatedRewardsRes.body.rewardUnlocks
+      .filter((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id)
+      .sort((left, right) => left.cycle - right.cycle);
+    expect(repeatedUnlocks).toHaveLength(2);
+    expect(repeatedUnlocks.map((unlock) => unlock.cycle)).toEqual([1, 2]);
+    const secondUnlock = repeatedUnlocks[1];
+
+    const rewardHistoryRes = await request(app)
+      .get('/api/rewards/history')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(rewardHistoryRes.status).toBe(200);
+    expect(rewardHistoryRes.body.rewardUnlockHistory.find((entry) => entry.id === secondUnlock.id)).toMatchObject({
+      cycle: 2,
+      thresholdPoints: 10,
+    });
+
+    await applyPenalty(2, 'Spadek poniżej drugiego progu');
 
     const revokedRewardsRes = await request(app)
       .get('/api/rewards')
       .set('Authorization', `Bearer ${parentToken}`);
     expect(revokedRewardsRes.status).toBe(200);
-    expect(
-      revokedRewardsRes.body.rewardUnlocks.some((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id),
-    ).toBe(false);
+    const activeUnlocksAfterPenalty = revokedRewardsRes.body.rewardUnlocks
+      .filter((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id)
+      .sort((left, right) => left.cycle - right.cycle);
+    expect(activeUnlocksAfterPenalty).toHaveLength(1);
+    expect(activeUnlocksAfterPenalty[0].id).toBe(firstUnlock.id);
+    expect(activeUnlocksAfterPenalty[0].cycle).toBe(1);
 
     const childUnlocksAfterPenaltyRes = await request(app)
       .get('/api/storage/get/rewardUnlocks')
       .set('Authorization', `Bearer ${parentToken}`);
     expect(childUnlocksAfterPenaltyRes.status).toBe(200);
     expect(
-      childUnlocksAfterPenaltyRes.body.value.some((unlock) => unlock.childId === child.id && unlock.rewardId === reward.id),
+      childUnlocksAfterPenaltyRes.body.value.some((unlock) => unlock.id === secondUnlock.id),
     ).toBe(false);
 
-    await grantBonus(2, 'Powrót do progu');
+    await grantBonus(2, 'Powrót do drugiego progu');
 
     const restoredRewardsRes = await request(app)
       .get('/api/rewards')
       .set('Authorization', `Bearer ${parentToken}`);
     expect(restoredRewardsRes.status).toBe(200);
-    const restoredUnlock = restoredRewardsRes.body.rewardUnlocks.find(
-      (unlock) => unlock.childId === child.id && unlock.rewardId === reward.id,
-    );
+    const restoredUnlock = restoredRewardsRes.body.rewardUnlocks.find((unlock) => unlock.id === secondUnlock.id);
     expect(restoredUnlock).toBeTruthy();
-    expect(restoredUnlock.id).toBe(firstUnlock.id);
+    expect(restoredUnlock.cycle).toBe(2);
     expect(restoredUnlock.restoredAt).toBeTruthy();
+  });
+
+  test('legacy point reward unlock is retained as cycle one and backfilled for every earned threshold', () => {
+    const data = makeBackupState({
+      children: [{ id: 'child-ignacy', name: 'Ignacy', avatar: '⭐', activeDays: [1, 2, 3, 4, 5, 6, 7] }],
+      rewards: [{ id: 'reward-30', title: '30 zł', requiredPoints: 50, active: true }],
+      points: { 'child-ignacy': 137 },
+      rewardUnlocks: [{
+        id: 'legacy-unlock',
+        childId: 'child-ignacy',
+        rewardId: 'reward-30',
+        unlockedAt: '2026-05-14T10:00:00.000Z',
+        claimedAt: null,
+        revokedAt: null,
+      }],
+    });
+
+    expect(__test.reconcileRewardUnlocksForAllChildren(data, null, '2026-07-11T12:00:00.000Z')).toBe(true);
+    const unlocks = data.rewardUnlocks
+      .filter((unlock) => unlock.childId === 'child-ignacy' && unlock.rewardId === 'reward-30')
+      .sort((left, right) => left.cycle - right.cycle);
+    expect(unlocks).toHaveLength(2);
+    expect(unlocks.map((unlock) => unlock.cycle)).toEqual([1, 2]);
+    expect(unlocks[0].id).toBe('legacy-unlock');
+
+    data.points['child-ignacy'] = 75;
+    expect(__test.reconcileRewardUnlocksForAllChildren(data, null, '2026-07-11T12:01:00.000Z')).toBe(true);
+    expect(unlocks[0].revokedAt).toBeNull();
+    expect(unlocks[1].revokedAt).toBeTruthy();
+
+    data.points['child-ignacy'] = 137;
+    expect(__test.reconcileRewardUnlocksForAllChildren(data, null, '2026-07-11T12:02:00.000Z')).toBe(true);
+    expect(unlocks[1].revokedAt).toBeNull();
+    expect(unlocks[1].restoredAt).toBeTruthy();
   });
 });
 

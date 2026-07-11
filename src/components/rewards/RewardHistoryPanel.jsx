@@ -74,7 +74,7 @@ const RewardHistoryPanel = ({ history }) => React.createElement("div", {
     className: "reward-history-requirements"
   }, entry.requiredPoints ? React.createElement("span", {
     className: "badge badge-points"
-  }, entry.requiredPoints, " pkt") : null, entry.requiredStreak ? React.createElement("span", {
+  }, Number(entry.cycle || 1) > 1 ? `Próg ${entry.cycle}: ${entry.thresholdPoints || Number(entry.requiredPoints || 0) * Number(entry.cycle || 1)} pkt` : `${entry.requiredPoints} pkt`) : null, entry.requiredStreak ? React.createElement("span", {
     className: "badge badge-min"
   }, entry.requiredStreak, " dni passy") : null, entry.requiredIdealWeeks ? React.createElement("span", {
     className: "badge badge-weekly"

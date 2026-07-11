@@ -49,7 +49,7 @@ const RewardsTab = ({
       }
     }, reward.requiredPoints && React.createElement("div", {
       className: "badge badge-points"
-    }, reward.requiredPoints, " punkt\xF3w"), reward.requiredStreak && React.createElement("div", {
+    }, reward.requiredPoints, " pkt • każdy pełny próg"), reward.requiredStreak && React.createElement("div", {
       className: "badge badge-min"
     }, reward.requiredStreak, " dni passy"), reward.requiredIdealWeeks && React.createElement("div", {
       className: "badge badge-weekly"
@@ -93,7 +93,13 @@ const RewardsTab = ({
         style: {
           fontWeight: 600
         }
-      }, reward.title), React.createElement("div", {
+      }, reward.title), Number(unlock.cycle || 1) > 1 && Number(reward.requiredPoints || 0) > 0 && React.createElement("div", {
+        style: {
+          fontSize: '0.8rem',
+          opacity: 0.72,
+          marginTop: '0.2rem'
+        }
+      }, "Próg ", unlock.cycle, " (", Number(reward.requiredPoints || 0) * Number(unlock.cycle || 1), " pkt)"), React.createElement("div", {
         style: {
           fontSize: '0.85rem',
           opacity: 0.8

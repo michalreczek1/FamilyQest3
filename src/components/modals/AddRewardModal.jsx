@@ -76,7 +76,14 @@ const AddRewardModal = ({
     onChange: e => setRequiredPoints(e.target.value),
     min: "0",
     placeholder: "np. 50"
-  }), React.createElement("label", {
+  }), React.createElement("div", {
+    style: {
+      fontSize: '0.82rem',
+      opacity: 0.7,
+      marginTop: '-0.2rem',
+      marginBottom: '0.9rem'
+    }
+  }, "Nagroda punktowa odblokowuje się przy każdym kolejnym pełnym progu, np. 50, 100, 150 pkt."), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',

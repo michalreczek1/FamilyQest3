@@ -2134,6 +2134,10 @@ const getRewardUnlockHistory = (data) => {
         childId: unlock.childId,
         childName: child.name,
         rewardId: unlock.rewardId,
+        cycle: getRewardUnlockCycle(unlock) || 1,
+        thresholdPoints: getRewardPointsThreshold(reward)
+          ? getRewardPointsThreshold(reward) * (getRewardUnlockCycle(unlock) || 1)
+          : null,
         rewardTitle: reward.title,
         rewardDescription: reward.description || '',
         requiredPoints: reward.requiredPoints ?? null,
@@ -2155,7 +2159,9 @@ const getRewardUnlockHistory = (data) => {
 
 const buildFamilyStatePatch = (data, user) => {
   recomputePointsAndGrants(data);
-  reconcileRewardUnlocksForAllChildren(data, user?.id);
+  // A snapshot is a read-only representation. Reward unlocks are reconciled
+  // and persisted only by mutations or the explicit maintenance script; doing
+  // it here could return a transient unlock which cannot later be claimed.
 
   const leaderboardChildren = data.children
     .filter((child) => !child.archived)
@@ -2195,40 +2201,168 @@ const buildFamilyStatePatch = (data, user) => {
 const isRewardEligibleForChild = (data, reward, childId) => {
   const childPoints = Number(data.points[childId] || 0);
   const childStreak = data.streaks[childId] || { current: 0, idealWeeksInRow: 0 };
-  const pointsOk = !reward.requiredPoints || childPoints >= reward.requiredPoints;
+  const requiredPoints = getRewardPointsThreshold(reward);
+  const pointsOk = !requiredPoints || childPoints >= requiredPoints;
   const streakOk = !reward.requiredStreak || Number(childStreak.current || 0) >= reward.requiredStreak;
   const idealOk = !reward.requiredIdealWeeks || Number(childStreak.idealWeeksInRow || 0) >= reward.requiredIdealWeeks;
   return pointsOk && streakOk && idealOk;
 };
 
+const getRewardPointsThreshold = (reward) => {
+  const value = Number(reward?.requiredPoints || 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+};
+
+const getRewardUnlockCycle = (unlock) => {
+  const cycle = Number(unlock?.cycle);
+  return Number.isInteger(cycle) && cycle > 0 ? cycle : null;
+};
+
+const getRewardUnlockSortTimestamp = (unlock) => {
+  const timestamp = Date.parse(unlock?.unlockedAt || unlock?.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const ensureRewardUnlockCycles = (unlocks) => {
+  let changed = false;
+  const usedCycles = new Set();
+  const missingCycle = [];
+  const orderedUnlocks = [...unlocks].sort((left, right) => {
+    const timestampDiff = getRewardUnlockSortTimestamp(left) - getRewardUnlockSortTimestamp(right);
+    return timestampDiff || String(left?.id || '').localeCompare(String(right?.id || ''));
+  });
+
+  orderedUnlocks.forEach((unlock) => {
+    const cycle = getRewardUnlockCycle(unlock);
+    if (cycle && !usedCycles.has(cycle)) {
+      if (unlock.cycle !== cycle) {
+        unlock.cycle = cycle;
+        changed = true;
+      }
+      usedCycles.add(cycle);
+      return;
+    }
+    missingCycle.push(unlock);
+  });
+
+  let nextCycle = 1;
+  missingCycle.forEach((unlock) => {
+    while (usedCycles.has(nextCycle)) nextCycle += 1;
+    unlock.cycle = nextCycle;
+    usedCycles.add(nextCycle);
+    nextCycle += 1;
+    changed = true;
+  });
+
+  return changed;
+};
+
+const getRewardUnlockAuditDetails = (childId, reward, cycle, extra = {}) => {
+  const requiredPoints = getRewardPointsThreshold(reward);
+  return {
+    childId,
+    rewardId: reward.id,
+    cycle,
+    requiredPoints: requiredPoints || null,
+    thresholdPoints: requiredPoints ? requiredPoints * cycle : null,
+    ...extra,
+  };
+};
+
+const createRewardUnlock = (childId, rewardId, cycle, now) => ({
+  id: createEntityId('unlock'),
+  childId,
+  rewardId,
+  cycle,
+  unlockedAt: now,
+  claimedAt: null,
+  shownAt: null,
+  revokedAt: null,
+  revokedReason: null,
+  restoredAt: null,
+  updatedAt: now,
+});
+
 const reconcileRewardUnlocksForChild = (data, childId, actorUserId, now = new Date().toISOString()) => {
   const child = data.children.find((item) => item.id === childId && !item.archived);
-  if (!child) return;
+  if (!child) return false;
+
+  let changed = false;
 
   data.rewards.forEach((reward) => {
     if (reward.active === false) return;
     const unlocksForReward = data.rewardUnlocks.filter((item) => item.childId === childId && item.rewardId === reward.id);
-    const activeUnlock = unlocksForReward.find((item) => !item.revokedAt);
-    const revokedUnlock = unlocksForReward.find((item) => item.revokedAt && !item.claimedAt);
+    if (ensureRewardUnlockCycles(unlocksForReward)) changed = true;
+
+    const requiredPoints = getRewardPointsThreshold(reward);
+    const childPoints = Math.max(0, Number(data.points[childId] || 0));
     const eligible = isRewardEligibleForChild(data, reward, childId);
 
-    if (!eligible) {
-      const requiredPoints = Number(reward.requiredPoints || 0);
-      const childPoints = Number(data.points[childId] || 0);
-      if (requiredPoints > 0 && childPoints < requiredPoints && activeUnlock && !activeUnlock.claimedAt) {
-        activeUnlock.revokedAt = now;
-        activeUnlock.revokedReason = 'POINTS_BELOW_THRESHOLD';
-        activeUnlock.updatedAt = now;
-        data.auditLogs = addAuditLogEntry(data, actorUserId, 'REVOKE_REWARD_UNLOCK', 'REWARD_UNLOCK', activeUnlock.id, {
-          childId,
-          rewardId: reward.id,
-          requiredPoints,
-          childPoints,
-        });
+    if (requiredPoints > 0) {
+      const earnedCycles = Math.floor(childPoints / requiredPoints);
+      unlocksForReward.forEach((unlock) => {
+        const cycle = getRewardUnlockCycle(unlock) || 1;
+        if (cycle > earnedCycles && !unlock.claimedAt && !unlock.revokedAt) {
+          unlock.revokedAt = now;
+          unlock.revokedReason = 'POINTS_BELOW_THRESHOLD';
+          unlock.updatedAt = now;
+          data.auditLogs = addAuditLogEntry(
+            data,
+            actorUserId,
+            'REVOKE_REWARD_UNLOCK',
+            'REWARD_UNLOCK',
+            unlock.id,
+            getRewardUnlockAuditDetails(childId, reward, cycle, { childPoints }),
+          );
+          changed = true;
+        }
+      });
+
+      // Preserve the established behavior for streak/week requirements: they
+      // gate new rewards, while a points drop is the only reason to revoke an
+      // unclaimed point reward.
+      if (!eligible) return;
+
+      for (let cycle = 1; cycle <= earnedCycles; cycle += 1) {
+        const unlock = unlocksForReward.find((item) => getRewardUnlockCycle(item) === cycle);
+        if (unlock) {
+          if (unlock.revokedAt && !unlock.claimedAt) {
+            unlock.revokedAt = null;
+            unlock.revokedReason = null;
+            unlock.restoredAt = now;
+            unlock.updatedAt = now;
+            data.auditLogs = addAuditLogEntry(
+              data,
+              actorUserId,
+              'RESTORE_REWARD_UNLOCK',
+              'REWARD_UNLOCK',
+              unlock.id,
+              getRewardUnlockAuditDetails(childId, reward, cycle),
+            );
+            changed = true;
+          }
+          continue;
+        }
+
+        const createdUnlock = createRewardUnlock(childId, reward.id, cycle, now);
+        data.rewardUnlocks = [createdUnlock, ...data.rewardUnlocks];
+        unlocksForReward.push(createdUnlock);
+        data.auditLogs = addAuditLogEntry(
+          data,
+          actorUserId,
+          'UNLOCK_REWARD',
+          'REWARD',
+          reward.id,
+          getRewardUnlockAuditDetails(childId, reward, cycle),
+        );
+        changed = true;
       }
       return;
     }
 
+    const activeUnlock = unlocksForReward.find((item) => !item.revokedAt);
+    const revokedUnlock = unlocksForReward.find((item) => item.revokedAt && !item.claimedAt);
+    if (!eligible) return;
     if (activeUnlock) return;
 
     if (revokedUnlock) {
@@ -2236,28 +2370,32 @@ const reconcileRewardUnlocksForChild = (data, childId, actorUserId, now = new Da
       revokedUnlock.revokedReason = null;
       revokedUnlock.restoredAt = now;
       revokedUnlock.updatedAt = now;
-      data.auditLogs = addAuditLogEntry(data, actorUserId, 'RESTORE_REWARD_UNLOCK', 'REWARD_UNLOCK', revokedUnlock.id, {
-        childId,
-        rewardId: reward.id,
-      });
+      data.auditLogs = addAuditLogEntry(
+        data,
+        actorUserId,
+        'RESTORE_REWARD_UNLOCK',
+        'REWARD_UNLOCK',
+        revokedUnlock.id,
+        getRewardUnlockAuditDetails(childId, reward, getRewardUnlockCycle(revokedUnlock) || 1),
+      );
+      changed = true;
       return;
     }
 
-    const unlock = {
-      id: createEntityId('unlock'),
-      childId,
-      rewardId: reward.id,
-      unlockedAt: now,
-      claimedAt: null,
-      shownAt: null,
-      revokedAt: null,
-      revokedReason: null,
-      restoredAt: null,
-      updatedAt: now,
-    };
+    const unlock = createRewardUnlock(childId, reward.id, 1, now);
     data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
-    data.auditLogs = addAuditLogEntry(data, actorUserId, 'UNLOCK_REWARD', 'REWARD', reward.id, { childId });
+    data.auditLogs = addAuditLogEntry(
+      data,
+      actorUserId,
+      'UNLOCK_REWARD',
+      'REWARD',
+      reward.id,
+      getRewardUnlockAuditDetails(childId, reward, 1),
+    );
+    changed = true;
   });
+
+  return changed;
 };
 
 const unlockEligibleRewards = (data, childId, actorUserId, now = new Date().toISOString()) => {
@@ -2265,9 +2403,13 @@ const unlockEligibleRewards = (data, childId, actorUserId, now = new Date().toIS
 };
 
 const reconcileRewardUnlocksForAllChildren = (data, actorUserId, now = new Date().toISOString()) => {
+  let changed = false;
   data.children
     .filter((child) => !child.archived)
-    .forEach((child) => reconcileRewardUnlocksForChild(data, child.id, actorUserId, now));
+    .forEach((child) => {
+      if (reconcileRewardUnlocksForChild(data, child.id, actorUserId, now)) changed = true;
+    });
+  return changed;
 };
 
 const applyApprovalEffects = (data, completion, actorUserId, now = new Date().toISOString()) => {
@@ -5278,6 +5420,8 @@ module.exports = {
     attachStateDataConflictBase,
     sanitizeStateDataForStorage,
     bootstrapChildAccessCredentials,
+    normalizeStateData,
+    reconcileRewardUnlocksForAllChildren,
     parseDateInput,
     toDateString,
     isValidDateString,

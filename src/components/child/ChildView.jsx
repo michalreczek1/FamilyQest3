@@ -65,13 +65,18 @@ const ChildView = ({
     const [pointHistoryLoading, setPointHistoryLoading] = useState(false);
     const [pointHistoryError, setPointHistoryError] = useState('');
     const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id && !unlock.revokedAt);
-    const childUnlockedRewardIds = new Set(childRewardUnlocks.map(unlock => unlock.rewardId));
     const childEarnedRewards = childRewardUnlocks.map(unlock => ({
       unlock,
       reward: rewards.find(reward => reward.id === unlock.rewardId)
     })).filter(item => Boolean(item.reward)).sort((a, b) => Date.parse(b.unlock.unlockedAt || 0) - Date.parse(a.unlock.unlockedAt || 0));
-    const nextPointReward = rewards.filter(reward => reward.active !== false && !childUnlockedRewardIds.has(reward.id) && Number(reward.requiredPoints || 0) > childPoints).sort((a, b) => Number(a.requiredPoints || 0) - Number(b.requiredPoints || 0))[0] || null;
-    const pointsToNextReward = nextPointReward ? Math.max(0, Number(nextPointReward.requiredPoints || 0) - childPoints) : 0;
+    const nextPointRewardProgress = rewards.filter(reward => reward.active !== false && Number(reward.requiredPoints || 0) > 0).map(reward => {
+      const requiredPoints = Number(reward.requiredPoints || 0);
+      const nextThreshold = requiredPoints * (Math.floor(Number(childPoints || 0) / requiredPoints) + 1);
+      return { reward, nextThreshold };
+    }).sort((a, b) => a.nextThreshold - b.nextThreshold || Number(a.reward.requiredPoints || 0) - Number(b.reward.requiredPoints || 0))[0] || null;
+    const nextPointReward = nextPointRewardProgress?.reward || null;
+    const nextPointRewardThreshold = nextPointRewardProgress?.nextThreshold || 0;
+    const pointsToNextReward = nextPointReward ? Math.max(0, nextPointRewardThreshold - Number(childPoints || 0)) : 0;
     const dayStatus = evaluateDay(selectedChild.id, selectedTaskDate);
     const loadPointHistoryPage = useCallback(async ({
       cursor = 0,
@@ -360,7 +365,7 @@ const ChildView = ({
       style: {
         opacity: 0.85
       }
-    }, "Brakuje jeszcze ", React.createElement("strong", null, pointsToNextReward, " pkt"), " do progu ", Number(nextPointReward.requiredPoints || 0), " pkt."), nextPointReward.description && React.createElement("div", {
+    }, "Brakuje jeszcze ", React.createElement("strong", null, pointsToNextReward, " pkt"), " do progu ", nextPointRewardThreshold, " pkt."), nextPointReward.description && React.createElement("div", {
       style: {
         opacity: 0.72,
         marginTop: '0.35rem'
@@ -398,7 +403,13 @@ const ChildView = ({
       style: {
         fontWeight: 700
       }
-    }, reward.title), reward.description && React.createElement("div", {
+    }, reward.title), Number(unlock.cycle || 1) > 1 && Number(reward.requiredPoints || 0) > 0 && React.createElement("div", {
+      style: {
+        fontSize: '0.82rem',
+        opacity: 0.72,
+        marginTop: '0.2rem'
+      }
+    }, "Próg ", unlock.cycle, " (", Number(reward.requiredPoints || 0) * Number(unlock.cycle || 1), " pkt)"), reward.description && React.createElement("div", {
       style: {
         fontSize: '0.88rem',
         opacity: 0.72
