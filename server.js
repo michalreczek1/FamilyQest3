@@ -845,6 +845,15 @@ const isAtomicallyIdempotentFamilyMutation = (req) => {
   const [resource, id, action] = segments;
   if (resource === 'children') return segments.length === 1 || segments.length === 2;
   if (resource === 'tasks') return segments.length === 1;
+  if (resource === 'rewards') {
+    return (
+      segments.length === 1 ||
+      (segments.length === 2 && id !== 'unlocks') ||
+      (segments.length === 3 && action === 'unlock') ||
+      (segments.length === 4 && id === 'unlocks' && segments[3] === 'claim')
+    );
+  }
+  if (resource === 'family-goal') return segments.length === 1;
   if (resource === 'completions') {
     return (
       segments.length === 1 ||
@@ -4752,28 +4761,31 @@ app.post('/api/rewards', authMiddleware, requireParent, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const reward = {
-      id: createEntityId('reward'),
-      title: parsed.data.title.trim(),
-      description: parsed.data.description || '',
-      requiredPoints: parsed.data.requiredPoints ?? null,
-      requiredStreak: parsed.data.requiredStreak ?? null,
-      requiredIdealWeeks: parsed.data.requiredIdealWeeks ?? null,
-      active: parsed.data.active !== false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    data.rewards = [...data.rewards, reward];
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_REWARD', 'REWARD', reward.id, {
-      requiredPoints: reward.requiredPoints,
-      requiredStreak: reward.requiredStreak,
-      requiredIdealWeeks: reward.requiredIdealWeeks,
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const reward = {
+        id: createEntityId('reward'),
+        title: parsed.data.title.trim(),
+        description: parsed.data.description || '',
+        requiredPoints: parsed.data.requiredPoints ?? null,
+        requiredStreak: parsed.data.requiredStreak ?? null,
+        requiredIdealWeeks: parsed.data.requiredIdealWeeks ?? null,
+        active: parsed.data.active !== false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      data.rewards = [...data.rewards, reward];
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_REWARD', 'REWARD', reward.id, {
+        requiredPoints: reward.requiredPoints,
+        requiredStreak: reward.requiredStreak,
+        requiredIdealWeeks: reward.requiredIdealWeeks,
+      });
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 201, body: { reward } };
     });
-
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-    await saveStateData(state, data);
-    res.status(201).json({ reward });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4793,33 +4805,34 @@ app.put('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
     }
 
     const rewardId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const reward = data.rewards.find((item) => item.id === rewardId);
-    if (!reward) {
-      res.status(404).json({ error: 'Nagroda nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const reward = data.rewards.find((item) => item.id === rewardId);
+      if (!reward) return { status: 404, body: { error: 'Nagroda nie istnieje' } };
 
-    if (typeof parsed.data.title === 'string') reward.title = parsed.data.title.trim();
-    if (typeof parsed.data.description === 'string' || parsed.data.description === null) {
-      reward.description = parsed.data.description || '';
-    }
-    if (typeof parsed.data.requiredPoints === 'number' || parsed.data.requiredPoints === null) {
-      reward.requiredPoints = parsed.data.requiredPoints ?? null;
-    }
-    if (typeof parsed.data.requiredStreak === 'number' || parsed.data.requiredStreak === null) {
-      reward.requiredStreak = parsed.data.requiredStreak ?? null;
-    }
-    if (typeof parsed.data.requiredIdealWeeks === 'number' || parsed.data.requiredIdealWeeks === null) {
-      reward.requiredIdealWeeks = parsed.data.requiredIdealWeeks ?? null;
-    }
-    if (typeof parsed.data.active === 'boolean') reward.active = parsed.data.active;
-    reward.updatedAt = new Date().toISOString();
+      if (typeof parsed.data.title === 'string') reward.title = parsed.data.title.trim();
+      if (typeof parsed.data.description === 'string' || parsed.data.description === null) {
+        reward.description = parsed.data.description || '';
+      }
+      if (typeof parsed.data.requiredPoints === 'number' || parsed.data.requiredPoints === null) {
+        reward.requiredPoints = parsed.data.requiredPoints ?? null;
+      }
+      if (typeof parsed.data.requiredStreak === 'number' || parsed.data.requiredStreak === null) {
+        reward.requiredStreak = parsed.data.requiredStreak ?? null;
+      }
+      if (typeof parsed.data.requiredIdealWeeks === 'number' || parsed.data.requiredIdealWeeks === null) {
+        reward.requiredIdealWeeks = parsed.data.requiredIdealWeeks ?? null;
+      }
+      if (typeof parsed.data.active === 'boolean') reward.active = parsed.data.active;
+      reward.updatedAt = new Date().toISOString();
 
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_REWARD', 'REWARD', rewardId, parsed.data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-    await saveStateData(state, data);
-    res.json({ reward });
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_REWARD', 'REWARD', rewardId, parsed.data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { reward } };
+    });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4833,18 +4846,19 @@ app.put('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
 app.delete('/api/rewards/:id', authMiddleware, requireParent, async (req, res) => {
   try {
     const rewardId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const reward = data.rewards.find((item) => item.id === rewardId);
-    if (!reward) {
-      res.status(404).json({ error: 'Nagroda nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const reward = data.rewards.find((item) => item.id === rewardId);
+      if (!reward) return { status: 404, body: { error: 'Nagroda nie istnieje' } };
 
-    reward.active = false;
-    reward.updatedAt = new Date().toISOString();
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_REWARD', 'REWARD', rewardId);
-    await saveStateData(state, data);
-    res.json({ reward });
+      reward.active = false;
+      reward.updatedAt = new Date().toISOString();
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_REWARD', 'REWARD', rewardId);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { reward } };
+    });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4864,61 +4878,56 @@ app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, r
     }
 
     const rewardId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const reward = data.rewards.find((item) => item.id === rewardId && item.active !== false);
-    if (!reward) {
-      res.status(404).json({ error: 'Nagroda nie istnieje lub jest nieaktywna' });
-      return;
-    }
-    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-    if (!child) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const reward = data.rewards.find((item) => item.id === rewardId && item.active !== false);
+      if (!reward) return { status: 404, body: { error: 'Nagroda nie istnieje lub jest nieaktywna' } };
+      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+      if (!child) return { status: 404, body: { error: 'Dziecko nie istnieje' } };
 
-    const exists = data.rewardUnlocks.find(
-      (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && !item.revokedAt,
-    );
-    if (exists) {
-      res.json({ unlock: exists, created: false });
-      return;
-    }
-    const revoked = data.rewardUnlocks.find(
-      (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && item.revokedAt && !item.claimedAt,
-    );
-    if (revoked) {
-      revoked.revokedAt = null;
-      revoked.revokedReason = null;
-      revoked.restoredAt = new Date().toISOString();
-      revoked.updatedAt = revoked.restoredAt;
-      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_REWARD_UNLOCK', 'REWARD_UNLOCK', revoked.id, {
+      const exists = data.rewardUnlocks.find(
+        (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && !item.revokedAt,
+      );
+      if (exists) return { status: 200, body: { unlock: exists, created: false } };
+      const revoked = data.rewardUnlocks.find(
+        (item) => item.childId === parsed.data.childId && item.rewardId === rewardId && item.revokedAt && !item.claimedAt,
+      );
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      if (revoked) {
+        revoked.revokedAt = null;
+        revoked.revokedReason = null;
+        revoked.restoredAt = new Date().toISOString();
+        revoked.updatedAt = revoked.restoredAt;
+        data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_REWARD_UNLOCK', 'REWARD_UNLOCK', revoked.id, {
+          childId: parsed.data.childId,
+          rewardId,
+          manual: true,
+        });
+        await saveTxStateData(state, data);
+        return { status: 200, body: { unlock: revoked, created: false, restored: true } };
+      }
+
+      const now = new Date().toISOString();
+      const unlock = {
+        id: createEntityId('unlock'),
         childId: parsed.data.childId,
         rewardId,
-        manual: true,
+        unlockedAt: now,
+        claimedAt: null,
+        shownAt: null,
+        revokedAt: null,
+        revokedReason: null,
+        restoredAt: null,
+        updatedAt: now,
+      };
+      data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UNLOCK_REWARD', 'REWARD', rewardId, {
+        childId: parsed.data.childId,
       });
-      await saveStateData(state, data);
-      res.json({ unlock: revoked, created: false, restored: true });
-      return;
-    }
-
-    const unlock = {
-      id: createEntityId('unlock'),
-      childId: parsed.data.childId,
-      rewardId,
-      unlockedAt: new Date().toISOString(),
-      claimedAt: null,
-      shownAt: null,
-      revokedAt: null,
-      revokedReason: null,
-      restoredAt: null,
-      updatedAt: new Date().toISOString(),
-    };
-    data.rewardUnlocks = [unlock, ...data.rewardUnlocks];
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UNLOCK_REWARD', 'REWARD', rewardId, {
-      childId: parsed.data.childId,
+      await saveTxStateData(state, data);
+      return { status: 201, body: { unlock, created: true } };
     });
-    await saveStateData(state, data);
-    res.status(201).json({ unlock, created: true });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4932,23 +4941,23 @@ app.post('/api/rewards/:id/unlock', authMiddleware, requireParent, async (req, r
 app.post('/api/rewards/unlocks/:unlockId/claim', authMiddleware, requireParent, async (req, res) => {
   try {
     const unlockId = String(req.params.unlockId || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const unlock = data.rewardUnlocks.find((item) => item.id === unlockId);
-    if (!unlock) {
-      res.status(404).json({ error: 'Odblokowanie nagrody nie istnieje' });
-      return;
-    }
-    if (unlock.revokedAt) {
-      res.status(409).json({ error: 'Nagroda została utracona i nie jest teraz dostępna do wydania' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const unlock = data.rewardUnlocks.find((item) => item.id === unlockId);
+      if (!unlock) return { status: 404, body: { error: 'Odblokowanie nagrody nie istnieje' } };
+      if (unlock.revokedAt) {
+        return { status: 409, body: { error: 'Nagroda została utracona i nie jest teraz dostępna do wydania' } };
+      }
 
-    if (!unlock.claimedAt) {
-      unlock.claimedAt = new Date().toISOString();
-      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'CLAIM_REWARD', 'REWARD_UNLOCK', unlockId);
-      await saveStateData(state, data);
-    }
-    res.json({ unlock });
+      if (!unlock.claimedAt) {
+        unlock.claimedAt = new Date().toISOString();
+        data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'CLAIM_REWARD', 'REWARD_UNLOCK', unlockId);
+        const saveTxStateData = createSaveStateData(tx.familyState);
+        await saveTxStateData(state, data);
+      }
+      return { status: 200, body: { unlock } };
+    });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4981,15 +4990,19 @@ app.put('/api/family-goal', authMiddleware, requireParent, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    data.familyGoal = parsed.data;
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_FAMILY_GOAL', 'FAMILY_GOAL', 'family-goal', {
-      title: parsed.data.title,
-      target: parsed.data.target,
-      mode: parsed.data.mode,
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      data.familyGoal = parsed.data;
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_FAMILY_GOAL', 'FAMILY_GOAL', 'family-goal', {
+        title: parsed.data.title,
+        target: parsed.data.target,
+        mode: parsed.data.mode,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { familyGoal: data.familyGoal } };
     });
-    await saveStateData(state, data);
-    res.json({ familyGoal: data.familyGoal });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
