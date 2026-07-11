@@ -1474,8 +1474,27 @@ const claimAtomicIdempotencyOperation = async (tx, context) => {
 const isIdempotencyTransactionContention = (error) =>
   error?.code === 'P2028' || isSerializableTransactionConflict(error);
 
+const addFamilyMutationContract = async (tx, familyId, result) => {
+  if (!familyId || !isObjectRecord(result?.body) || result?.retryAfter) return result;
+  const state = await tx.familyState.findUnique({
+    where: { familyId },
+    select: { version: true },
+  });
+  if (!state) return result;
+
+  const body = {
+    ...result.body,
+    version: getFamilyStateVersion(state),
+  };
+  if (body.statePatch && !body.patch) {
+    body.patch = body.statePatch;
+  }
+  return { ...result, body };
+};
+
 const runFamilyMutation = async (req, action) => {
   const context = idempotencyRequestStorage.getStore();
+  const familyId = context?.familyId || req.auth?.user?.familyId || null;
   try {
     return await runFamilyStateTransaction(async (tx) => {
       const claim = context ? await claimAtomicIdempotencyOperation(tx, context) : null;
@@ -1491,7 +1510,7 @@ const runFamilyMutation = async (req, action) => {
         return createIdempotencyPendingResult();
       }
 
-      const result = await action(tx);
+      const result = await addFamilyMutationContract(tx, familyId, await action(tx));
       if (claim?.owner && result?.status < 500) {
         await tx.idempotencyOperation.update({
           where: claim.where,

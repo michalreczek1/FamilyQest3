@@ -246,6 +246,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .set('Idempotency-Key', idempotencyKey)
       .send(payload);
     expect(first.status).toBe(200);
+    expect(Number.isInteger(first.body.version)).toBe(true);
 
     const repeated = await request(app)
       .put('/api/family-goal')
@@ -286,6 +287,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
     expect(second.body).toEqual(first.body);
+    expect(Number.isInteger(first.body.version)).toBe(true);
 
     const childrenRes = await request(app)
       .get('/api/children')
@@ -690,6 +692,8 @@ test('storage sanitizer strips child access codes from children and audit logs',
       });
     expect(bulkApproveRes.status).toBe(200);
     expect(bulkApproveRes.body.approvedCount).toBeGreaterThanOrEqual(1);
+    expect(Number.isInteger(bulkApproveRes.body.version)).toBe(true);
+    expect(bulkApproveRes.body.patch).toEqual(bulkApproveRes.body.statePatch);
 
     const pendingAfterBulkApproveRes = await request(app)
       .get(`/api/completions/pending?childId=${encodeURIComponent(child.id)}&date=${encodeURIComponent(today)}`)
