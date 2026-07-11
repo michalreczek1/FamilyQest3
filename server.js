@@ -844,7 +844,13 @@ const isAtomicallyIdempotentFamilyMutation = (req) => {
   const segments = req.path.split('/').filter(Boolean);
   const [resource, id, action] = segments;
   if (resource === 'children') return segments.length === 1 || segments.length === 2;
-  if (resource === 'tasks') return segments.length === 1;
+  if (resource === 'tasks') {
+    return (
+      segments.length === 1 ||
+      segments.length === 2 ||
+      (segments.length === 3 && ['archive-matching', 'restore', 'restore-matching'].includes(action))
+    );
+  }
   if (resource === 'rewards') {
     return (
       segments.length === 1 ||
@@ -1204,8 +1210,6 @@ const createSaveStateData = (familyStateClient) => async (state, data, options =
 
   return familyStateClient.findUnique({ where: { id: stateId } });
 };
-
-const saveStateData = createSaveStateData(prisma.familyState);
 
 const addAuditLogEntry = (data, actorUserId, action, entityType, entityId, details = {}) => {
   const entry = {
@@ -3488,10 +3492,10 @@ app.get('/api/point-ledger', authMiddleware, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    if (recomputePointsAndGrantsIfChanged(data)) {
-      await saveStateData(state, data, { skipOnConflict: true });
-    }
+    const { data } = await loadStateData(req.auth.user.familyId);
+    // Historia punktów jest odczytem. Przeliczenie służy tylko zbudowaniu
+    // bieżącej reprezentacji i nie może zmieniać wersji FamilyState.
+    recomputePointsAndGrantsIfChanged(data);
 
     const entries = data.pointLedger
       .filter((entry) => entry.childId === effectiveChildId)
@@ -3783,67 +3787,62 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
     }
 
     const taskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const index = data.tasks.findIndex((item) => item.id === taskId);
-    if (index < 0) {
-      res.status(404).json({ error: 'Zadanie nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const index = data.tasks.findIndex((item) => item.id === taskId);
+      if (index < 0) return { status: 404, body: { error: 'Zadanie nie istnieje' } };
 
-    const next = { ...data.tasks[index] };
-    if (typeof parsed.data.childId === 'string') {
-      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-      if (!child) {
-        res.status(404).json({ error: 'Nie znaleziono dziecka dla tego zadania' });
-        return;
+      const next = { ...data.tasks[index] };
+      if (typeof parsed.data.childId === 'string') {
+        const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+        if (!child) return { status: 404, body: { error: 'Nie znaleziono dziecka dla tego zadania' } };
+        next.childId = parsed.data.childId;
       }
-      next.childId = parsed.data.childId;
-    }
-    if (typeof parsed.data.title === 'string') next.title = parsed.data.title.trim();
-    if (typeof parsed.data.tier === 'string') next.tier = parsed.data.tier;
-    if (typeof parsed.data.points === 'number') next.points = parsed.data.points;
-    if (typeof parsed.data.description === 'string' || parsed.data.description === null) {
-      next.description = parsed.data.description || '';
-    }
-    if (parsed.data.daysOfWeek !== undefined) {
-      next.daysOfWeek = normalizeTaskDaysOfWeek(parsed.data.daysOfWeek);
-    }
-    if (typeof parsed.data.active === 'boolean') {
-      next.active = parsed.data.active;
-      if (parsed.data.active) {
-        if (next.archivedAt) next.restoredAt = new Date().toISOString();
-      } else if (!next.archivedAt) {
-        next.archivedAt = new Date().toISOString();
-        next.restoredAt = null;
+      if (typeof parsed.data.title === 'string') next.title = parsed.data.title.trim();
+      if (typeof parsed.data.tier === 'string') next.tier = parsed.data.tier;
+      if (typeof parsed.data.points === 'number') next.points = parsed.data.points;
+      if (typeof parsed.data.description === 'string' || parsed.data.description === null) next.description = parsed.data.description || '';
+      if (parsed.data.daysOfWeek !== undefined) next.daysOfWeek = normalizeTaskDaysOfWeek(parsed.data.daysOfWeek);
+      if (typeof parsed.data.active === 'boolean') {
+        next.active = parsed.data.active;
+        if (parsed.data.active) {
+          if (next.archivedAt) next.restoredAt = new Date().toISOString();
+        } else if (!next.archivedAt) {
+          next.archivedAt = new Date().toISOString();
+          next.restoredAt = null;
+        }
       }
-    }
-    next.updatedAt = new Date().toISOString();
+      next.updatedAt = new Date().toISOString();
 
-    const current = data.tasks[index];
-    const hasApprovedHistory = data.completions.some(
-      (completion) => completion.taskId === taskId && completion.approvedByParent,
-    );
-    const changesHistoricalRules =
-      current.childId !== next.childId ||
-      current.tier !== next.tier ||
-      Number(current.points || 0) !== Number(next.points || 0) ||
-      JSON.stringify(normalizeTaskDaysOfWeek(current.daysOfWeek)) !==
-        JSON.stringify(normalizeTaskDaysOfWeek(next.daysOfWeek));
-    if (hasApprovedHistory && changesHistoricalRules) {
-      res.status(409).json({
-        error:
-          'Nie można zmienić punktów, typu, harmonogramu ani dziecka dla zadania z zatwierdzoną historią. Zarchiwizuj je i utwórz nowe zadanie.',
-      });
-      return;
-    }
+      const current = data.tasks[index];
+      const hasApprovedHistory = data.completions.some(
+        (completion) => completion.taskId === taskId && completion.approvedByParent,
+      );
+      const changesHistoricalRules =
+        current.childId !== next.childId ||
+        current.tier !== next.tier ||
+        Number(current.points || 0) !== Number(next.points || 0) ||
+        JSON.stringify(normalizeTaskDaysOfWeek(current.daysOfWeek)) !== JSON.stringify(normalizeTaskDaysOfWeek(next.daysOfWeek));
+      if (hasApprovedHistory && changesHistoricalRules) {
+        return {
+          status: 409,
+          body: {
+            error:
+              'Nie można zmienić punktów, typu, harmonogramu ani dziecka dla zadania z zatwierdzoną historią. Zarchiwizuj je i utwórz nowe zadanie.',
+          },
+        };
+      }
 
-    data.tasks[index] = next;
-    rejectInvalidPendingCompletions(data);
-    recomputePointsAndGrants(data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);
-    await saveStateData(state, data);
-    res.json({ task: next });
+      data.tasks[index] = next;
+      rejectInvalidPendingCompletions(data);
+      recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_TASK', 'TASK', taskId, parsed.data);
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { task: next } };
+    });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3857,26 +3856,27 @@ app.put('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
 app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => {
   try {
     const taskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const task = data.tasks.find((item) => item.id === taskId);
-    if (!task) {
-      res.status(404).json({ error: 'Zadanie nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const task = data.tasks.find((item) => item.id === taskId);
+      if (!task) return { status: 404, body: { error: 'Zadanie nie istnieje' } };
 
-    const now = new Date().toISOString();
-    task.active = false;
-    task.archivedAt = task.archivedAt || now;
-    task.updatedAt = now;
-    recomputePointsAndGrants(data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId, {
-      childId: task.childId,
-      title: task.title,
-      archivedAt: task.archivedAt,
+      const now = new Date().toISOString();
+      task.active = false;
+      task.archivedAt = task.archivedAt || now;
+      task.updatedAt = now;
+      recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASK', 'TASK', taskId, {
+        childId: task.childId,
+        title: task.title,
+        archivedAt: task.archivedAt,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true, archivedTaskIds: [task.id], archivedCount: 1, archivedAt: task.archivedAt } };
     });
-    await saveStateData(state, data);
-    res.json({ ok: true, archivedTaskIds: [task.id], archivedCount: 1, archivedAt: task.archivedAt });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3890,40 +3890,39 @@ app.delete('/api/tasks/:id', authMiddleware, requireParent, async (req, res) => 
 app.post('/api/tasks/:id/archive-matching', authMiddleware, requireParent, async (req, res) => {
   try {
     const taskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const sourceTask = data.tasks.find((item) => item.id === taskId);
-    if (!sourceTask) {
-      res.status(404).json({ error: 'Zadanie nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const sourceTask = data.tasks.find((item) => item.id === taskId);
+      if (!sourceTask) return { status: 404, body: { error: 'Zadanie nie istnieje' } };
 
-    const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
-    const now = new Date().toISOString();
-    const archivedTaskIds = [];
-    data.tasks.forEach((task) => {
-      if (task.active === false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
-      task.active = false;
-      task.archivedAt = task.archivedAt || now;
-      task.updatedAt = now;
-      archivedTaskIds.push(task.id);
+      const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
+      const now = new Date().toISOString();
+      const archivedTaskIds = [];
+      data.tasks.forEach((task) => {
+        if (task.active === false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
+        task.active = false;
+        task.archivedAt = task.archivedAt || now;
+        task.updatedAt = now;
+        archivedTaskIds.push(task.id);
+      });
+      if (archivedTaskIds.length === 0) {
+        return { status: 409, body: { error: 'Nie znaleziono aktywnych pasujących zadań do archiwizacji' } };
+      }
+
+      recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASKS_MATCHING', 'TASK', taskId, {
+        archivedTaskIds,
+        archivedCount: archivedTaskIds.length,
+        title: sourceTask.title,
+        tier: sourceTask.tier,
+        archivedAt: now,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true, archivedTaskIds, archivedCount: archivedTaskIds.length, archivedAt: now } };
     });
-
-    if (archivedTaskIds.length === 0) {
-      res.status(409).json({ error: 'Nie znaleziono aktywnych pasujących zadań do archiwizacji' });
-      return;
-    }
-
-    recomputePointsAndGrants(data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ARCHIVE_TASKS_MATCHING', 'TASK', taskId, {
-      archivedTaskIds,
-      archivedCount: archivedTaskIds.length,
-      title: sourceTask.title,
-      tier: sourceTask.tier,
-      archivedAt: now,
-    });
-    await saveStateData(state, data);
-    res.json({ ok: true, archivedTaskIds, archivedCount: archivedTaskIds.length, archivedAt: now });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3937,31 +3936,29 @@ app.post('/api/tasks/:id/archive-matching', authMiddleware, requireParent, async
 app.post('/api/tasks/:id/restore', authMiddleware, requireParent, async (req, res) => {
   try {
     const taskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const task = data.tasks.find((item) => item.id === taskId);
-    if (!task) {
-      res.status(404).json({ error: 'Zadanie nie istnieje' });
-      return;
-    }
-    if (task.active !== false) {
-      res.status(409).json({ error: 'Zadanie jest już aktywne' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const task = data.tasks.find((item) => item.id === taskId);
+      if (!task) return { status: 404, body: { error: 'Zadanie nie istnieje' } };
+      if (task.active !== false) return { status: 409, body: { error: 'Zadanie jest już aktywne' } };
 
-    const now = new Date().toISOString();
-    task.active = true;
-    task.restoredAt = now;
-    task.updatedAt = now;
-    recomputePointsAndGrants(data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASK', 'TASK', taskId, {
-      childId: task.childId,
-      title: task.title,
-      archivedAt: task.archivedAt || null,
-      restoredAt: task.restoredAt,
+      const now = new Date().toISOString();
+      task.active = true;
+      task.restoredAt = now;
+      task.updatedAt = now;
+      recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASK', 'TASK', taskId, {
+        childId: task.childId,
+        title: task.title,
+        archivedAt: task.archivedAt || null,
+        restoredAt: task.restoredAt,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true, task, restoredAt: task.restoredAt } };
     });
-    await saveStateData(state, data);
-    res.json({ ok: true, task, restoredAt: task.restoredAt });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3975,40 +3972,39 @@ app.post('/api/tasks/:id/restore', authMiddleware, requireParent, async (req, re
 app.post('/api/tasks/:id/restore-matching', authMiddleware, requireParent, async (req, res) => {
   try {
     const taskId = String(req.params.id || '');
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const sourceTask = data.tasks.find((item) => item.id === taskId);
-    if (!sourceTask) {
-      res.status(404).json({ error: 'Zadanie nie istnieje' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const sourceTask = data.tasks.find((item) => item.id === taskId);
+      if (!sourceTask) return { status: 404, body: { error: 'Zadanie nie istnieje' } };
 
-    const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
-    const now = new Date().toISOString();
-    const restoredTaskIds = [];
-    data.tasks.forEach((task) => {
-      if (task.active !== false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
-      task.active = true;
-      task.restoredAt = now;
-      task.updatedAt = now;
-      restoredTaskIds.push(task.id);
+      const sourceFingerprint = getTaskArchiveFingerprint(sourceTask);
+      const now = new Date().toISOString();
+      const restoredTaskIds = [];
+      data.tasks.forEach((task) => {
+        if (task.active !== false || getTaskArchiveFingerprint(task) !== sourceFingerprint) return;
+        task.active = true;
+        task.restoredAt = now;
+        task.updatedAt = now;
+        restoredTaskIds.push(task.id);
+      });
+      if (restoredTaskIds.length === 0) {
+        return { status: 409, body: { error: 'Nie znaleziono zarchiwizowanych pasujących zadań do przywrócenia' } };
+      }
+
+      recomputePointsAndGrants(data);
+      reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASKS_MATCHING', 'TASK', taskId, {
+        restoredTaskIds,
+        restoredCount: restoredTaskIds.length,
+        title: sourceTask.title,
+        tier: sourceTask.tier,
+        restoredAt: now,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 200, body: { ok: true, restoredTaskIds, restoredCount: restoredTaskIds.length, restoredAt: now } };
     });
-
-    if (restoredTaskIds.length === 0) {
-      res.status(409).json({ error: 'Nie znaleziono zarchiwizowanych pasujących zadań do przywrócenia' });
-      return;
-    }
-
-    recomputePointsAndGrants(data);
-    reconcileRewardUnlocksForAllChildren(data, req.auth.user.id, now);
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'RESTORE_TASKS_MATCHING', 'TASK', taskId, {
-      restoredTaskIds,
-      restoredCount: restoredTaskIds.length,
-      title: sourceTask.title,
-      tier: sourceTask.tier,
-      restoredAt: now,
-    });
-    await saveStateData(state, data);
-    res.json({ ok: true, restoredTaskIds, restoredCount: restoredTaskIds.length, restoredAt: now });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);

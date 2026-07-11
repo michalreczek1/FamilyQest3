@@ -213,6 +213,27 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(metricsRes.status).toBe(200);
     expect(metricsRes.body.metrics.snapshot_success).toBeGreaterThanOrEqual(1);
     expect(metricsRes.body.metrics.snapshot_not_modified).toBeGreaterThanOrEqual(1);
+
+    const childRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ name: 'Czytelnik historii', avatar: '📚', activeDays: [1, 2, 3, 4, 5, 6, 7] });
+    expect(childRes.status).toBe(201);
+    const beforeLedger = await request(app)
+      .get('/api/family-state')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(beforeLedger.status).toBe(200);
+
+    const ledgerRes = await request(app)
+      .get(`/api/point-ledger?childId=${encodeURIComponent(childRes.body.child.id)}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(ledgerRes.status).toBe(200);
+
+    const afterLedger = await request(app)
+      .get('/api/family-state')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(afterLedger.status).toBe(200);
+    expect(afterLedger.body.version).toBe(beforeLedger.body.version);
   });
 
   test('idempotency returns the original result and rejects key reuse with another payload', async () => {
