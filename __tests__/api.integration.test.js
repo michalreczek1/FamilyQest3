@@ -243,6 +243,50 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(reused.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
   });
 
+  test('atomic idempotency commits one family mutation and replays it to concurrent callers', async () => {
+    const registerRes = await request(app)
+      .post('/api/auth/register')
+      .send(createParentPayload(`atomic-idempotency-${Date.now()}`));
+    expect(registerRes.status).toBe(201);
+    const idempotencyKey = crypto.randomUUID();
+    const payload = {
+      name: 'Jednorazowe dziecko',
+      avatar: '🦊',
+      activeDays: [1, 2, 3, 4, 5],
+    };
+
+    const send = () => request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${registerRes.body.token}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload);
+    const [first, second] = await Promise.all([send(), send()]);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body).toEqual(first.body);
+
+    const childrenRes = await request(app)
+      .get('/api/children')
+      .set('Authorization', `Bearer ${registerRes.body.token}`);
+    expect(childrenRes.status).toBe(200);
+    expect(childrenRes.body.children.filter((child) => child.name === payload.name)).toHaveLength(1);
+
+    const persisted = await prisma.idempotencyOperation.findUnique({
+      where: {
+        userId_familyId_operationCode_idempotencyKey: {
+          userId: registerRes.body.user.id,
+          familyId: registerRes.body.user.familyId,
+          operationCode: 'POST:/children',
+          idempotencyKey,
+        },
+      },
+    });
+    expect(persisted?.completedAt).toBeTruthy();
+    expect(persisted?.responseStatus).toBe(201);
+    expect(persisted?.responseBody).toEqual(first.body);
+  });
+
   test('idempotency bounds waiting for an unresolved competing operation', async () => {
     const suffix = `idempotency-pending-${Date.now()}`;
     const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));

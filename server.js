@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 const { z } = require('zod');
 const { Prisma, PrismaClient } = require('@prisma/client');
 
@@ -113,6 +114,7 @@ const recordSyncMetric = (name, value = 1) => {
   syncMetrics.set(name, Number(syncMetrics.get(name) || 0) + value);
 };
 const getSyncMetrics = () => Object.fromEntries(syncMetrics.entries());
+const idempotencyRequestStorage = new AsyncLocalStorage();
 
 app.set('trust proxy', 1);
 
@@ -838,6 +840,44 @@ const getRequestHash = (req) =>
     .update(JSON.stringify(req.body || {}))
     .digest('hex');
 
+const isAtomicallyIdempotentFamilyMutation = (req) => {
+  const segments = req.path.split('/').filter(Boolean);
+  const [resource, id, action] = segments;
+  if (resource === 'children') return segments.length === 1 || segments.length === 2;
+  if (resource === 'completions') {
+    return (
+      (segments.length === 2 && ['approve-bulk', 'reject-bulk'].includes(id)) ||
+      (segments.length === 3 && ['approve', 'reject', 'reverse-approval'].includes(action))
+    );
+  }
+  if (resource === 'extra-tasks') {
+    return segments.length === 3 && ['approve', 'reject'].includes(action);
+  }
+  return (
+    (resource === 'point-adjustments' && segments.length === 1) ||
+    (resource === 'storage' && id === 'restore-backup' && segments.length === 2)
+  );
+};
+
+const getIdempotencyWhere = ({ userId, familyId, operationCode, idempotencyKey }) => ({
+  userId_familyId_operationCode_idempotencyKey: {
+    userId,
+    familyId,
+    operationCode,
+    idempotencyKey,
+  },
+});
+
+const createIdempotencyPendingResult = () => ({
+  status: 409,
+  body: {
+    code: 'IDEMPOTENCY_RESULT_PENDING',
+    error: 'Operacja z tym kluczem jest nadal przetwarzana.',
+    retryable: true,
+  },
+  retryAfter: '2',
+});
+
 const waitForIdempotencyResult = async (where) => {
   const deadline = Date.now() + IDEMPOTENCY_WAIT_MS;
   const startedAt = Date.now();
@@ -887,15 +927,20 @@ const idempotencyMiddleware = async (req, res, next) => {
   }
 
   const operationCode = getIdempotencyOperationCode(req);
-  const where = {
-    userId_familyId_operationCode_idempotencyKey: {
-      userId: String(payload.sub),
-      familyId: String(payload.familyId),
-      operationCode,
-      idempotencyKey,
-    },
+  const context = {
+    userId: String(payload.sub),
+    familyId: String(payload.familyId),
+    operationCode,
+    idempotencyKey,
+    requestHash: getRequestHash(req),
   };
-  const requestHash = getRequestHash(req);
+  if (isAtomicallyIdempotentFamilyMutation(req)) {
+    idempotencyRequestStorage.run(context, next);
+    return;
+  }
+
+  const where = getIdempotencyWhere(context);
+  const { requestHash } = context;
   let created = false;
   try {
     await prisma.idempotencyOperation.create({
@@ -1361,6 +1406,109 @@ const runFamilyStateTransaction = async (action) => {
     }
   }
   return null;
+};
+
+const claimAtomicIdempotencyOperation = async (tx, context) => {
+  const where = getIdempotencyWhere(context);
+  const created = await tx.idempotencyOperation.createMany({
+    data: {
+      userId: context.userId,
+      familyId: context.familyId,
+      operationCode: context.operationCode,
+      idempotencyKey: context.idempotencyKey,
+      requestHash: context.requestHash,
+      expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+    },
+    skipDuplicates: true,
+  });
+  if (created.count === 1) {
+    return { where, owner: true };
+  }
+
+  const existing = await tx.idempotencyOperation.findUnique({ where });
+  if (!existing) {
+    // A competing transaction can be rolled back after ON CONFLICT has waited
+    // for it. Treat the result as unresolved instead of executing a duplicate.
+    return { where, pending: true };
+  }
+  if (existing.requestHash !== context.requestHash) {
+    return {
+      where,
+      result: {
+        status: 409,
+        body: {
+          code: 'IDEMPOTENCY_KEY_REUSED',
+          error: 'Ten Idempotency-Key został użyty dla innego żądania.',
+        },
+      },
+    };
+  }
+  if (!existing.completedAt) {
+    return { where, pending: true };
+  }
+  return {
+    where,
+    result: {
+      status: existing.responseStatus || 200,
+      body: existing.responseBody,
+      replayed: true,
+    },
+  };
+};
+
+const isIdempotencyTransactionContention = (error) =>
+  error?.code === 'P2028' || isSerializableTransactionConflict(error);
+
+const runFamilyMutation = async (req, action) => {
+  const context = idempotencyRequestStorage.getStore();
+  try {
+    return await runFamilyStateTransaction(async (tx) => {
+      const claim = context ? await claimAtomicIdempotencyOperation(tx, context) : null;
+      if (claim?.result) {
+        if (claim.result.replayed) recordSyncMetric('idempotency_replay');
+        if (claim.result.body?.code === 'IDEMPOTENCY_KEY_REUSED') {
+          recordSyncMetric('idempotency_key_reused');
+        }
+        return claim.result;
+      }
+      if (claim?.pending) {
+        recordSyncMetric('idempotency_result_pending');
+        return createIdempotencyPendingResult();
+      }
+
+      const result = await action(tx);
+      if (claim?.owner && result?.status < 500) {
+        await tx.idempotencyOperation.update({
+          where: claim.where,
+          data: {
+            responseStatus: result.status,
+            responseBody: result.body,
+            completedAt: new Date(),
+          },
+        });
+      }
+      return result;
+    });
+  } catch (error) {
+    if (!context || !isIdempotencyTransactionContention(error)) throw error;
+
+    const resolved = await waitForIdempotencyResult(getIdempotencyWhere(context));
+    if (resolved?.completedAt) {
+      recordSyncMetric('idempotency_replay');
+      return {
+        status: resolved.responseStatus || 200,
+        body: resolved.responseBody,
+        replayed: true,
+      };
+    }
+    recordSyncMetric('idempotency_result_pending');
+    return createIdempotencyPendingResult();
+  }
+};
+
+const sendFamilyMutationResult = (res, result) => {
+  if (result?.retryAfter) res.set('Retry-After', result.retryAfter);
+  res.status(result.status).json(result.body);
 };
 
 const bootstrapChildAccessCredentials = async () => {
@@ -3389,7 +3537,7 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       return;
     }
 
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const saveTxStateData = createSaveStateData(tx.familyState);
       const id = createEntityId('child');
@@ -3431,7 +3579,7 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       await saveTxStateData(state, data);
       return { status: 201, body: { child: attachOneTimeAccessCode(child, accessCode) } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3451,7 +3599,7 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
     }
 
     const childId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const saveTxStateData = createSaveStateData(tx.familyState);
       const index = data.children.findIndex((child) => child.id === childId);
@@ -3502,7 +3650,7 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
       await saveTxStateData(state, data);
       return { status: 200, body: { child: attachOneTimeAccessCode(next, oneTimeAccessCode) } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -3516,7 +3664,7 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
 app.delete('/api/children/:id', authMiddleware, requireParent, async (req, res) => {
   try {
     const childId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const saveTxStateData = createSaveStateData(tx.familyState);
       const child = data.children.find((item) => item.id === childId);
@@ -3531,7 +3679,7 @@ app.delete('/api/children/:id', authMiddleware, requireParent, async (req, res) 
       await saveTxStateData(state, data);
       return { status: 200, body: { ok: true } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4020,7 +4168,7 @@ app.get('/api/completions/pending', authMiddleware, requireParent, async (req, r
 app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (req, res) => {
   try {
     const completionId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const completion = data.completions.find((item) => item.id === completionId);
       if (!completion) {
@@ -4045,7 +4193,7 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
       await saveTxStateData(state, data);
       return { status: 200, body: { completion, statePatch } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4059,7 +4207,7 @@ app.post('/api/completions/:id/approve', authMiddleware, requireParent, async (r
 app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (req, res) => {
   try {
     const completionId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const completion = data.completions.find((item) => item.id === completionId);
       if (!completion) {
@@ -4100,7 +4248,7 @@ app.post('/api/completions/:id/reject', authMiddleware, requireParent, async (re
       await saveTxStateData(state, data);
       return { status: 200, body: { completion, statePatch } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4120,7 +4268,7 @@ app.post('/api/completions/:id/reverse-approval', authMiddleware, requireParent,
     }
 
     const completionId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const completion = data.completions.find((item) => item.id === completionId);
       if (!completion) {
@@ -4139,7 +4287,7 @@ app.post('/api/completions/:id/reverse-approval', authMiddleware, requireParent,
       await saveTxStateData(state, data);
       return { status: 200, body };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4158,7 +4306,7 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
       return;
     }
 
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const now = new Date().toISOString();
       const approvedIds = [];
@@ -4194,7 +4342,7 @@ app.post('/api/completions/approve-bulk', authMiddleware, requireParent, async (
       await saveTxStateData(state, data);
       return { status: 200, body: { ok: true, approvedCount: approvedIds.length, approvedIds, statePatch } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4213,7 +4361,7 @@ app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (r
       return;
     }
 
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const now = new Date().toISOString();
       const rejectedIds = [];
@@ -4271,7 +4419,7 @@ app.post('/api/completions/reject-bulk', authMiddleware, requireParent, async (r
         },
       };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4382,7 +4530,7 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
     }
 
     const extraTaskId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
       if (!extraTask) {
@@ -4415,7 +4563,7 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
       await saveTxStateData(state, data);
       return { status: 200, body: { extraTask, statePatch } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4429,7 +4577,7 @@ app.post('/api/extra-tasks/:id/approve', authMiddleware, requireParent, async (r
 app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (req, res) => {
   try {
     const extraTaskId = String(req.params.id || '');
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const extraTask = data.extraTasks.find((item) => item.id === extraTaskId);
       if (!extraTask) {
@@ -4458,7 +4606,7 @@ app.post('/api/extra-tasks/:id/reject', authMiddleware, requireParent, async (re
       await saveTxStateData(state, data);
       return { status: 200, body: { extraTask, statePatch } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4500,7 +4648,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
   }
 
   try {
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       recomputePointsAndGrants(data);
 
@@ -4553,7 +4701,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
       await saveTxStateData(state, data);
       return { status: 201, body: { pointAdjustment: adjustment, points: data.points } };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4959,7 +5107,7 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
   const backup = Object.prototype.hasOwnProperty.call(req.body || {}, 'backup') ? req.body.backup : req.body;
 
   try {
-    const result = await runFamilyStateTransaction(async (tx) => {
+    const result = await runFamilyMutation(req, async (tx) => {
       const nextData = normalizeRestoredBackupData(backup, req.auth.user.id);
       if (!nextData) {
         return { status: 400, body: { error: 'Nieprawidłowy plik backupu' } };
@@ -5011,7 +5159,7 @@ app.post('/api/storage/restore-backup', authMiddleware, requireParent, async (re
         },
       };
     });
-    res.status(result.status).json(result.body);
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);

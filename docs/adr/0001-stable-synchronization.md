@@ -31,6 +31,10 @@ lub przywrócić widok po lokalnym wylogowaniu.
 - Mutacje używają nagłówka `Idempotency-Key`. Rekord idempotencji jest
   jednoznaczny dla `userId + familyId + operationCode + idempotencyKey`;
   `requestHash` jest walidacją, nie częścią klucza.
+- Dla mutacji przeniesionych do transakcyjnej warstwy rodziny rekord
+  idempotencji, zmiana `FamilyState` oraz zapamiętana odpowiedź są zatwierdzane
+  w tej samej transakcji. Powtórzenie zwraca ten utrwalony rezultat bez
+  ponownego wykonania logiki domenowej.
 - Dla krótkich mutacji konkurencyjne żądanie może czekać tylko w ograniczonym
   czasie. Po jego przekroczeniu API zwraca `409 IDEMPOTENCY_RESULT_PENDING`
   oraz `Retry-After`; klient zachowuje ten sam klucz i nie zakłada porażki.
@@ -54,5 +58,7 @@ lub przywrócić widok po lokalnym wylogowaniu.
   serwera; wynik jest rozstrzygany tym samym kluczem idempotencji.
 - Bieżące metryki są pamięcią procesu i służą do obserwacji wdrożenia. Przed
   pełnym rolloutem należy podłączyć je do trwałego systemu telemetrycznego.
+- Migracja starszych endpointów zapisu do tej warstwy jest wykonywana etapami;
+  do czasu przeniesienia zachowują poprzednią ochronę idempotencji.
 - SSE/WebSocket mogą później wyłącznie sygnalizować nową wersję i wywołać
   odświeżenie. Nie zastępują snapshotów ani kontroli wersji.
