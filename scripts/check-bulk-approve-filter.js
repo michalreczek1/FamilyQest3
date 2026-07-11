@@ -196,7 +196,7 @@ const installApiMocks = async (page, state, metrics) => {
       });
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, approvedCount: approvedIds.length, approvedIds, statePatch: buildStatePatch(state) }),
+        body: JSON.stringify({ ok: true, approvedCount: approvedIds.length, approvedIds, patch: buildStatePatch(state) }),
       });
       return;
     }
@@ -232,7 +232,7 @@ const installApiMocks = async (page, state, metrics) => {
 
     assert.strictEqual(metrics.bulkRequests.length, 1, 'bulk approve should call one backend endpoint');
     assert.strictEqual(metrics.bulkRequests[0].ids.length, 23, 'bulk approve should include every visible completion');
-    assert.strictEqual(metrics.storageGets, storageGetsAfterInitialLoad, 'statePatch should avoid a full storage reload after bulk approve');
+    assert.strictEqual(metrics.storageGets, storageGetsAfterInitialLoad, 'patch should avoid a full storage reload after bulk approve');
     const mergeRequestsAfterAction = metrics.mergeRequests;
     await wait(5600);
     assert(metrics.storageGets > storageGetsAfterInitialLoad, 'silent polling refresh should still read fresh server state');

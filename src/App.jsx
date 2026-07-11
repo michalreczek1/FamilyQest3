@@ -461,7 +461,7 @@ const App = () => {
     setPendingExtraTaskActionIds(prev => prev.filter(id => !validIds.has(id)));
   }, []);
   const applyServerStatePatch = useCallback(result => {
-    const patch = result?.statePatch;
+    const patch = result?.patch || result?.statePatch;
     if (!patch || typeof patch !== 'object') {
       return false;
     }

@@ -895,6 +895,25 @@ const createIdempotencyPendingResult = () => ({
   retryAfter: '2',
 });
 
+const withFamilyMutationResult = (status, body) => {
+  if (!isObjectRecord(body) || Object.prototype.hasOwnProperty.call(body, 'result')) return body;
+
+  if (status >= 400) {
+    return { ...body, result: null };
+  }
+
+  const result = { ...body };
+  delete result.version;
+  delete result.patch;
+  delete result.statePatch;
+  return { ...body, result };
+};
+
+const sendFamilyMutationResponse = (res, status, body, options = {}) => {
+  if (options.retryAfter) res.set('Retry-After', options.retryAfter);
+  res.status(status).json(withFamilyMutationResult(status, body));
+};
+
 const waitForIdempotencyResult = async (where) => {
   const deadline = Date.now() + IDEMPOTENCY_WAIT_MS;
   const startedAt = Date.now();
@@ -925,7 +944,7 @@ const idempotencyMiddleware = async (req, res, next) => {
     return;
   }
   if (idempotencyKey.length < 16 || idempotencyKey.length > 200) {
-    res.status(400).json({ error: 'Nieprawidłowy Idempotency-Key' });
+    sendFamilyMutationResponse(res, 400, { error: 'Nieprawidłowy Idempotency-Key' });
     return;
   }
 
@@ -986,7 +1005,7 @@ const idempotencyMiddleware = async (req, res, next) => {
     }
     if (existing.requestHash !== requestHash) {
       recordSyncMetric('idempotency_key_reused');
-      res.status(409).json({
+      sendFamilyMutationResponse(res, 409, {
         code: 'IDEMPOTENCY_KEY_REUSED',
         error: 'Ten Idempotency-Key został użyty dla innego żądania.',
       });
@@ -995,16 +1014,11 @@ const idempotencyMiddleware = async (req, res, next) => {
     const resolved = existing.completedAt ? existing : await waitForIdempotencyResult(where);
     if (resolved?.completedAt) {
       recordSyncMetric('idempotency_replay');
-      res.status(resolved.responseStatus || 200).json(resolved.responseBody);
+      sendFamilyMutationResponse(res, resolved.responseStatus || 200, resolved.responseBody);
       return;
     }
-    res.set('Retry-After', '2');
     recordSyncMetric('idempotency_result_pending');
-    res.status(409).json({
-      code: 'IDEMPOTENCY_RESULT_PENDING',
-      error: 'Operacja z tym kluczem jest nadal przetwarzana.',
-      retryable: true,
-    });
+    sendFamilyMutationResponse(res, 409, createIdempotencyPendingResult().body, { retryAfter: '2' });
     return;
   }
 
@@ -1227,7 +1241,7 @@ const addAuditLogEntry = (data, actorUserId, action, entityType, entityId, detai
 const isFamilyStateConflict = (error) => error?.code === 'FAMILY_STATE_VERSION_CONFLICT';
 
 const sendFamilyStateConflict = (res) =>
-  (recordSyncMetric('family_state_conflict'), res.status(409).json({
+  (recordSyncMetric('family_state_conflict'), sendFamilyMutationResponse(res, 409, {
     error: 'Stan rodziny zmienił się na innym urządzeniu. Odśwież dane i spróbuj ponownie.',
     code: 'FAMILY_STATE_VERSION_CONFLICT',
   }));
@@ -1475,21 +1489,21 @@ const isIdempotencyTransactionContention = (error) =>
   error?.code === 'P2028' || isSerializableTransactionConflict(error);
 
 const addFamilyMutationContract = async (tx, familyId, result) => {
-  if (!familyId || !isObjectRecord(result?.body) || result?.retryAfter) return result;
-  const state = await tx.familyState.findUnique({
-    where: { familyId },
-    select: { version: true },
-  });
-  if (!state) return result;
-
-  const body = {
-    ...result.body,
-    version: getFamilyStateVersion(state),
-  };
+  if (!isObjectRecord(result?.body) || result?.retryAfter) return result;
+  let body = { ...result.body };
+  if (familyId) {
+    const state = await tx.familyState.findUnique({
+      where: { familyId },
+      select: { version: true },
+    });
+    if (state) {
+      body.version = getFamilyStateVersion(state);
+    }
+  }
   if (body.statePatch && !body.patch) {
     body.patch = body.statePatch;
   }
-  return { ...result, body };
+  return { ...result, body: withFamilyMutationResult(result.status, body) };
 };
 
 const runFamilyMutation = async (req, action) => {
@@ -1556,8 +1570,7 @@ const runFamilyMutation = async (req, action) => {
 };
 
 const sendFamilyMutationResult = (res, result) => {
-  if (result?.retryAfter) res.set('Retry-After', result.retryAfter);
-  res.status(result.status).json(result.body);
+  sendFamilyMutationResponse(res, result.status, result.body, { retryAfter: result?.retryAfter });
 };
 
 const bootstrapChildAccessCredentials = async () => {

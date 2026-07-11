@@ -247,6 +247,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .send(payload);
     expect(first.status).toBe(200);
     expect(Number.isInteger(first.body.version)).toBe(true);
+    expect(first.body.result).toEqual({ familyGoal: payload });
 
     const repeated = await request(app)
       .put('/api/family-goal')
@@ -263,6 +264,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .send({ ...payload, target: 444 });
     expect(reused.status).toBe(409);
     expect(reused.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
+    expect(reused.body.result).toBeNull();
   });
 
   test('atomic idempotency commits one family mutation and replays it to concurrent callers', async () => {
@@ -288,6 +290,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(second.status).toBe(201);
     expect(second.body).toEqual(first.body);
     expect(Number.isInteger(first.body.version)).toBe(true);
+    expect(first.body.result.child.name).toBe(payload.name);
 
     const childrenRes = await request(app)
       .get('/api/children')
@@ -373,6 +376,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(result.status).toBe(409);
     expect(result.headers['retry-after']).toBe('2');
     expect(result.body.code).toBe('IDEMPOTENCY_RESULT_PENDING');
+    expect(result.body.result).toBeNull();
   });
 
   afterAll(async () => {
@@ -461,6 +465,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(addChildRes.status).toBe(201);
     expect(addChildRes.body.child.id).toBeTruthy();
     expect(addChildRes.body.child.accessCode).toMatch(/^\d{4}$/);
+    expect(addChildRes.body.result.child).toEqual(addChildRes.body.child);
 
     const child = addChildRes.body.child;
     const familyStateAfterChildCreate = await prisma.familyState.findUnique({
@@ -694,6 +699,11 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(bulkApproveRes.body.approvedCount).toBeGreaterThanOrEqual(1);
     expect(Number.isInteger(bulkApproveRes.body.version)).toBe(true);
     expect(bulkApproveRes.body.patch).toEqual(bulkApproveRes.body.statePatch);
+    expect(bulkApproveRes.body.result).toMatchObject({
+      ok: true,
+      approvedCount: bulkApproveRes.body.approvedCount,
+      approvedIds: bulkApproveRes.body.approvedIds,
+    });
 
     const pendingAfterBulkApproveRes = await request(app)
       .get(`/api/completions/pending?childId=${encodeURIComponent(child.id)}&date=${encodeURIComponent(today)}`)
@@ -718,6 +728,7 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .post(`/api/completions/${completionId}/approve`)
       .set('Authorization', `Bearer ${parentToken}`);
     expect(duplicateApproveRes.status).toBe(409);
+    expect(duplicateApproveRes.body.result).toBeNull();
 
     const pointsAfterDuplicateApproveRes = await request(app)
       .get('/api/storage/get/points')
