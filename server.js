@@ -866,7 +866,7 @@ const isAtomicallyIdempotentFamilyMutation = (req) => {
   }
   return (
     (resource === 'point-adjustments' && segments.length === 1) ||
-    (resource === 'storage' && id === 'restore-backup' && segments.length === 2)
+    (resource === 'storage' && ['set', 'merge', 'restore-backup'].includes(id) && segments.length >= 2)
   );
 };
 
@@ -5047,15 +5047,17 @@ app.post('/api/storage/set/:key', authMiddleware, async (req, res) => {
   }
 
   try {
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const nextData = mergeStorageValuesForUser(data, { [key]: req.body?.value ?? null }, req.auth.user);
-    if (!hasStateDataChanged(data, nextData)) {
-      res.json({ ok: true, key, skipped: true });
-      return;
-    }
-    await saveStateData(state, nextData);
-
-    res.json({ ok: true, key });
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const nextData = mergeStorageValuesForUser(data, { [key]: req.body?.value ?? null }, req.auth.user);
+      if (!hasStateDataChanged(data, nextData)) {
+        return { status: 200, body: { ok: true, key, skipped: true } };
+      }
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, nextData);
+      return { status: 200, body: { ok: true, key } };
+    });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -5081,30 +5083,25 @@ app.post('/api/storage/merge', authMiddleware, async (req, res) => {
     }
   }
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const { state, data } = await loadStateData(req.auth.user.familyId);
+  try {
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
       const nextData = mergeStorageValuesForUser(data, values, req.auth.user);
       if (!hasStateDataChanged(data, nextData)) {
-        res.json({ ok: true, keys, skipped: true });
-        return;
+        return { status: 200, body: { ok: true, keys, skipped: true } };
       }
-      await saveStateData(state, nextData);
-
-      res.json({ ok: true, keys });
-      return;
-    } catch (error) {
-      if (isFamilyStateConflict(error) && attempt === 0) {
-        continue;
-      }
-      if (isFamilyStateConflict(error)) {
-        sendFamilyStateConflict(res);
-        return;
-      }
-      console.error('Storage merge error:', error);
-      res.status(500).json({ error: 'Błąd zapisu storage merge' });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, nextData);
+      return { status: 200, body: { ok: true, keys } };
+    });
+    sendFamilyMutationResult(res, result);
+  } catch (error) {
+    if (isFamilyStateConflict(error)) {
+      sendFamilyStateConflict(res);
       return;
     }
+    console.error('Storage merge error:', error);
+    res.status(500).json({ error: 'Błąd zapisu storage merge' });
   }
 });
 
