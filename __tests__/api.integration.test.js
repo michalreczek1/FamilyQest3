@@ -1216,6 +1216,30 @@ test('storage sanitizer strips child access codes from children and audit logs',
       .set('Authorization', `Bearer ${parentToken}`);
     expect(pointsRes.status).toBe(200);
     expect(pointsRes.body.value[child.id]).toBe(3);
+
+    const snapshotBeforeConflict = await request(app)
+      .get('/api/family-state')
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(snapshotBeforeConflict.status).toBe(200);
+    const permanentConflict = new Error('family state version changed');
+    permanentConflict.code = 'FAMILY_STATE_VERSION_CONFLICT';
+    const conflictSpy = jest.spyOn(prisma, '$transaction').mockRejectedValueOnce(permanentConflict);
+    try {
+      const rejectedRes = await request(app)
+        .post('/api/point-adjustments')
+        .set('Authorization', `Bearer ${parentToken}`)
+        .send({
+          childId: child.id,
+          type: 'BONUS',
+          points: 1,
+          note: 'Nie zostanie zapisane',
+        });
+      expect(rejectedRes.status).toBe(409);
+      expect(rejectedRes.body.code).toBe('FAMILY_STATE_VERSION_CONFLICT');
+      expect(rejectedRes.body.currentVersion).toBe(snapshotBeforeConflict.body.version);
+    } finally {
+      conflictSpy.mockRestore();
+    }
   });
 
   test('completion and extra task APIs enforce schedule and date policy', async () => {

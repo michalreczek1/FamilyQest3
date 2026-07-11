@@ -1524,6 +1524,21 @@ const runFamilyMutation = async (req, action) => {
       return result;
     });
   } catch (error) {
+    if (isFamilyStateConflict(error) && familyId) {
+      const latestState = await prisma.familyState.findUnique({
+        where: { familyId },
+        select: { version: true },
+      });
+      recordSyncMetric('family_state_conflict');
+      return {
+        status: 409,
+        body: {
+          code: 'FAMILY_STATE_VERSION_CONFLICT',
+          error: 'Stan rodziny zmienił się na innym urządzeniu. Odśwież dane i spróbuj ponownie.',
+          currentVersion: latestState ? getFamilyStateVersion(latestState) : null,
+        },
+      };
+    }
     if (!context || !isIdempotencyTransactionContention(error)) throw error;
 
     const resolved = await waitForIdempotencyResult(getIdempotencyWhere(context));
