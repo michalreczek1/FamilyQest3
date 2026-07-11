@@ -287,6 +287,45 @@ test('storage sanitizer strips child access codes from children and audit logs',
     expect(persisted?.responseBody).toEqual(first.body);
   });
 
+  test('atomic idempotency creates one child completion for concurrent retries', async () => {
+    const parentToken = await registerParent(`atomic-completion-${Date.now()}`);
+    const childRes = await request(app)
+      .post('/api/children')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ name: 'Maja', avatar: '🦉', activeDays: [1, 2, 3, 4, 5, 6, 7] });
+    expect(childRes.status).toBe(201);
+    const taskRes = await request(app)
+      .post('/api/tasks')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .send({ childId: childRes.body.child.id, title: 'Wynieś śmieci', tier: 'MIN', points: 2 });
+    expect(taskRes.status).toBe(201);
+
+    const idempotencyKey = crypto.randomUUID();
+    const payload = {
+      childId: childRes.body.child.id,
+      taskId: taskRes.body.task.id,
+      date: getToday(),
+      doneByChild: true,
+    };
+    const send = () => request(app)
+      .post('/api/completions')
+      .set('Authorization', `Bearer ${parentToken}`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send(payload);
+    const [first, second] = await Promise.all([send(), send()]);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body).toEqual(first.body);
+
+    const completionsRes = await request(app)
+      .get(`/api/completions?childId=${encodeURIComponent(payload.childId)}&date=${payload.date}`)
+      .set('Authorization', `Bearer ${parentToken}`);
+    expect(completionsRes.status).toBe(200);
+    expect(completionsRes.body.completions).toHaveLength(1);
+    expect(completionsRes.body.completions[0].id).toBe(first.body.completion.id);
+  });
+
   test('idempotency bounds waiting for an unresolved competing operation', async () => {
     const suffix = `idempotency-pending-${Date.now()}`;
     const registerRes = await request(app).post('/api/auth/register').send(createParentPayload(suffix));

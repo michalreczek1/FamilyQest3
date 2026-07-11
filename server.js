@@ -844,14 +844,16 @@ const isAtomicallyIdempotentFamilyMutation = (req) => {
   const segments = req.path.split('/').filter(Boolean);
   const [resource, id, action] = segments;
   if (resource === 'children') return segments.length === 1 || segments.length === 2;
+  if (resource === 'tasks') return segments.length === 1;
   if (resource === 'completions') {
     return (
+      segments.length === 1 ||
       (segments.length === 2 && ['approve-bulk', 'reject-bulk'].includes(id)) ||
       (segments.length === 3 && ['approve', 'reject', 'reverse-approval'].includes(action))
     );
   }
   if (resource === 'extra-tasks') {
-    return segments.length === 3 && ['approve', 'reject'].includes(action);
+    return segments.length === 1 || (segments.length === 3 && ['approve', 'reject'].includes(action));
   }
   return (
     (resource === 'point-adjustments' && segments.length === 1) ||
@@ -3725,34 +3727,34 @@ app.post('/api/tasks', authMiddleware, requireParent, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-    if (!child) {
-      res.status(404).json({ error: 'Nie znaleziono dziecka dla tego zadania' });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+      if (!child) return { status: 404, body: { error: 'Nie znaleziono dziecka dla tego zadania' } };
 
-    const task = {
-      id: createEntityId('task'),
-      childId: parsed.data.childId,
-      title: parsed.data.title.trim(),
-      tier: parsed.data.tier,
-      points: parsed.data.points || 0,
-      description: parsed.data.description || '',
-      daysOfWeek: normalizeTaskDaysOfWeek(parsed.data.daysOfWeek),
-      active: parsed.data.active !== false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    data.tasks = [...data.tasks, task];
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_TASK', 'TASK', task.id, {
-      childId: task.childId,
-      tier: task.tier,
-      points: task.points,
+      const task = {
+        id: createEntityId('task'),
+        childId: parsed.data.childId,
+        title: parsed.data.title.trim(),
+        tier: parsed.data.tier,
+        points: parsed.data.points || 0,
+        description: parsed.data.description || '',
+        daysOfWeek: normalizeTaskDaysOfWeek(parsed.data.daysOfWeek),
+        active: parsed.data.active !== false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      data.tasks = [...data.tasks, task];
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_TASK', 'TASK', task.id, {
+        childId: task.childId,
+        tier: task.tier,
+        points: task.points,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 201, body: { task } };
     });
-
-    await saveStateData(state, data);
-    res.status(201).json({ task });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4051,85 +4053,78 @@ app.post('/api/completions', authMiddleware, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-    if (!child) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
-    const task = data.tasks.find((item) => item.id === parsed.data.taskId && item.childId === parsed.data.childId);
-    if (!task || !isTaskActiveForDate(task, parsed.data.date)) {
-      res.status(404).json({ error: 'Zadanie nie istnieje lub jest nieaktywne' });
-      return;
-    }
-    const completionDateError = validateTaskCompletionDate(child, task, parsed.data.date);
-    if (completionDateError) {
-      res.status(400).json({ error: completionDateError });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+      if (!child) return { status: 404, body: { error: 'Dziecko nie istnieje' } };
+      const task = data.tasks.find((item) => item.id === parsed.data.taskId && item.childId === parsed.data.childId);
+      if (!task || !isTaskActiveForDate(task, parsed.data.date)) {
+        return { status: 404, body: { error: 'Zadanie nie istnieje lub jest nieaktywne' } };
+      }
+      const completionDateError = validateTaskCompletionDate(child, task, parsed.data.date);
+      if (completionDateError) return { status: 400, body: { error: completionDateError } };
 
-    const existing = data.completions.find(
-      (item) =>
-        item.taskId === parsed.data.taskId &&
-        item.childId === parsed.data.childId &&
-        item.date === parsed.data.date,
-    );
-    const now = new Date().toISOString();
+      const existing = data.completions.find(
+        (item) =>
+          item.taskId === parsed.data.taskId &&
+          item.childId === parsed.data.childId &&
+          item.date === parsed.data.date,
+      );
+      const now = new Date().toISOString();
+      const saveTxStateData = createSaveStateData(tx.familyState);
 
-    if (existing) {
-      if (existing.approvedByParent) {
-        if (parsed.data.doneByChild !== true) {
-          res.status(409).json({
-            error: 'Zatwierdzonego zadania nie można cofnąć bez jawnej korekty punktów',
-          });
-          return;
+      if (existing) {
+        if (existing.approvedByParent) {
+          if (parsed.data.doneByChild !== true) {
+            return {
+              status: 409,
+              body: { error: 'Zatwierdzonego zadania nie można cofnąć bez jawnej korekty punktów' },
+            };
+          }
+          return { status: 200, body: { completion: existing } };
         }
-        res.json({ completion: existing });
-        return;
+        existing.doneByChild = parsed.data.doneByChild;
+        if (parsed.data.doneByChild) {
+          existing.doneAt = now;
+        } else {
+          existing.approvedByParent = false;
+          existing.approvedAt = null;
+        }
+        existing.updatedAt = now;
+        data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_COMPLETION', 'COMPLETION', existing.id, {
+          childId: existing.childId,
+          taskId: existing.taskId,
+          date: existing.date,
+          doneByChild: existing.doneByChild,
+        });
+        await saveTxStateData(state, data);
+        return { status: 200, body: { completion: existing } };
       }
-      existing.doneByChild = parsed.data.doneByChild;
-      if (parsed.data.doneByChild) {
-        existing.doneAt = now;
-      } else {
-        existing.approvedByParent = false;
-        existing.approvedAt = null;
-      }
-      existing.updatedAt = now;
 
-      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'UPDATE_COMPLETION', 'COMPLETION', existing.id, {
-        childId: existing.childId,
-        taskId: existing.taskId,
-        date: existing.date,
-        doneByChild: existing.doneByChild,
+      const completion = {
+        id: createEntityId('comp'),
+        taskId: parsed.data.taskId,
+        childId: parsed.data.childId,
+        date: parsed.data.date,
+        doneByChild: parsed.data.doneByChild,
+        approvedByParent: false,
+        approvedAt: null,
+        rejectedByParent: false,
+        rejectedAt: null,
+        doneAt: parsed.data.doneByChild ? now : null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      data.completions = [...data.completions, completion];
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_COMPLETION', 'COMPLETION', completion.id, {
+        childId: completion.childId,
+        taskId: completion.taskId,
+        date: completion.date,
       });
-      await saveStateData(state, data);
-      res.json({ completion: existing });
-      return;
-    }
-
-    const completion = {
-      id: createEntityId('comp'),
-      taskId: parsed.data.taskId,
-      childId: parsed.data.childId,
-      date: parsed.data.date,
-      doneByChild: parsed.data.doneByChild,
-      approvedByParent: false,
-      approvedAt: null,
-      rejectedByParent: false,
-      rejectedAt: null,
-      doneAt: parsed.data.doneByChild ? now : null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    data.completions = [...data.completions, completion];
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_COMPLETION', 'COMPLETION', completion.id, {
-      childId: completion.childId,
-      taskId: completion.taskId,
-      date: completion.date,
+      await saveTxStateData(state, data);
+      return { status: 201, body: { completion } };
     });
-
-    await saveStateData(state, data);
-    res.status(201).json({ completion });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
@@ -4473,44 +4468,41 @@ app.post('/api/extra-tasks', authMiddleware, async (req, res) => {
       return;
     }
 
-    const { state, data } = await loadStateData(req.auth.user.familyId);
-    const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
-    if (!child) {
-      res.status(404).json({ error: 'Dziecko nie istnieje' });
-      return;
-    }
-    const extraTaskDate = parsed.data.date || toDateString(new Date());
-    const extraTaskDateError = validateChildDate(child, extraTaskDate);
-    if (extraTaskDateError) {
-      res.status(400).json({ error: extraTaskDateError });
-      return;
-    }
+    const result = await runFamilyMutation(req, async (tx) => {
+      const { state, data } = await loadStateData(req.auth.user.familyId, tx);
+      const child = data.children.find((item) => item.id === parsed.data.childId && !item.archived);
+      if (!child) return { status: 404, body: { error: 'Dziecko nie istnieje' } };
+      const extraTaskDate = parsed.data.date || toDateString(new Date());
+      const extraTaskDateError = validateChildDate(child, extraTaskDate);
+      if (extraTaskDateError) return { status: 400, body: { error: extraTaskDateError } };
 
-    const now = new Date().toISOString();
-    const extraTask = {
-      id: createEntityId('extra'),
-      childId: parsed.data.childId,
-      title: parsed.data.title.trim(),
-      date: extraTaskDate,
-      status: 'PENDING',
-      points: 1,
-      approvedByParent: false,
-      approvedAt: null,
-      rejectedAt: null,
-      submittedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
+      const now = new Date().toISOString();
+      const extraTask = {
+        id: createEntityId('extra'),
+        childId: parsed.data.childId,
+        title: parsed.data.title.trim(),
+        date: extraTaskDate,
+        status: 'PENDING',
+        points: 1,
+        approvedByParent: false,
+        approvedAt: null,
+        rejectedAt: null,
+        submittedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-    data.extraTasks = [extraTask, ...data.extraTasks];
-    data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
-      childId: extraTask.childId,
-      date: extraTask.date,
-      title: extraTask.title,
+      data.extraTasks = [extraTask, ...data.extraTasks];
+      data.auditLogs = addAuditLogEntry(data, req.auth.user.id, 'ADD_EXTRA_TASK', 'EXTRA_TASK', extraTask.id, {
+        childId: extraTask.childId,
+        date: extraTask.date,
+        title: extraTask.title,
+      });
+      const saveTxStateData = createSaveStateData(tx.familyState);
+      await saveTxStateData(state, data);
+      return { status: 201, body: { extraTask } };
     });
-
-    await saveStateData(state, data);
-    res.status(201).json({ extraTask });
+    sendFamilyMutationResult(res, result);
   } catch (error) {
     if (isFamilyStateConflict(error)) {
       sendFamilyStateConflict(res);
