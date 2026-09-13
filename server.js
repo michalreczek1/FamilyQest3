@@ -248,10 +248,6 @@ app.use(
   }),
 );
 app.use(cors(corsOptions));
-app.use((req, res, next) => {
-  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
-  next();
-});
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
