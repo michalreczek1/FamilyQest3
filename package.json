@@ -44,6 +44,7 @@
     "test:child-task-toggle": "node scripts/check-child-task-toggle-latency.js",
     "test:child-actions": "node scripts/check-child-actions-layout.js",
     "test:parent-voice": "node scripts/check-parent-voice-command.js",
+    "test:parent-voice-parser": "node scripts/check-parent-voice-parser.js",
     "test:mobile-layout": "node scripts/check-mobile-layout.js",
     "lint": "eslint . --ext .js,.jsx",
     "format": "prettier --write ."

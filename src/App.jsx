@@ -1106,7 +1106,7 @@ const App = () => {
     const label = isPenalty ? 'karę' : 'premię';
     return runServerMutation(async () => {
       try {
-      await apiRequest('/api/point-adjustments', {
+      const result = await apiRequest('/api/point-adjustments', {
         method: 'POST',
         body: {
           childId: child.id,
@@ -1121,7 +1121,7 @@ const App = () => {
       }
       setPointAdjustmentModal(null);
       await reloadAfterServerMutation();
-      return { success: true };
+      return { success: true, appliedPoints: Number(result?.pointAdjustment?.points ?? points) };
       } catch (e) {
         if (e?.isAborted || e?.isOutcomeUnknown) {
           if (e?.isOutcomeUnknown) {

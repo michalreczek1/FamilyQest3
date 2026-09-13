@@ -13,6 +13,8 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
   const [listening, setListening] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [plan, setPlan] = useState(null);
+  const [childSelectionNeeded, setChildSelectionNeeded] = useState(false);
+  const [manualChildId, setManualChildId] = useState('');
   const [executing, setExecuting] = useState(false);
   const supported = useMemo(() => Boolean(SpeechRecognitionCtor()), []);
 
@@ -20,13 +22,16 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     recognitionRef.current?.stop?.();
   }, []);
 
-  const prepare = (value = transcript) => {
-    const parsed = parseParentVoiceCommand({ transcript: value, children, today: getDateString() });
+  const prepare = (value = transcript, selectedChildId = manualChildId) => {
+    const parsed = parseParentVoiceCommand({ transcript: value, children, today: getDateString(), childId: selectedChildId || null });
     if (parsed.error) {
       setPlan(null);
       setFeedback(parsed.error);
+      setChildSelectionNeeded(Boolean(parsed.needsChildSelection));
       return;
     }
+    setChildSelectionNeeded(false);
+    setManualChildId('');
     if (parsed.type === 'APPROVE_PENDING' || parsed.type === 'REJECT_PENDING') {
       const pending = completions.filter((completion) =>
         completion.childId === parsed.child.id &&
@@ -82,6 +87,8 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     }
     const recognition = new Recognition();
     recognitionRef.current = recognition;
+    setChildSelectionNeeded(false);
+    setManualChildId('');
     recognition.lang = 'pl-PL';
     recognition.continuous = false;
     recognition.interimResults = true;
@@ -106,7 +113,7 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     recognition.onend = () => {
       recognitionRef.current = null;
       setListening(false);
-      if (finalTranscript) prepare(finalTranscript);
+      if (finalTranscript) prepare(finalTranscript, null);
     };
     try {
       recognition.start();
@@ -155,7 +162,8 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
           sourceDate: plan.date,
         });
         if (result?.success !== true) throw new Error('Nie udało się potwierdzić zapisu punktów. Sprawdź historię przed ponowieniem.');
-        setFeedback(`${plan.adjustmentType === 'PENALTY' ? 'Odjęto' : 'Dodano'} ${plan.points} pkt dla ${plan.child.name}.`);
+        const appliedPoints = Number(result.appliedPoints ?? plan.points);
+        setFeedback(`${plan.adjustmentType === 'PENALTY' ? 'Odjęto' : 'Dodano'} ${appliedPoints} pkt dla ${plan.child.name}.${appliedPoints !== plan.points ? ` Żądano ${plan.points} pkt; odjęto tylko dostępne punkty.` : ''}`);
       }
       setPlan(null);
       setTranscript('');
@@ -199,13 +207,19 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
         React.createElement('input', {
           className: 'input',
           value: transcript,
-          onChange: (event) => setTranscript(event.target.value),
+          onChange: (event) => { setTranscript(event.target.value); setChildSelectionNeeded(false); setManualChildId(''); },
           placeholder: 'Np. dodaj dwa punkty Filipowi za zmywarkę dzisiaj',
           'aria-label': 'Polecenie dla rodzica',
         }),
         React.createElement('button', { className: 'btn btn-primary', type: 'submit', disabled: !transcript.trim() }, 'Przygotuj'),
       ),
-      React.createElement('div', { className: 'voice-command-examples' }, 'Dla każdego dodanego dziecka: premie/kary, zatwierdzanie i odrzucanie zadań, zadania dodatkowe oraz zaliczanie. Daty: dziś, wczoraj, 12.09.2026 lub 12 września.'),
+      childSelectionNeeded && React.createElement('label', { className: 'voice-child-selector' }, 'Wybierz dziecko dla tego polecenia',
+        React.createElement('select', { className: 'input', value: manualChildId, onChange: (event) => setManualChildId(event.target.value) },
+          React.createElement('option', { value: '' }, 'Wybierz dziecko'),
+          children.filter((child) => !child.archived).map((child) => React.createElement('option', { key: child.id, value: child.id }, child.name)),
+        ),
+      ),
+      React.createElement('div', { className: 'voice-command-examples' }, 'Przykłady: „Dodaj dwa punkty Filipowi za pomoc”, „Dwa punkty kary dla Józka za hałas”. Obsługiwane są też zatwierdzanie, odrzucanie i zaliczanie zadań. Jeśli imię nie jest pewne, wybierz dziecko z listy.'),
       feedback && React.createElement('div', { className: 'voice-command-feedback', role: 'status' }, feedback),
     ),
     plan && React.createElement(ModalOverlay, {

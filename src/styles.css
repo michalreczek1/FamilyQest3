@@ -694,6 +694,8 @@ button.hero-metric:hover {
 }
 
 .voice-command-form .input { margin: 0; }
+.voice-child-selector { display: grid; gap: 0.4rem; max-width: 320px; font-size: 0.92rem; }
+.voice-child-selector .input { margin: 0; }
 .voice-command-feedback { margin-top: 0.7rem; color: #FDE68A; font-size: 0.92rem; }
 .voice-command-confirm { max-width: 560px; }
 .voice-command-confirm p { margin: 0.85rem 0; line-height: 1.45; }

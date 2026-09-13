@@ -1,9 +1,10 @@
 import { toDateString } from './dates.js';
 
-const NUMBER_WORDS = { zero: 0, jeden: 1, jedna: 1, jedno: 1, dwa: 2, dwie: 2, trzy: 3, cztery: 4, piec: 5, szesc: 6, siedem: 7, osiem: 8, dziewiec: 9, dziesiec: 10 };
+const NUMBER_WORDS = { zero: 0, jeden: 1, jedna: 1, jedno: 1, jednego: 1, dwa: 2, dwie: 2, dwoch: 2, dwoma: 2, trzy: 3, trzech: 3, cztery: 4, czterech: 4, piec: 5, szesc: 6, siedem: 7, osiem: 8, dziewiec: 9, dziesiec: 10 };
 const MONTHS = { stycznia: 0, lutego: 1, marca: 2, kwietnia: 3, maja: 4, czerwca: 5, lipca: 6, sierpnia: 7, wrzesnia: 8, pazdziernika: 9, listopada: 10, grudnia: 11 };
 
 export const normalizeVoiceText = (value) => String(value || '').toLocaleLowerCase('pl-PL').replace(/ł/g, 'l').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+const normalizeVoiceSound = (value) => String(value || '').toLocaleLowerCase('pl-PL').replace(/ó/g, 'u').replace(/rz/g, 'z').replace(/[żź]/g, 'z').replace(/ł/g, 'l').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/z(?=k)/g, 's').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
 const validDate = (year, month, day) => {
   const date = new Date(year, month, day, 12);
@@ -32,34 +33,38 @@ const requestedDate = (transcript, normalized, today) => {
 };
 
 const nameForms = (name) => {
-  const forms = new Set([name]);
-  if (name.endsWith('a')) {
-    const root = name.slice(0, -1);
+  const base = String(name || '').toLocaleLowerCase('pl-PL');
+  const forms = new Set([base]);
+  if (base.endsWith('a')) {
+    const root = base.slice(0, -1);
     if (root.length >= 2) {
       [root, `${root}i`, `${root}y`, `${root}ie`, `${root}e`, `${root}o`].forEach((form) => forms.add(form));
+      if (root.endsWith('k')) forms.add(`${root.slice(0, -1)}ce`);
+      if (root.endsWith('g')) forms.add(`${root.slice(0, -1)}dze`);
+      if (root.endsWith('t')) forms.add(`${root.slice(0, -1)}cie`);
+      if (root.endsWith('d')) forms.add(`${root}zie`);
     }
-    // Maja → Mai, including the common spelling without Polish diacritics.
-    if (name.endsWith('aja')) forms.add(`${name.slice(0, -2)}i`);
-  } else if (name.endsWith('y')) {
-    const root = name.slice(0, -1);
+    if (base.endsWith('aja')) forms.add(`${base.slice(0, -2)}i`); // Maja → Mai
+  } else if (base.endsWith('y')) {
+    const root = base.slice(0, -1);
     [`${root}ego`, `${root}emu`, `${root}ym`].forEach((form) => forms.add(form));
   } else {
-    [`${name}a`, `${name}owi`, `${name}em`, `${name}u`].forEach((form) => forms.add(form));
-    if (name.endsWith('ek')) {
-      const root = name.slice(0, -2);
+    [`${base}a`, `${base}owi`, `${base}em`, `${base}u`].forEach((form) => forms.add(form));
+    if (base.endsWith('ek')) {
+      const root = base.slice(0, -2);
       [`${root}ka`, `${root}kowi`, `${root}kiem`].forEach((form) => forms.add(form));
     }
   }
-  return forms;
+  return new Set([...forms].flatMap((form) => [normalizeVoiceText(form), normalizeVoiceSound(form)]));
 };
 
-const matchChild = (normalized, children) => {
-  const tokens = normalized.replace(/\b\d{1,2}\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrzesnia|pazdziernika|listopada|grudnia)(?:\s+20\d{2})?\b/g, ' ').split(' ').filter(Boolean);
-  const matches = children.filter((child) => normalizeVoiceText(child.name).split(' ').filter(Boolean).every((name) => {
+const matchChildren = (transcript, children) => {
+  const withoutDate = (value) => value.replace(/\b\d{1,2}\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrzesnia|pazdziernika|listopada|grudnia)(?:\s+20\d{2})?\b/g, ' ');
+  const tokens = [normalizeVoiceText(transcript), normalizeVoiceSound(transcript)].flatMap((value) => withoutDate(value).split(' ').filter(Boolean));
+  return children.filter((child) => String(child.name || '').split(/\s+/).filter(Boolean).every((name) => {
     const forms = nameForms(name);
     return tokens.some((token) => forms.has(token));
   }));
-  return matches.length === 1 ? matches[0] : null;
 };
 
 const getPoints = (normalized) => {
@@ -73,12 +78,12 @@ const getPoints = (normalized) => {
 };
 
 const adjustmentNote = ({ transcript, child, date, today, type }) => {
-  const names = normalizeVoiceText(child.name).split(' ').map(nameForms);
+  const names = String(child.name || '').split(/\s+/).filter(Boolean).map(nameForms);
   const words = String(transcript || '').trim().split(/\s+/).filter(Boolean);
   const afterZa = words.findIndex((word) => normalizeVoiceText(word) === 'za');
   const reason = (afterZa < 0 ? [] : words.slice(afterZa + 1)).filter((word) => {
     const token = normalizeVoiceText(word);
-    return token && !token.startsWith('punkt') && !names.some((forms) => forms.has(token)) && !['dzis', 'dzisiaj', 'wczoraj', 'przedwczoraj'].includes(token) && !/^\d{1,2}(?:\.\d{1,2})?(?:\.20\d{2})?$/.test(token);
+    return token && !token.startsWith('punkt') && !names.some((forms) => forms.has(token) || forms.has(normalizeVoiceSound(word))) && !['dzis', 'dzisiaj', 'wczoraj', 'przedwczoraj'].includes(token) && !/^\d{1,2}(?:\.\d{1,2})?(?:\.20\d{2})?$/.test(token);
   }).join(' ').replace(/\s+/g, ' ').trim();
   const dateLabel = date === today ? 'dzisiaj' : date;
   if (!reason) return `${type === 'PENALTY' ? 'Kara' : 'Premia'} przyznana głosowo (${dateLabel})`;
@@ -90,22 +95,22 @@ const taskQuery = (normalized, child) => {
     .replace(/\b\d{1,2}\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrzesnia|pazdziernika|listopada|grudnia)(?:\s+20\d{2})?\b/g, ' ')
     .replace(/\b20\d{2}\s+\d{1,2}\s+\d{1,2}\b/g, ' ')
     .replace(/\b(zalicz|oznacz|wykonaj|zadanie|dla|dziecku|dziecka|dzis|dzisiaj|wczoraj|przedwczoraj)\b/g, ' ');
-  normalizeVoiceText(child.name).split(' ').forEach((name) => {
-    const stem = name.slice(0, Math.min(5, name.length));
-    result = result.replace(new RegExp(`\\b${stem}[a-z]*\\b`, 'g'), ' ');
-  });
+  const forms = String(child.name || '').split(/\s+/).filter(Boolean).map(nameForms);
+  result = result.split(' ').filter((token) => !forms.some((aliases) => aliases.has(token) || aliases.has(normalizeVoiceSound(token)))).join(' ');
   return result.replace(/\s+/g, ' ').trim();
 };
 
-export const parseParentVoiceCommand = ({ transcript, children = [], today = toDateString(new Date()) }) => {
+export const parseParentVoiceCommand = ({ transcript, children = [], today = toDateString(new Date()), childId = null }) => {
   const normalized = normalizeVoiceText(transcript);
   if (!normalized) return { error: 'Powiedz polecenie, a ja przygotuję jego potwierdzenie.' };
-  const child = matchChild(normalized, children.filter((item) => !item.archived));
-  if (!child) return { error: 'Nie rozpoznałem dziecka z aktualnej listy. Wymień jego imię.' };
+  const activeChildren = children.filter((item) => !item.archived);
+  const matches = childId ? activeChildren.filter((item) => item.id === childId) : matchChildren(transcript, activeChildren);
+  if (matches.length !== 1) return activeChildren.length ? { error: 'Nie rozpoznałem jednoznacznie dziecka. Wybierz je z listy i przygotuj polecenie ponownie.', needsChildSelection: true } : { error: 'Brak dzieci, dla których można wykonać polecenie.' };
+  const child = matches[0];
   const { date, explicit } = requestedDate(transcript, normalized, today);
   const points = getPoints(normalized);
-  const isPenalty = /\b(odejmij|zabierz|ukaraj|kara)\b/.test(normalized) && /\bpunkt/.test(normalized);
-  const isBonus = /\b(dodaj|przyznaj|daj)\b/.test(normalized) && /\bpunkt/.test(normalized);
+  const isPenalty = /\b(odejmij|odejm|zabierz|potrac|ukaraj|ukarz|kara|kary|karne|minus)\b/.test(normalized) && /\bpunkt/.test(normalized);
+  const isBonus = /\b(dodaj|przyznaj|daj|premia|premie|bonus)\b/.test(normalized) && /\bpunkt/.test(normalized);
   const text = String(transcript || '').trim();
   if (isBonus || isPenalty) {
     if (!Number.isInteger(points) || points < 1 || points > 1000) return { error: 'Podaj liczbę punktów od 1 do 1000.' };
