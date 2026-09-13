@@ -123,37 +123,44 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     try {
       if (plan.type === 'APPROVE_PENDING') {
         const result = await approveAllPending(plan.completions);
-        if (result?.success === false) {
-          setFeedback('Nie udało się zatwierdzić zadań. Sprawdź komunikat aplikacji i spróbuj ponownie.');
-          return;
-        }
-        const approvedCount = Number(result?.approvedCount || plan.completions.length);
+        if (result?.success !== true) throw new Error('Nie udało się zatwierdzić zadań. Sprawdź komunikat aplikacji i spróbuj ponownie.');
+        const approvedCount = Number(result.approvedCount);
         setFeedback(`Zatwierdzono ${approvedCount} zadań dla ${plan.child.name}.`);
       } else if (plan.type === 'REJECT_PENDING') {
-        await rejectAllPending(plan.completions);
-        setFeedback(`Odrzucono ${plan.completions.length} zadań dla ${plan.child.name}.`);
+        const result = await rejectAllPending(plan.completions);
+        if (result?.success !== true) throw new Error('Nie udało się odrzucić zadań. Sprawdź komunikat aplikacji i spróbuj ponownie.');
+        setFeedback(`Odrzucono ${result.rejectedCount} zadań dla ${plan.child.name}.`);
       } else if (plan.type === 'APPROVE_EXTRA_TASKS') {
-        for (const extraTask of plan.extraTasks) await approveExtraTask(extraTask, plan.points);
+        for (const extraTask of plan.extraTasks) {
+          const result = await approveExtraTask(extraTask, plan.points);
+          if (result?.success !== true) throw new Error('Nie udało się zatwierdzić wszystkich zadań dodatkowych. Sprawdź listę zadań przed ponowieniem.');
+        }
         setFeedback(`Zatwierdzono ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}.`);
       } else if (plan.type === 'REJECT_EXTRA_TASKS') {
-        for (const extraTask of plan.extraTasks) await rejectExtraTask(extraTask);
+        for (const extraTask of plan.extraTasks) {
+          const result = await rejectExtraTask(extraTask);
+          if (result?.success !== true) throw new Error('Nie udało się odrzucić wszystkich zadań dodatkowych. Sprawdź listę zadań przed ponowieniem.');
+        }
         setFeedback(`Odrzucono ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}.`);
       } else if (plan.type === 'COMPLETE_TASK') {
-        await completeTaskAsParent(plan.task, plan.child.id, plan.date);
+        const result = await completeTaskAsParent(plan.task, plan.child.id, plan.date);
+        if (result?.success !== true) throw new Error('Nie udało się zaliczyć zadania. Sprawdź komunikat aplikacji i spróbuj ponownie.');
         setFeedback(`Zaliczono „${plan.task.title}” dla ${plan.child.name}.`);
       } else {
-        await savePointAdjustment({
+        const result = await savePointAdjustment({
           child: plan.child,
           type: plan.adjustmentType,
           points: plan.points,
           note: plan.note,
           sourceDate: plan.date,
         });
+        if (result?.success !== true) throw new Error('Nie udało się potwierdzić zapisu punktów. Sprawdź historię przed ponowieniem.');
         setFeedback(`${plan.adjustmentType === 'PENALTY' ? 'Odjęto' : 'Dodano'} ${plan.points} pkt dla ${plan.child.name}.`);
       }
       setPlan(null);
       setTranscript('');
     } catch (error) {
+      setPlan(null);
       setFeedback(error?.message || 'Nie udało się wykonać polecenia. Spróbuj ponownie.');
     } finally {
       setExecuting(false);

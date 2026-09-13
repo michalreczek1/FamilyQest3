@@ -3,7 +3,7 @@ import { toDateString } from './dates.js';
 const NUMBER_WORDS = { zero: 0, jeden: 1, jedna: 1, jedno: 1, dwa: 2, dwie: 2, trzy: 3, cztery: 4, piec: 5, szesc: 6, siedem: 7, osiem: 8, dziewiec: 9, dziesiec: 10 };
 const MONTHS = { stycznia: 0, lutego: 1, marca: 2, kwietnia: 3, maja: 4, czerwca: 5, lipca: 6, sierpnia: 7, wrzesnia: 8, pazdziernika: 9, listopada: 10, grudnia: 11 };
 
-export const normalizeVoiceText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pl-PL').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+export const normalizeVoiceText = (value) => String(value || '').toLocaleLowerCase('pl-PL').replace(/ł/g, 'l').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
 const validDate = (year, month, day) => {
   const date = new Date(year, month, day, 12);
@@ -31,11 +31,33 @@ const requestedDate = (transcript, normalized, today) => {
   return { date: today, explicit: /\b(dzis|dzisiaj)\b/.test(normalized) };
 };
 
+const nameForms = (name) => {
+  const forms = new Set([name]);
+  if (name.endsWith('a')) {
+    const root = name.slice(0, -1);
+    if (root.length >= 2) {
+      [root, `${root}i`, `${root}y`, `${root}ie`, `${root}e`, `${root}o`].forEach((form) => forms.add(form));
+    }
+    // Maja → Mai, including the common spelling without Polish diacritics.
+    if (name.endsWith('aja')) forms.add(`${name.slice(0, -2)}i`);
+  } else if (name.endsWith('y')) {
+    const root = name.slice(0, -1);
+    [`${root}ego`, `${root}emu`, `${root}ym`].forEach((form) => forms.add(form));
+  } else {
+    [`${name}a`, `${name}owi`, `${name}em`, `${name}u`].forEach((form) => forms.add(form));
+    if (name.endsWith('ek')) {
+      const root = name.slice(0, -2);
+      [`${root}ka`, `${root}kowi`, `${root}kiem`].forEach((form) => forms.add(form));
+    }
+  }
+  return forms;
+};
+
 const matchChild = (normalized, children) => {
-  const tokens = normalized.split(' ').filter(Boolean);
+  const tokens = normalized.replace(/\b\d{1,2}\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|wrzesnia|pazdziernika|listopada|grudnia)(?:\s+20\d{2})?\b/g, ' ').split(' ').filter(Boolean);
   const matches = children.filter((child) => normalizeVoiceText(child.name).split(' ').filter(Boolean).every((name) => {
-    const stem = name.slice(0, Math.min(5, name.length));
-    return tokens.some((token) => token === name || (stem.length >= 4 && token.startsWith(stem)));
+    const forms = nameForms(name);
+    return tokens.some((token) => forms.has(token));
   }));
   return matches.length === 1 ? matches[0] : null;
 };
@@ -43,22 +65,20 @@ const matchChild = (normalized, children) => {
 const getPoints = (normalized) => {
   const tokens = normalized.split(' ');
   const index = tokens.findIndex((token) => token.startsWith('punkt'));
-  const candidates = index < 0 ? tokens : tokens.slice(Math.max(0, index - 5), index);
-  for (let current = candidates.length - 1; current >= 0; current -= 1) {
-    const token = candidates[current];
-    if (/^\d{1,4}$/.test(token)) return Number(token);
-    if (Object.prototype.hasOwnProperty.call(NUMBER_WORDS, token)) return NUMBER_WORDS[token];
-  }
+  if (index < 1) return null;
+  const token = tokens[index - 1];
+  if (/^\d{1,4}$/.test(token)) return Number(token);
+  if (Object.prototype.hasOwnProperty.call(NUMBER_WORDS, token)) return NUMBER_WORDS[token];
   return null;
 };
 
 const adjustmentNote = ({ transcript, child, date, today, type }) => {
-  const stems = normalizeVoiceText(child.name).split(' ').map((name) => name.slice(0, Math.min(5, name.length)));
+  const names = normalizeVoiceText(child.name).split(' ').map(nameForms);
   const words = String(transcript || '').trim().split(/\s+/).filter(Boolean);
   const afterZa = words.findIndex((word) => normalizeVoiceText(word) === 'za');
   const reason = (afterZa < 0 ? [] : words.slice(afterZa + 1)).filter((word) => {
     const token = normalizeVoiceText(word);
-    return token && !token.startsWith('punkt') && !stems.some((stem) => stem && token.startsWith(stem)) && !['dzis', 'dzisiaj', 'wczoraj', 'przedwczoraj'].includes(token) && !/^\d{1,2}(?:\.\d{1,2})?(?:\.20\d{2})?$/.test(token);
+    return token && !token.startsWith('punkt') && !names.some((forms) => forms.has(token)) && !['dzis', 'dzisiaj', 'wczoraj', 'przedwczoraj'].includes(token) && !/^\d{1,2}(?:\.\d{1,2})?(?:\.20\d{2})?$/.test(token);
   }).join(' ').replace(/\s+/g, ' ').trim();
   const dateLabel = date === today ? 'dzisiaj' : date;
   if (!reason) return `${type === 'PENALTY' ? 'Kara' : 'Premia'} przyznana głosowo (${dateLabel})`;

@@ -1010,8 +1010,10 @@ const App = () => {
         await reloadAfterServerMutation();
       }
       showConfetti();
+      return { success: true };
       } catch (e) {
         showMutationError(e, 'Nie udało się zaliczyć zadania');
+        return { success: false };
       }
     });
   };
@@ -1061,8 +1063,10 @@ const App = () => {
       });
       await applyServerStatePatchOrReload(result);
       showConfetti();
+      return { success: true };
       } catch (e) {
         showMutationError(e, 'Nie udało się zatwierdzić zadania dodatkowego');
+        return { success: false };
       } finally {
         clearPendingExtraTaskActions([extraTask.id]);
       }
@@ -1077,8 +1081,10 @@ const App = () => {
         method: 'POST'
       });
       await applyServerStatePatchOrReload(result);
+      return { success: true };
       } catch (e) {
         showMutationError(e, 'Nie udało się odrzucić zadania dodatkowego');
+        return { success: false };
       } finally {
         clearPendingExtraTaskActions([extraTask.id]);
       }
@@ -1115,6 +1121,7 @@ const App = () => {
       }
       setPointAdjustmentModal(null);
       await reloadAfterServerMutation();
+      return { success: true };
       } catch (e) {
         if (e?.isAborted || e?.isOutcomeUnknown) {
           if (e?.isOutcomeUnknown) {
@@ -1122,7 +1129,7 @@ const App = () => {
             setMutationOutcomeNotice('Sprawdzam wynik operacji…');
             setSyncing(true);
           }
-          return;
+          return { success: false };
         }
         throw new Error(e.message || `Nie udało się zapisać ${label}`);
       }
@@ -1190,9 +1197,12 @@ const App = () => {
       await applyServerStatePatchOrReload(result);
       if (rejectedCount === 0) {
         alert('Nie odrzucono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
+        return { success: false, rejectedCount };
       }
+      return { success: true, rejectedCount };
       } catch (e) {
         showMutationError(e, 'Nie udało się odrzucić zadań');
+        return { success: false, rejectedCount: 0 };
       } finally {
         clearPendingCompletionActions(queueIds);
       }
