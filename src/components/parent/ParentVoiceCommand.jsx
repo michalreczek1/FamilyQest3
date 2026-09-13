@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { parseParentVoiceCommand } from '../../lib/parentVoiceCommands.js';
+import { normalizeVoiceText, parseParentVoiceCommand } from '../../lib/parentVoiceCommands.js';
+import { isTaskScheduledForDate } from '../../lib/tasks.js';
 import ModalOverlay from '../common/ModalOverlay.jsx';
 
 const SpeechRecognitionCtor = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
 const formatDate = (date) => date ? new Date(`${date}T12:00:00`).toLocaleDateString('pl-PL') : 'wszystkie daty';
 
-const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPending, savePointAdjustment }) => {
+const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateString, approveAllPending, rejectAllPending, approveExtraTask, rejectExtraTask, completeTaskAsParent, savePointAdjustment }) => {
   const recognitionRef = useRef(null);
   const [transcript, setTranscript] = useState('');
   const [listening, setListening] = useState(false);
@@ -26,7 +27,7 @@ const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPe
       setFeedback(parsed.error);
       return;
     }
-    if (parsed.type === 'APPROVE_PENDING') {
+    if (parsed.type === 'APPROVE_PENDING' || parsed.type === 'REJECT_PENDING') {
       const pending = completions.filter((completion) =>
         completion.childId === parsed.child.id &&
         completion.doneByChild &&
@@ -39,6 +40,29 @@ const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPe
         return;
       }
       setPlan({ ...parsed, completions: pending });
+      setFeedback('');
+      return;
+    }
+    if (parsed.type === 'APPROVE_EXTRA_TASKS' || parsed.type === 'REJECT_EXTRA_TASKS') {
+      const pendingExtraTasks = extraTasks.filter((task) => task.childId === parsed.child.id && task.status === 'PENDING' && (!parsed.date || task.date === parsed.date));
+      if (pendingExtraTasks.length === 0) {
+        setPlan(null);
+        setFeedback(`Nie ma zadań dodatkowych oczekujących na decyzję dla ${parsed.child.name}.`);
+        return;
+      }
+      setPlan({ ...parsed, extraTasks: pendingExtraTasks });
+      setFeedback('');
+      return;
+    }
+    if (parsed.type === 'COMPLETE_TASK') {
+      const queryTokens = normalizeVoiceText(parsed.taskQuery).split(' ').filter(Boolean);
+      const matches = tasks.filter((task) => task.childId === parsed.child.id && task.active !== false && isTaskScheduledForDate(task, parsed.date) && (queryTokens.length === 0 || queryTokens.every((token) => normalizeVoiceText(task.title).includes(token))));
+      if (matches.length !== 1) {
+        setPlan(null);
+        setFeedback(matches.length === 0 ? `Nie znalazłem pasującego zadania dla ${parsed.child.name} w dniu ${formatDate(parsed.date)}.` : 'Znalazłem kilka pasujących zadań. Wypowiedz ich nazwę dokładniej.');
+        return;
+      }
+      setPlan({ ...parsed, task: matches[0] });
       setFeedback('');
       return;
     }
@@ -105,15 +129,27 @@ const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPe
         }
         const approvedCount = Number(result?.approvedCount || plan.completions.length);
         setFeedback(`Zatwierdzono ${approvedCount} zadań dla ${plan.child.name}.`);
+      } else if (plan.type === 'REJECT_PENDING') {
+        await rejectAllPending(plan.completions);
+        setFeedback(`Odrzucono ${plan.completions.length} zadań dla ${plan.child.name}.`);
+      } else if (plan.type === 'APPROVE_EXTRA_TASKS') {
+        for (const extraTask of plan.extraTasks) await approveExtraTask(extraTask, plan.points);
+        setFeedback(`Zatwierdzono ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}.`);
+      } else if (plan.type === 'REJECT_EXTRA_TASKS') {
+        for (const extraTask of plan.extraTasks) await rejectExtraTask(extraTask);
+        setFeedback(`Odrzucono ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}.`);
+      } else if (plan.type === 'COMPLETE_TASK') {
+        await completeTaskAsParent(plan.task, plan.child.id, plan.date);
+        setFeedback(`Zaliczono „${plan.task.title}” dla ${plan.child.name}.`);
       } else {
         await savePointAdjustment({
           child: plan.child,
-          type: 'BONUS',
+          type: plan.adjustmentType,
           points: plan.points,
           note: plan.note,
           sourceDate: plan.date,
         });
-        setFeedback(`Dodano ${plan.points} pkt dla ${plan.child.name}.`);
+        setFeedback(`${plan.adjustmentType === 'PENALTY' ? 'Odjęto' : 'Dodano'} ${plan.points} pkt dla ${plan.child.name}.`);
       }
       setPlan(null);
       setTranscript('');
@@ -126,7 +162,15 @@ const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPe
 
   const planText = plan?.type === 'APPROVE_PENDING'
     ? `Zatwierdzić ${plan.completions.length} zadań dla ${plan.child.name}${plan.date ? ` z ${formatDate(plan.date)}` : ''}?`
-    : plan ? `Dodać ${plan.points} pkt dla ${plan.child.name}: „${plan.note}”?` : '';
+    : plan?.type === 'REJECT_PENDING'
+      ? `Odrzucić ${plan.completions.length} zadań dla ${plan.child.name}?`
+      : plan?.type === 'APPROVE_EXTRA_TASKS'
+        ? `Zatwierdzić ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}, po ${plan.points} pkt?`
+        : plan?.type === 'REJECT_EXTRA_TASKS'
+          ? `Odrzucić ${plan.extraTasks.length} zadań dodatkowych dla ${plan.child.name}?`
+          : plan?.type === 'COMPLETE_TASK'
+            ? `Zaliczyć „${plan.task.title}” dla ${plan.child.name} z ${formatDate(plan.date)}?`
+            : plan ? `${plan.adjustmentType === 'PENALTY' ? 'Odjąć' : 'Dodać'} ${plan.points} pkt dla ${plan.child.name}: „${plan.note}”?` : '';
 
   return React.createElement(React.Fragment, null,
     React.createElement('section', { className: 'voice-command-card', 'aria-label': 'Polecenia głosowe' },
@@ -154,7 +198,7 @@ const ParentVoiceCommand = ({ children, completions, getDateString, approveAllPe
         }),
         React.createElement('button', { className: 'btn btn-primary', type: 'submit', disabled: !transcript.trim() }, 'Przygotuj'),
       ),
-      React.createElement('div', { className: 'voice-command-examples' }, 'Przykłady: „zatwierdź zadania Filipa”, „zatwierdź wszystkie punkty Ignacego”, „dodaj dwa punkty Ignacemu za zmywarkę wczoraj”.'),
+      React.createElement('div', { className: 'voice-command-examples' }, 'Dla każdego dodanego dziecka: premie/kary, zatwierdzanie i odrzucanie zadań, zadania dodatkowe oraz zaliczanie. Daty: dziś, wczoraj, 12.09.2026 lub 12 września.'),
       feedback && React.createElement('div', { className: 'voice-command-feedback', role: 'status' }, feedback),
     ),
     plan && React.createElement(ModalOverlay, {

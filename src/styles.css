@@ -618,6 +618,20 @@ button.hero-metric:hover {
   background: rgba(15, 23, 42, 0.18);
 }
 
+.parent-entry-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.voice-entry-button {
+  background: linear-gradient(135deg, #7C3AED, #DB2777);
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.48);
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.35);
+}
+
 .voice-command-heading {
   display: flex;
   align-items: flex-start;

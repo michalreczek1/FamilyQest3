@@ -14,6 +14,7 @@ const ChildSelectionView = ({
   getDateString,
   onSelectChild,
   onParentMode,
+  onParentVoiceMode,
   onLogout
 }) => {
   return React.createElement("div", {
@@ -25,10 +26,17 @@ const ChildSelectionView = ({
   }, React.createElement("button", {
     className: "btn btn-danger",
     onClick: onLogout
-  }, "Wyloguj"), React.createElement("h1", null, "Wybierz profil"), React.createElement("button", {
+  }, "Wyloguj"), React.createElement("h1", null, "Wybierz profil"), React.createElement("div", {
+    className: "parent-entry-actions"
+  }, React.createElement("button", {
     className: "btn btn-secondary",
     onClick: onParentMode
-  }, "\uD83D\uDD10 Panel rodzica")), children.length === 0 ? React.createElement("div", {
+  }, "\uD83D\uDD10 Panel rodzica"), React.createElement("button", {
+    className: "btn voice-entry-button",
+    onClick: onParentVoiceMode || onParentMode,
+    "aria-label": "Otwórz polecenia głosowe rodzica",
+    title: "Otwórz polecenia głosowe rodzica"
+  }, "\uD83C\uDFA4 Polecenia g\u0142osowe"))), children.length === 0 ? React.createElement("div", {
     className: "empty-state"
   }, React.createElement("div", {
     style: {

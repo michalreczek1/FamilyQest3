@@ -88,6 +88,7 @@ const buildPatch = () => ({
       return route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: apiPath }) });
     });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Otwórz polecenia głosowe rodzica' }).waitFor();
     await page.getByRole('button', { name: '🔐 Panel rodzica' }).click();
     await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
     await page.getByRole('button', { name: 'Wejdź' }).click();
@@ -117,7 +118,7 @@ const buildPatch = () => ({
     await page.getByRole('dialog').getByText(/Dodać 2 pkt dla Ignacy/).waitFor();
     await page.getByRole('button', { name: 'Potwierdź i wykonaj' }).click();
     await page.getByText('Dodano 2 pkt dla Ignacy.').waitFor();
-    assert.deepStrictEqual(apiCalls.bonuses[1], { childId: ignacy.id, type: 'BONUS', points: 2, note: 'Za zrobienie zmywarki (wczoraj)', sourceDate: '2026-09-12' });
+    assert.deepStrictEqual(apiCalls.bonuses[1], { childId: ignacy.id, type: 'BONUS', points: 2, note: 'Za zrobienie zmywarki (2026-09-12)', sourceDate: '2026-09-12' });
     await page.screenshot({ path: path.join(outDir, 'voice-command.png'), fullPage: true });
     console.log(`Parent voice command UI OK. Screenshot: ${path.join(outDir, 'voice-command.png')}`);
   } finally {

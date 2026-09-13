@@ -134,9 +134,15 @@ const ParentPanel = ({
       className: "header"
     }, React.createElement("h1", null, "\uD83D\uDD10 Panel Rodzica"), React.createElement("div", null)), React.createElement(ParentVoiceCommand, {
       children: children,
+      tasks: tasks,
       completions: completions,
+      extraTasks: extraTasks,
       getDateString: getDateString,
       approveAllPending: approveAllPending,
+      rejectAllPending: rejectAllPending,
+      approveExtraTask: approveExtraTask,
+      rejectExtraTask: rejectExtraTask,
+      completeTaskAsParent: completeTaskAsParent,
       savePointAdjustment: savePointAdjustment
     }), React.createElement("div", {
       className: "tabs"

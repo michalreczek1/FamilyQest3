@@ -1166,7 +1166,8 @@ const App = () => {
     });
   };
   const rejectAllPending = async (list = null) => {
-    const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
+    const hasExplicitList = Array.isArray(list);
+    const queue = [...(hasExplicitList ? list : completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
     const queueIds = queue.map(item => item.id).filter(Boolean);
     addPendingCompletionActions(queueIds);
@@ -1175,10 +1176,10 @@ const App = () => {
       const bulkRequest = {
         ids: queueIds
       };
-      if (approvalFilterChildId !== 'ALL') {
+      if (!hasExplicitList && approvalFilterChildId !== 'ALL') {
         bulkRequest.childId = approvalFilterChildId;
       }
-      if (approvalFilterDate) {
+      if (!hasExplicitList && approvalFilterDate) {
         bulkRequest.date = approvalFilterDate;
       }
       const result = await apiRequest('/api/completions/reject-bulk', {
@@ -1593,6 +1594,7 @@ const App = () => {
       getDateString: getDateString,
       onSelectChild: selectChild,
       onParentMode: enterParentMode,
+      onParentVoiceMode: enterParentMode,
       onLogout: handleLogout
     }), parentPinGateOpen && React.createElement(ParentPinGate, {
       hasPinCode: Boolean(user?.hasPinCode),
