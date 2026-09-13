@@ -89,9 +89,9 @@ const buildPatch = () => ({
     });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Otwórz polecenia głosowe rodzica' }).waitFor();
-    await page.getByRole('button', { name: '🔐 Panel rodzica' }).click();
-    await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
-    await page.getByRole('button', { name: 'Wejdź' }).click();
+    await page.getByRole('button', { name: 'Otwórz polecenia głosowe rodzica' }).click();
+    await page.getByRole('textbox', { name: 'Polecenie dla rodzica' }).waitFor();
+    assert.strictEqual(await page.getByPlaceholder('6-cyfrowy PIN').count(), 0, 'voice commands on the parent home must not request the parent PIN');
     await page.getByRole('button', { name: 'Wydaj polecenie głosowe' }).click();
     await page.getByRole('dialog').getByText(/Dodać 2 pkt dla Filip/).waitFor();
     await page.getByRole('button', { name: 'Potwierdź i wykonaj' }).click();

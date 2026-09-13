@@ -618,11 +618,24 @@ button.hero-metric:hover {
   background: rgba(15, 23, 42, 0.18);
 }
 
+.voice-command-card-main {
+  margin: 0 0 1.5rem;
+}
+
 .parent-entry-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  width: 100%;
   gap: 0.5rem;
-  align-items: stretch;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.parent-entry-actions .btn {
+  flex: 1 1 0;
+  padding-inline: 0.55rem;
+  font-size: 0.84rem;
 }
 
 .voice-entry-button {

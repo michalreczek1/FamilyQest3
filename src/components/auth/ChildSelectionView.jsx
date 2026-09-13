@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import FamilyGoalWidget from '../leaderboard/FamilyGoalWidget.jsx';
 import WeeklyLeaderboardPanel from '../leaderboard/WeeklyLeaderboardPanel.jsx';
+import ParentVoiceCommand from '../parent/ParentVoiceCommand.jsx';
 
 const ChildSelectionView = ({
   children,
@@ -14,9 +15,19 @@ const ChildSelectionView = ({
   getDateString,
   onSelectChild,
   onParentMode,
-  onParentVoiceMode,
+  tasks,
+  completions,
+  extraTasks,
+  approveAllPending,
+  rejectAllPending,
+  approveExtraTask,
+  rejectExtraTask,
+  completeTaskAsParent,
+  savePointAdjustment,
   onLogout
 }) => {
+  const [voiceCommandsOpen, setVoiceCommandsOpen] = useState(false);
+
   return React.createElement("div", {
     className: "app-container"
   }, React.createElement("div", {
@@ -33,10 +44,24 @@ const ChildSelectionView = ({
     onClick: onParentMode
   }, "\uD83D\uDD10 Panel rodzica"), React.createElement("button", {
     className: "btn voice-entry-button",
-    onClick: onParentVoiceMode || onParentMode,
+    onClick: () => setVoiceCommandsOpen((open) => !open),
     "aria-label": "Otwórz polecenia głosowe rodzica",
+    "aria-expanded": voiceCommandsOpen ? 'true' : 'false',
     title: "Otwórz polecenia głosowe rodzica"
-  }, "\uD83C\uDFA4 Polecenia g\u0142osowe"))), children.length === 0 ? React.createElement("div", {
+  }, "\uD83C\uDFA4 Polecenia g\u0142osowe"))), voiceCommandsOpen && React.createElement(ParentVoiceCommand, {
+    children: children,
+    tasks: tasks,
+    completions: completions,
+    extraTasks: extraTasks,
+    getDateString: getDateString,
+    approveAllPending: approveAllPending,
+    rejectAllPending: rejectAllPending,
+    approveExtraTask: approveExtraTask,
+    rejectExtraTask: rejectExtraTask,
+    completeTaskAsParent: completeTaskAsParent,
+    savePointAdjustment: savePointAdjustment,
+    mainScreen: true
+  }), children.length === 0 ? React.createElement("div", {
     className: "empty-state"
   }, React.createElement("div", {
     style: {

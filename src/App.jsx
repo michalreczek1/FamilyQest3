@@ -1594,7 +1594,15 @@ const App = () => {
       getDateString: getDateString,
       onSelectChild: selectChild,
       onParentMode: enterParentMode,
-      onParentVoiceMode: enterParentMode,
+      tasks: tasks,
+      completions: completions,
+      extraTasks: extraTasks,
+      approveAllPending: approveAllPending,
+      rejectAllPending: rejectAllPending,
+      approveExtraTask: approveExtraTask,
+      rejectExtraTask: rejectExtraTask,
+      completeTaskAsParent: completeTaskAsParent,
+      savePointAdjustment: savePointAdjustment,
       onLogout: handleLogout
     }), parentPinGateOpen && React.createElement(ParentPinGate, {
       hasPinCode: Boolean(user?.hasPinCode),

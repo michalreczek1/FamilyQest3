@@ -7,7 +7,7 @@ const SpeechRecognitionCtor = () => window.SpeechRecognition || window.webkitSpe
 
 const formatDate = (date) => date ? new Date(`${date}T12:00:00`).toLocaleDateString('pl-PL') : 'wszystkie daty';
 
-const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateString, approveAllPending, rejectAllPending, approveExtraTask, rejectExtraTask, completeTaskAsParent, savePointAdjustment }) => {
+const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateString, approveAllPending, rejectAllPending, approveExtraTask, rejectExtraTask, completeTaskAsParent, savePointAdjustment, mainScreen = false }) => {
   const recognitionRef = useRef(null);
   const [transcript, setTranscript] = useState('');
   const [listening, setListening] = useState(false);
@@ -173,7 +173,7 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
             : plan ? `${plan.adjustmentType === 'PENALTY' ? 'Odjąć' : 'Dodać'} ${plan.points} pkt dla ${plan.child.name}: „${plan.note}”?` : '';
 
   return React.createElement(React.Fragment, null,
-    React.createElement('section', { className: 'voice-command-card', 'aria-label': 'Polecenia głosowe' },
+    React.createElement('section', { className: `voice-command-card${mainScreen ? ' voice-command-card-main' : ''}`, 'aria-label': 'Polecenia głosowe' },
       React.createElement('div', { className: 'voice-command-heading' },
         React.createElement('div', null,
           React.createElement('h2', null, '🎙️ Polecenie dla rodzica'),
