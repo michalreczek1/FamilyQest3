@@ -248,6 +248,10 @@ app.use(
   }),
 );
 app.use(cors(corsOptions));
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
@@ -792,6 +796,7 @@ const pointAdjustmentSchema = z.object({
   type: z.enum(['BONUS', 'PENALTY']),
   points: z.number().int().min(1).max(1000),
   note: z.string().trim().max(240).optional().nullable(),
+  sourceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
 const reverseApprovalSchema = z.object({
@@ -4992,6 +4997,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
         previousPoints: result.previousPoints,
         newPoints: result.newPoints,
         note: parsed.data.note ? parsed.data.note.trim() : '',
+        sourceDate: parsed.data.sourceDate || null,
         createdBy: req.auth.user.id,
         createdAt: now,
         updatedAt: now,
@@ -5010,6 +5016,7 @@ app.post('/api/point-adjustments', authMiddleware, requireParent, async (req, re
           appliedPoints: adjustment.points,
           delta: adjustment.delta,
           note: adjustment.note,
+          sourceDate: adjustment.sourceDate,
         },
       );
       recomputePointsAndGrants(data);

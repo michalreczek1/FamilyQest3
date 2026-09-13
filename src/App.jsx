@@ -1092,7 +1092,8 @@ const App = () => {
     child,
     type,
     points,
-    note
+    note,
+    sourceDate = null,
   }) => {
     if (!child) return;
     const isPenalty = type === 'PENALTY';
@@ -1105,7 +1106,8 @@ const App = () => {
           childId: child.id,
           type,
           points,
-          note: String(note || '').trim()
+          note: String(note || '').trim(),
+          sourceDate,
         }
       });
       if (!isPenalty) {
@@ -1127,7 +1129,8 @@ const App = () => {
     });
   };
   const approveAllPending = async (list = null) => {
-    const queue = [...(list || completions.filter(c => c.doneByChild && !c.approvedByParent))];
+    const hasExplicitList = Array.isArray(list);
+    const queue = [...(hasExplicitList ? list : completions.filter(c => c.doneByChild && !c.approvedByParent))];
     if (queue.length === 0) return;
     const queueIds = queue.map(item => item.id).filter(Boolean);
     addPendingCompletionActions(queueIds);
@@ -1136,10 +1139,10 @@ const App = () => {
       const bulkRequest = {
         ids: queueIds
       };
-      if (approvalFilterChildId !== 'ALL') {
+      if (!hasExplicitList && approvalFilterChildId !== 'ALL') {
         bulkRequest.childId = approvalFilterChildId;
       }
-      if (approvalFilterDate) {
+      if (!hasExplicitList && approvalFilterDate) {
         bulkRequest.date = approvalFilterDate;
       }
       const result = await apiRequest('/api/completions/approve-bulk', {
@@ -1150,11 +1153,13 @@ const App = () => {
       await applyServerStatePatchOrReload(result);
       if (approvedCount === 0) {
         alert('Nie zatwierdzono żadnego zadania. Odświeżono listę zadań do zatwierdzenia.');
-        return;
+        return { success: false, approvedCount };
       }
       showConfetti();
-      } catch (e) {
-        showMutationError(e, 'Nie udało się zatwierdzić zadań');
+      return { success: true, approvedCount };
+    } catch (e) {
+      showMutationError(e, 'Nie udało się zatwierdzić zadań');
+      return { success: false, approvedCount: 0 };
       } finally {
         clearPendingCompletionActions(queueIds);
       }

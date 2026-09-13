@@ -12,6 +12,7 @@ import AddTaskModal from '../modals/AddTaskModal.jsx';
 import EditTaskModal from '../modals/EditTaskModal.jsx';
 import AddRewardModal from '../modals/AddRewardModal.jsx';
 import PointAdjustmentModal from '../modals/PointAdjustmentModal.jsx';
+import ParentVoiceCommand from './ParentVoiceCommand.jsx';
 
 const ParentPanel = ({
   completions,
@@ -131,7 +132,13 @@ const ParentPanel = ({
       className: "glass-card"
     }, React.createElement("div", {
       className: "header"
-    }, React.createElement("h1", null, "\uD83D\uDD10 Panel Rodzica"), React.createElement("div", null)), React.createElement("div", {
+    }, React.createElement("h1", null, "\uD83D\uDD10 Panel Rodzica"), React.createElement("div", null)), React.createElement(ParentVoiceCommand, {
+      children: children,
+      completions: completions,
+      getDateString: getDateString,
+      approveAllPending: approveAllPending,
+      savePointAdjustment: savePointAdjustment
+    }), React.createElement("div", {
       className: "tabs"
     }, React.createElement("button", {
       className: `tab ${parentTab === 'approvals' ? 'active' : ''}`,
