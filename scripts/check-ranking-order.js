@@ -12,6 +12,7 @@ const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
@@ -179,6 +180,14 @@ const expectedRanking = ['Ignacy', 'Franek', 'Filip', 'Józek', 'Łucja'];
     .getByText('🏆 Ranking rodzinny')
     .locator('xpath=ancestor::div[contains(@class, "glass-card")][1]');
   await rankingCard.waitFor({ state: 'visible', timeout: 10000 });
+  const theme = await page.evaluate(() => ({
+    background: getComputedStyle(document.body).backgroundImage,
+    text: getComputedStyle(document.querySelector('.selection-view')).color,
+  }));
+  if (!theme.background.includes('sunny-garden.webp') || theme.text !== 'rgb(34, 51, 79)') {
+    throw new Error(`Selection theme did not load: ${JSON.stringify(theme)}`);
+  }
+  await page.screenshot({ path: 'tmp/sunny-garden-selection.png', fullPage: true });
 
   const rows = await rankingCard.locator('.task-item').evaluateAll((nodes) =>
     nodes.map((node) => node.textContent.replace(/\s+/g, ' ').trim()),

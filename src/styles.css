@@ -4,11 +4,7 @@
 
 body {
   font-family: 'Fredoka', sans-serif;
-  background-image: image-set(
-    url('/t%C5%82o/tlo.avif') type('image/avif'),
-    url('/t%C5%82o/tlo.webp') type('image/webp'),
-    url('/t%C5%82o/tlo.jpg') type('image/jpeg')
-  );
+  background-image: url('/backgrounds/sunny-garden.webp');
   background-size: cover;
   background-position: center bottom;
   background-repeat: no-repeat;
@@ -477,6 +473,34 @@ button.hero-metric:hover {
 .child-card { text-align: center; padding: 2rem; cursor: pointer; transition: all 0.3s; }
 .child-card .child-avatar { font-size: clamp(5.5rem, 8vw, 8rem); margin: 0.25rem 0 0.75rem; }
 .child-card:hover { transform: scale(1.05); }
+
+.selection-view { color: #22334f; }
+.selection-view .glass-card {
+  background: rgba(255, 255, 255, 0.62);
+  border-color: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 8px 30px rgba(40, 73, 67, 0.14);
+}
+.selection-view > .glass-card { background: rgba(255, 255, 255, 0.52); }
+.selection-view .child-card { background: rgba(255, 255, 255, 0.78); }
+.selection-view .task-item {
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(255, 255, 255, 0.9);
+}
+.selection-view .btn-secondary,
+.selection-view .btn-ghost {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: #22334f;
+}
+.selection-view .input,
+.selection-view .textarea {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(43, 70, 84, 0.25);
+  color: #22334f;
+}
+.selection-view .input::placeholder { color: #61758a; }
+.selection-view .voice-mic-button { background: #6740bb; }
+.selection-view .voice-command-feedback { color: #845306; }
 
 .child-admin-actions {
   display: grid;

@@ -33,7 +33,7 @@ const ChildSelectionView = ({
   const [voiceCommandsOpen, setVoiceCommandsOpen] = useState(false);
 
   return React.createElement("div", {
-    className: "app-container"
+    className: "app-container selection-view"
   }, React.createElement("div", {
     className: "glass-card"
   }, React.createElement("div", {
