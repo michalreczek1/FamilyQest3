@@ -1211,22 +1211,31 @@ const App = () => {
     });
   };
   useEffect(() => {
-    if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild) return;
+    if (view !== 'child' || user?.role !== 'CHILD' || !selectedChild || !hasLoadedSnapshot) return;
     const approved = completions.filter(comp => comp.childId === selectedChild.id && comp.approvedByParent && comp.doneByChild);
     const approvedExtra = extraTasks.filter(task => task.childId === selectedChild.id && task.status === 'APPROVED');
     const childPointAdjustments = pointAdjustments.filter(adjustment => adjustment.childId === selectedChild.id);
-    if (approved.length === 0 && approvedExtra.length === 0 && childPointAdjustments.length === 0) return;
-    const storageKey = `fq_seen_approvals_${selectedChild.id}`;
-    let seen = [];
+    const storageKey = `fq_seen_child_updates_v2_${selectedChild.id}`;
+    const eventKey = (type, item, at) => `${type}:${item.id}:${at || ''}`;
+    const currentKeys = [
+      ...approved.filter(item => item.id).map(item => eventKey('task', item, item.approvedAt)),
+      ...approvedExtra.filter(item => item.id).map(item => eventKey('extra', item, item.approvedAt)),
+      ...childPointAdjustments.filter(item => item.id).map(item => eventKey('points', item, item.createdAt || item.updatedAt)),
+    ];
+    let stored = null;
     try {
-      seen = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      stored = JSON.parse(localStorage.getItem(storageKey) || 'null');
     } catch (e) {
-      seen = [];
+      stored = null;
     }
-    const seenSet = new Set(Array.isArray(seen) ? seen : []);
-    const newApprovals = approved.filter(comp => comp.id && !seenSet.has(comp.id));
-    const newExtraApprovals = approvedExtra.filter(task => task.id && !seenSet.has(task.id));
-    const newPointAdjustments = childPointAdjustments.filter(adjustment => adjustment.id && !seenSet.has(adjustment.id));
+    if (!Array.isArray(stored)) {
+      localStorage.setItem(storageKey, JSON.stringify(currentKeys));
+      return;
+    }
+    const seenSet = new Set(stored);
+    const newApprovals = approved.filter(comp => comp.id && !seenSet.has(eventKey('task', comp, comp.approvedAt)));
+    const newExtraApprovals = approvedExtra.filter(task => task.id && !seenSet.has(eventKey('extra', task, task.approvedAt)));
+    const newPointAdjustments = childPointAdjustments.filter(adjustment => adjustment.id && !seenSet.has(eventKey('points', adjustment, adjustment.createdAt || adjustment.updatedAt)));
     if (newApprovals.length === 0 && newExtraApprovals.length === 0 && newPointAdjustments.length === 0) return;
     const approvedTasks = newApprovals.map(comp => {
       const task = tasks.find(item => item.id === comp.taskId);
@@ -1262,8 +1271,8 @@ const App = () => {
     if (hasApprovedTasks || hasBonus) {
       showConfetti();
     }
-    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...newApprovals.map(comp => comp.id), ...newExtraApprovals.map(task => task.id), ...newPointAdjustments.map(adjustment => adjustment.id)].slice(-200)));
-  }, [view, user?.role, selectedChild, completions, extraTasks, pointAdjustments, tasks, showConfetti]);
+    localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...currentKeys]));
+  }, [view, user?.role, selectedChild, hasLoadedSnapshot, completions, extraTasks, pointAdjustments, tasks, showConfetti]);
   const addChild = async (name, avatar, activeDays) => {
     return runServerMutation(async () => {
       try {

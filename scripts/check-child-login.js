@@ -26,11 +26,20 @@ const child = {
   accessCode: '1234',
   archived: false,
 };
+const oldApprovals = Array.from({ length: 205 }, (_, index) => ({
+  id: `old-approved-${index}`,
+  taskId: 'old-task',
+  childId: child.id,
+  date: '2026-01-01',
+  doneByChild: true,
+  approvedByParent: true,
+  approvedAt: '2026-01-02T12:00:00.000Z',
+}));
 
 const state = {
   children: [child],
-  tasks: [],
-  completions: [],
+  tasks: [{ id: 'old-task', childId: child.id, title: 'Stare zadanie', tier: 'MIN', points: 1, active: false }],
+  completions: oldApprovals,
   extraTasks: [],
   pointAdjustments: [],
   pointLedger: [],
@@ -170,6 +179,19 @@ const startStaticServer = () =>
     await page.getByPlaceholder('Kod dziecka (4 cyfry)').fill(child.accessCode);
     await page.getByRole('button', { name: 'Zaloguj dziecko' }).click();
     await page.getByRole('heading', { name: child.name }).waitFor({ timeout: 10000 });
+    assert.strictEqual(await page.getByText('Zaliczone zadania').count(), 0, 'historical approvals must be silent on first login');
+    assert.strictEqual(await page.locator('.confetti').count(), 0, 'historical approvals must not trigger confetti');
+    const seenCount = await page.evaluate((childId) => JSON.parse(localStorage.getItem(`fq_seen_child_updates_v2_${childId}`) || '[]').length, child.id);
+    assert.strictEqual(seenCount, 205, 'all historical approvals must be remembered, including those past the old 200-item limit');
+
+    state.completions.push({ id: 'new-approved', taskId: 'old-task', childId: child.id, date: '2026-01-01', doneByChild: true, approvedByParent: true, approvedAt: new Date().toISOString() });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByText('Zaliczone zadania').waitFor({ state: 'visible' });
+    await page.getByText('Rodzic zatwierdził 1 zadanie.').waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: 'Super!' }).click();
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.getByRole('heading', { name: child.name }).waitFor();
+    assert.strictEqual(await page.getByText('Zaliczone zadania').count(), 0, 'seen approval must not repeat after another login');
 
     assert.deepStrictEqual(loginPayload, { accessCode: child.accessCode });
     const calendarDays = await page.locator('.calendar-day').evaluateAll((days) =>
