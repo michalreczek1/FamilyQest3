@@ -267,11 +267,11 @@ const runUiCheck = async () => {
   await page.getByRole('button', { name: /Dzieci/ }).click();
   await page.getByRole('button', { name: '+ Dodaj dziecko' }).click();
   const avatarPicker = page.locator('.modal-content');
-  assert.strictEqual(await avatarPicker.locator('button img.child-avatar-image').count(), 6, 'all six illustrated avatars should be available');
+  assert.strictEqual(await avatarPicker.locator('button img.child-avatar-image').count(), 7, 'all seven illustrated avatars should be available');
   const brunette = avatarPicker.getByRole('button', { name: 'Dziewczynka w fioletowej bluzie' });
   await brunette.click();
   assert.strictEqual(await avatarPicker.locator('img[alt="Dziewczynka w fioletowej bluzie"]').count(), 2, 'selection should update the preview');
-  await page.waitForFunction(() => [...document.querySelectorAll('.modal-content button img.child-avatar-image')].length === 6 && [...document.querySelectorAll('.modal-content button img.child-avatar-image')].every((image) => image.complete && image.naturalWidth > 0));
+  await page.waitForFunction(() => [...document.querySelectorAll('.modal-content button img.child-avatar-image')].length === 7 && [...document.querySelectorAll('.modal-content button img.child-avatar-image')].every((image) => image.complete && image.naturalWidth > 0));
   await browser.close();
 
   const relevantErrors = consoleErrors.filter((line) => !line.includes('/api/auth/me') && !line.includes('401'));

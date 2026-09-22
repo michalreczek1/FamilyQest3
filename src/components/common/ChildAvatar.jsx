@@ -1,6 +1,7 @@
 import React from 'react';
 
 const IMAGE_AVATARS = {
+  'jozek': { src: '/avatars/jozek.png', label: 'Józek' },
   'franek': { src: '/avatars/franek.png', label: 'Franek' },
   'boy-teal': { src: '/avatars/boy-teal.png', label: 'Chłopiec w turkusowej bluzie' },
   'boy-glasses': { src: '/avatars/boy-glasses.png', label: 'Chłopiec w okularach' },
