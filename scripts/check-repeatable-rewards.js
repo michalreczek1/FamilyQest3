@@ -36,7 +36,7 @@ const family = {
   streaks: { [child.id]: { current: 0, best: 0, idealWeeksCount: 0, idealWeeksInRow: 0 } },
   points: { [child.id]: 137 },
   rewardUnlocks: [
-    { id: 'unlock-50', childId: child.id, rewardId: reward.id, cycle: 1, unlockedAt: '2026-07-10T10:00:00.000Z' },
+    { id: 'unlock-50', childId: child.id, rewardId: reward.id, cycle: 1, unlockedAt: '2026-07-10T10:00:00.000Z', claimedAt: '2026-07-12T10:00:00.000Z' },
     { id: 'unlock-100', childId: child.id, rewardId: reward.id, cycle: 2, unlockedAt: '2026-07-11T10:00:00.000Z' },
   ],
   rewardUnlockHistory: [],
@@ -109,8 +109,10 @@ const startStaticServer = () => new Promise((resolve) => {
     await page.getByPlaceholder('Kod dziecka (4 cyfry)').fill(child.accessCode);
     await page.getByRole('button', { name: 'Zaloguj dziecko' }).click();
     await page.getByRole('heading', { name: child.name }).waitFor({ timeout: 10000 });
+    const rewardMetric = page.getByTitle('Pokaż moje nagrody');
+    assert.strictEqual(await rewardMetric.locator('.hero-metric-value').textContent(), '1', 'issued rewards must not be counted as pending');
 
-    await page.getByTitle('Pokaż moje nagrody').click();
+    await rewardMetric.click();
     const dialog = page.getByRole('dialog', { name: /Moje nagrody/ });
     await dialog.waitFor({ state: 'visible', timeout: 10000 });
     await dialog.getByText('Brakuje jeszcze').waitFor();
@@ -118,9 +120,13 @@ const startStaticServer = () => new Promise((resolve) => {
     assert.strictEqual(await dialog.locator('.task-item').count(), 2, 'both earned copies of the same reward should be visible');
     assert.strictEqual(await dialog.getByText('30 zł', { exact: true }).count(), 2, 'the repeated reward should render twice');
     assert.strictEqual(await dialog.getByText('Próg 2 (100 pkt)').count(), 1, 'the second reward should identify its earned threshold');
+    const pendingSection = dialog.locator('.task-item').filter({ hasText: 'Do odebrania' });
+    assert.strictEqual(await pendingSection.count(), 1, 'only one reward should remain pending');
+    assert.strictEqual(await dialog.getByRole('heading', { name: 'Historia wydanych nagród' }).count(), 1);
+    assert.strictEqual(await dialog.getByText('Odebrana', { exact: true }).count(), 1, 'issued reward should appear in history');
 
     await page.screenshot({ path: 'tmp/repeatable-rewards-check.png', fullPage: true });
-    console.log('Repeatable rewards UI OK: two reward copies and the 150-point next threshold are visible.');
+    console.log('Repeatable rewards UI OK: pending count excludes an issued reward, which remains in history; next threshold is 150 points.');
   } finally {
     await browser.close();
     if (server) server.close();
