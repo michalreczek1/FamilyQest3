@@ -1,3 +1,4 @@
+import ChildAvatar from '../../common/ChildAvatar.jsx';
 import React from 'react';
 import WeeklyLeaderboardPanel from '../../leaderboard/WeeklyLeaderboardPanel.jsx';
 
@@ -32,7 +33,7 @@ const StatsTab = ({
         style: {
           fontSize: '3rem'
         }
-      }, child.avatar), React.createElement("h3", {
+      }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("h3", {
         style: {
           textAlign: 'center',
           marginBottom: '1rem'

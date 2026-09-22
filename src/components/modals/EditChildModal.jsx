@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useState } from 'react';
 import { CHILD_AVATARS, DAY_NAMES } from '../../constants.js';
 import { isValidChildAccessCode } from '../../lib/tasks.js';
@@ -9,7 +10,7 @@ const EditChildModal = ({
   onClose
 }) => {
   const [name, setName] = useState(child?.name || '');
-  const [avatar, setAvatar] = useState(child?.avatar || '👧');
+  const [avatar, setAvatar] = useState(child?.avatar || CHILD_AVATARS[0]);
   const [customAvatar, setCustomAvatar] = useState('');
   const [activeDays, setActiveDays] = useState(Array.isArray(child?.activeDays) ? child.activeDays : [1, 2, 3, 4, 5]);
   const [accessCode, setAccessCode] = useState('');
@@ -105,7 +106,7 @@ const EditChildModal = ({
       borderRadius: '1rem',
       cursor: 'pointer'
     }
-  }, av))), React.createElement("label", {
+  }, React.createElement(ChildAvatar, { value: av, size: "2rem" })))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',
@@ -123,7 +124,7 @@ const EditChildModal = ({
       opacity: 0.85,
       marginBottom: '1rem'
     }
-  }, "Wybrany avatar: ", React.createElement("strong", null, customAvatar.trim() || avatar)), React.createElement("label", {
+  }, "Wybrany avatar: ", React.createElement("strong", null, React.createElement(ChildAvatar, { value: customAvatar.trim() || avatar, size: "2.5rem" }))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',

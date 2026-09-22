@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useState } from 'react';
 import ModalOverlay from '../common/ModalOverlay.jsx';
 
@@ -74,7 +75,7 @@ const PointAdjustmentModal = ({
     style: {
       fontSize: '2.2rem'
     }
-  }, child.avatar || "\uD83D\uDC64"), React.createElement("div", {
+  }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("div", {
     style: {
       flex: 1
     }

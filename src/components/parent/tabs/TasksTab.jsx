@@ -1,3 +1,4 @@
+import ChildAvatar from '../../common/ChildAvatar.jsx';
 import React from 'react';
 import { getTaskArchiveFingerprint } from '../../../lib/tasks.js';
 
@@ -46,7 +47,7 @@ const TasksTab = ({
         style: {
           marginBottom: '1rem'
         }
-      }, child.avatar, " ", child.name), childTasks.map(task => {
+      }, React.createElement(ChildAvatar, { value: child.avatar }), " ", child.name), childTasks.map(task => {
         const matchingActiveCount = tasks.filter(item => item.active !== false && getTaskArchiveFingerprint(item) === getTaskArchiveFingerprint(task)).length;
         const matchingArchivedCount = tasks.filter(item => item.active === false && getTaskArchiveFingerprint(item) === getTaskArchiveFingerprint(task)).length;
         return React.createElement("div", {

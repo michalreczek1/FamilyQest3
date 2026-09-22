@@ -264,6 +264,15 @@ const runUiCheck = async () => {
   assert.strictEqual(await page.getByText('Próg 2: 160 pkt').count(), 1, 'a repeated reward should identify its threshold in history');
 
   await page.screenshot({ path: 'tmp/reward-history-check.png', fullPage: true });
+  await page.getByRole('button', { name: /Dzieci/ }).click();
+  await page.getByRole('button', { name: '+ Dodaj dziecko' }).click();
+  const avatarPicker = page.locator('.modal-content');
+  assert.strictEqual(await avatarPicker.locator('button img.child-avatar-image').count(), 5, 'all five illustrated avatars should be available');
+  const brunette = avatarPicker.getByRole('button', { name: 'Dziewczynka w fioletowej bluzie' });
+  await brunette.click();
+  assert.strictEqual(await avatarPicker.locator('img[alt="Dziewczynka w fioletowej bluzie"]').count(), 2, 'selection should update the preview');
+  const loaded = await avatarPicker.locator('button img.child-avatar-image').evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth > 0));
+  assert(loaded, 'all illustrated avatar files should load');
   await browser.close();
 
   const relevantErrors = consoleErrors.filter((line) => !line.includes('/api/auth/me') && !line.includes('401'));

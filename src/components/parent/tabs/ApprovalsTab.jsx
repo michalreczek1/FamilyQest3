@@ -1,3 +1,4 @@
+import ChildAvatar from '../../common/ChildAvatar.jsx';
 import React from 'react';
 import { isTaskScheduledForDate } from '../../../lib/tasks.js';
 import ExtraTaskApprovalCard from '../ExtraTaskApprovalCard.jsx';
@@ -68,7 +69,7 @@ const ApprovalsTab = ({
     }, "Wszystkie"), activeChildren.map(child => React.createElement("option", {
       key: child.id,
       value: child.id
-    }, child.avatar, " ", child.name)))), React.createElement("div", null, React.createElement("label", {
+    }, child.name)))), React.createElement("div", null, React.createElement("label", {
       style: {
         display: 'block',
         marginBottom: '0.4rem',
@@ -110,7 +111,7 @@ const ApprovalsTab = ({
         style: {
           fontSize: '2rem'
         }
-      }, child.avatar), React.createElement("div", {
+      }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("div", {
         style: {
           flex: 1
         }
@@ -175,7 +176,7 @@ const ApprovalsTab = ({
     }, "Wszystkie"), activeChildren.map(child => React.createElement("option", {
       key: child.id,
       value: child.id
-    }, child.avatar, " ", child.name)))), React.createElement("div", null, React.createElement("label", {
+    }, child.name)))), React.createElement("div", null, React.createElement("label", {
       style: {
         display: 'block',
         marginBottom: '0.4rem',
@@ -200,7 +201,7 @@ const ApprovalsTab = ({
         style: {
           marginBottom: '0.75rem'
         }
-      }, child.avatar, " ", child.name), dayTasks.length === 0 ? React.createElement("div", {
+      }, React.createElement(ChildAvatar, { value: child.avatar }), " ", child.name), dayTasks.length === 0 ? React.createElement("div", {
         className: "empty-state"
       }, "Brak zada\u0144 w tym dniu") : dayTasks.map(task => {
         const completion = completions.find(item => item.childId === child.id && item.taskId === task.id && item.date === parentTaskDateValue);
@@ -283,7 +284,7 @@ const ApprovalsTab = ({
         style: {
           marginBottom: '0.75rem'
         }
-      }, child.avatar, " ", child.name), days.map(day => React.createElement("div", {
+      }, React.createElement(ChildAvatar, { value: child.avatar }), " ", child.name), days.map(day => React.createElement("div", {
         key: day.dateStr,
         className: "history-day"
       }, React.createElement("div", {

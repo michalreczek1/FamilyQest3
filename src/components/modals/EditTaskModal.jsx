@@ -80,7 +80,7 @@ const EditTaskModal = ({
   }, children.map(child => React.createElement("option", {
     key: child.id,
     value: child.id
-  }, child.avatar, " ", child.name))), React.createElement("label", {
+  }, child.name))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',

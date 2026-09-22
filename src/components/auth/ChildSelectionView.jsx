@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useState } from 'react';
 import FamilyGoalWidget from '../leaderboard/FamilyGoalWidget.jsx';
 import WeeklyLeaderboardPanel from '../leaderboard/WeeklyLeaderboardPanel.jsx';
@@ -81,7 +82,7 @@ const ChildSelectionView = ({
     onClick: () => onSelectChild(child)
   }, React.createElement("div", {
     className: "child-avatar"
-  }, child.avatar), React.createElement("h2", {
+  }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("h2", {
     style: {
       textAlign: 'center'
     }

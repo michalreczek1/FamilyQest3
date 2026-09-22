@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useState } from 'react';
 import { CHILD_AVATARS, DAY_NAMES } from '../../constants.js';
 import ModalOverlay from '../common/ModalOverlay.jsx';
@@ -7,7 +8,7 @@ const AddChildModal = ({
   onClose
 }) => {
   const [name, setName] = useState('');
-  const [avatar, setAvatar] = useState('👧');
+  const [avatar, setAvatar] = useState(CHILD_AVATARS[0]);
   const [customAvatar, setCustomAvatar] = useState('');
   const [activeDays, setActiveDays] = useState([1, 2, 3, 4, 5]);
   const [error, setError] = useState('');
@@ -90,7 +91,7 @@ const AddChildModal = ({
       borderRadius: '1rem',
       cursor: 'pointer'
     }
-  }, av))), React.createElement("label", {
+  }, React.createElement(ChildAvatar, { value: av, size: "2rem" })))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',
@@ -108,7 +109,7 @@ const AddChildModal = ({
       opacity: 0.85,
       marginBottom: '1rem'
     }
-  }, "Wybrany avatar: ", React.createElement("strong", null, customAvatar.trim() || avatar)), React.createElement("label", {
+  }, "Wybrany avatar: ", React.createElement("strong", null, React.createElement(ChildAvatar, { value: customAvatar.trim() || avatar, size: "2.5rem" }))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',

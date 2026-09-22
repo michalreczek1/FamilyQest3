@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api.js';
 import { isTaskActiveForDate, isTaskScheduledForDate } from '../../lib/tasks.js';
@@ -146,7 +147,7 @@ const ChildView = ({
       className: "child-hero-title"
     }, React.createElement("span", {
       className: "child-hero-avatar"
-    }, selectedChild.avatar), React.createElement("span", null, selectedChild.name)), React.createElement("div", {
+    }, React.createElement(ChildAvatar, { value: selectedChild.avatar })), React.createElement("span", null, selectedChild.name)), React.createElement("div", {
       className: "hero-metrics"
     }, React.createElement("button", {
       type: "button",

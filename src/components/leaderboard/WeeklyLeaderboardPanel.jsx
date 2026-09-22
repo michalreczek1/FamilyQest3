@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React from 'react';
 import { getLeaderboardPoints, rankIcon, sortChildrenForLeaderboard } from '../../lib/leaderboard.js';
 
@@ -39,7 +40,7 @@ const WeeklyLeaderboardPanel = ({
       style: {
         fontSize: '2rem'
       }
-    }, child.avatar), React.createElement("div", {
+    }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("div", {
       style: {
         flex: 1
       }

@@ -21,7 +21,7 @@ const contentTypes = {
 const child = {
   id: 'child-login-test',
   name: 'Login Test',
-  avatar: '🦊',
+  avatar: 'boy-teal',
   activeDays: [1, 2, 3, 4, 5, 6, 7],
   accessCode: '1234',
   archived: false,
@@ -179,6 +179,9 @@ const startStaticServer = () =>
     await page.getByPlaceholder('Kod dziecka (4 cyfry)').fill(child.accessCode);
     await page.getByRole('button', { name: 'Zaloguj dziecko' }).click();
     await page.getByRole('heading', { name: child.name }).waitFor({ timeout: 10000 });
+    const profileAvatar = page.locator('.child-hero-avatar img');
+    await profileAvatar.waitFor();
+    assert((await profileAvatar.getAttribute('src')).endsWith('/avatars/boy-teal.png'), 'selected image avatar should appear on the child profile');
     assert.strictEqual(await page.getByText('Zaliczone zadania').count(), 0, 'historical approvals must be silent on first login');
     assert.strictEqual(await page.locator('.confetti').count(), 0, 'historical approvals must not trigger confetti');
     const seenCount = await page.evaluate((childId) => JSON.parse(localStorage.getItem(`fq_seen_child_updates_v2_${childId}`) || '[]').length, child.id);

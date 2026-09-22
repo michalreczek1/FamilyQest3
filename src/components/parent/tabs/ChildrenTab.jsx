@@ -1,3 +1,4 @@
+import ChildAvatar from '../../common/ChildAvatar.jsx';
 import React from 'react';
 
 const ChildrenTab = ({
@@ -37,7 +38,7 @@ const ChildrenTab = ({
         className: "glass-card"
       }, React.createElement("div", {
         className: "child-avatar"
-      }, child.avatar), React.createElement("h3", {
+      }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("h3", {
         style: {
           textAlign: 'center',
           marginBottom: '1rem'

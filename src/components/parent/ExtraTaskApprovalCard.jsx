@@ -1,3 +1,4 @@
+import ChildAvatar from '../common/ChildAvatar.jsx';
 import React, { useState } from 'react';
 
 const ExtraTaskApprovalCard = ({
@@ -14,7 +15,7 @@ const ExtraTaskApprovalCard = ({
     style: {
       fontSize: '2rem'
     }
-  }, child.avatar), React.createElement("div", {
+  }, React.createElement(ChildAvatar, { value: child.avatar })), React.createElement("div", {
     style: {
       flex: 1
     }

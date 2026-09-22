@@ -473,6 +473,7 @@ button.hero-metric:hover {
 }
 
 .child-avatar { font-size: 5rem; margin: 1rem 0; }
+.child-avatar-image { display: inline-block; object-fit: cover; border-radius: 50%; vertical-align: middle; flex: none; }
 .child-card { text-align: center; padding: 2rem; cursor: pointer; transition: all 0.3s; }
 .child-card:hover { transform: scale(1.05); }
 
