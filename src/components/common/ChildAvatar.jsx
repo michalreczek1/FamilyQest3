@@ -17,7 +17,6 @@ const ChildAvatar = ({ value, size = '1em', className = '' }) => {
     src: image.src,
     alt: image.label,
     className: `child-avatar-image ${className}`.trim(),
-    loading: 'lazy',
     decoding: 'async',
     style: { width: size, height: size },
   });

@@ -271,8 +271,7 @@ const runUiCheck = async () => {
   const brunette = avatarPicker.getByRole('button', { name: 'Dziewczynka w fioletowej bluzie' });
   await brunette.click();
   assert.strictEqual(await avatarPicker.locator('img[alt="Dziewczynka w fioletowej bluzie"]').count(), 2, 'selection should update the preview');
-  const loaded = await avatarPicker.locator('button img.child-avatar-image').evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth > 0));
-  assert(loaded, 'all illustrated avatar files should load');
+  await page.waitForFunction(() => [...document.querySelectorAll('.modal-content button img.child-avatar-image')].length === 5 && [...document.querySelectorAll('.modal-content button img.child-avatar-image')].every((image) => image.complete && image.naturalWidth > 0));
   await browser.close();
 
   const relevantErrors = consoleErrors.filter((line) => !line.includes('/api/auth/me') && !line.includes('401'));
