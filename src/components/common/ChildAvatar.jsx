@@ -1,6 +1,7 @@
 import React from 'react';
 
 const IMAGE_AVATARS = {
+  'franek': { src: '/avatars/franek.png', label: 'Franek' },
   'boy-teal': { src: '/avatars/boy-teal.png', label: 'Chłopiec w turkusowej bluzie' },
   'boy-glasses': { src: '/avatars/boy-glasses.png', label: 'Chłopiec w okularach' },
   'girl-redhair': { src: '/avatars/girl-redhair.png', label: 'Dziewczynka z rudym warkoczem' },
