@@ -489,6 +489,41 @@ button.hero-metric:hover {
 .child-card .child-avatar { font-size: clamp(5.5rem, 8vw, 8rem); margin: 0.25rem 0 0.75rem; }
 .child-card:hover { transform: scale(1.05); }
 
+.selection-title {
+  margin: -0.4rem 0 1.25rem;
+  text-align: center;
+  font-size: clamp(1.65rem, 4vw, 2.2rem);
+}
+
+.avatar-upload {
+  margin: 0.25rem 0 1rem;
+}
+.avatar-upload-label { display: block; margin-bottom: 0.5rem; font-weight: 700; }
+.avatar-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.avatar-upload-actions .btn { flex: 1 1 11rem; white-space: normal; }
+.avatar-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.avatar-paste-area {
+  min-height: 5rem;
+  display: grid;
+  place-items: center;
+  padding: 0.75rem;
+  border: 2px dashed #86a5ad;
+  border-radius: 1rem;
+  background: rgba(240, 248, 250, 0.9);
+  color: #324963;
+  text-align: center;
+  cursor: text;
+}
+.avatar-paste-area:focus-visible { outline: 3px solid #477b9a; outline-offset: 2px; }
+.avatar-upload-preview { width: 6rem; height: 6rem; object-fit: cover; border-radius: 50%; }
+.avatar-upload-clear { margin-top: 0.5rem; border: 0; background: none; color: #9f2720; text-decoration: underline; cursor: pointer; font: inherit; }
+.avatar-upload-hint { margin-top: 0.5rem; font-size: 0.85rem; color: #32604f; }
+
 .selection-view { color: #22334f; }
 .selection-view .glass-card {
   background: rgba(255, 255, 255, 0.62);

@@ -6,6 +6,7 @@ process.env.ALLOW_PUBLIC_REGISTRATION = 'true';
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const { spawnSync } = require('child_process');
 const { app, prisma, __test } = require('../server');
 
@@ -60,6 +61,44 @@ const restoreFamilyState = async (parentToken, state) => {
 
 maybeDescribe('FamilyQuest API integration', () => {
   jest.setTimeout(60000);
+
+  test('parent can upload an avatar and only its family can use and read it', async () => {
+    const first = await registerParent(`avatar-first-${Date.now()}`);
+    const second = await registerParent(`avatar-second-${Date.now()}`);
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#ff6655' } })
+      .png().toBuffer();
+    const upload = await request(app).post('/api/avatars')
+      .set('Authorization', `Bearer ${first}`).set('Content-Type', 'image/png').send(image);
+    expect(upload.status).toBe(201);
+    expect(upload.body.avatar).toMatch(/^u_[0-9a-f]{24}$/);
+    const avatar = upload.body.avatar;
+    const read = await request(app).get(`/api/avatars/${avatar}`)
+      .set('Authorization', `Bearer ${first}`);
+    expect(read.status).toBe(200);
+    expect(read.headers['content-type']).toMatch(/^image\/webp/);
+    expect(await sharp(read.body).metadata()).toMatchObject({ width: 512, height: 512, format: 'webp' });
+    const child = await request(app).post('/api/children')
+      .set('Authorization', `Bearer ${first}`)
+      .send({ name: 'Avatarowe dziecko', avatar, activeDays: [1] });
+    expect(child.status).toBe(201);
+    expect(child.body.child.avatar).toBe(avatar);
+    const childLogin = await request(app).post('/api/auth/login-child')
+      .send({ accessCode: child.body.child.accessCode });
+    expect(childLogin.status).toBe(200);
+    expect((await request(app).get(`/api/avatars/${avatar}`)
+      .set('Authorization', `Bearer ${childLogin.body.token}`)).status).toBe(200);
+    expect((await request(app).post('/api/avatars')
+      .set('Authorization', `Bearer ${childLogin.body.token}`)
+      .set('Content-Type', 'image/png').send(image)).status).toBe(403);
+    expect((await request(app).get(`/api/avatars/${avatar}`)
+      .set('Authorization', `Bearer ${second}`)).status).toBe(404);
+    expect((await request(app).post('/api/children')
+      .set('Authorization', `Bearer ${second}`)
+      .send({ name: 'Cudzy avatar', avatar, activeDays: [1] })).status).toBe(400);
+    expect((await request(app).post('/api/avatars')
+      .set('Authorization', `Bearer ${first}`).set('Content-Type', 'image/png')
+      .send(Buffer.from('not an image'))).status).toBe(400);
+  });
 
 test('storage sanitizer strips child access codes from children and audit logs', () => {
     const sanitized = __test.sanitizeStateDataForStorage(makeBackupState({

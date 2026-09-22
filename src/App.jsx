@@ -1273,14 +1273,20 @@ const App = () => {
     }
     localStorage.setItem(storageKey, JSON.stringify([...seenSet, ...currentKeys]));
   }, [view, user?.role, selectedChild, hasLoadedSnapshot, completions, extraTasks, pointAdjustments, tasks, showConfetti]);
-  const addChild = async (name, avatar, activeDays) => {
+  const addChild = async (name, avatar, activeDays, imageBlob = null) => {
     return runServerMutation(async () => {
       try {
+        const uploaded = imageBlob && await apiRequest('/api/avatars', {
+          method: 'POST',
+          rawBody: imageBlob,
+          headers: { 'Content-Type': imageBlob.type },
+          timeoutMs: 30000,
+        });
         const response = await apiRequest('/api/children', {
           method: 'POST',
           body: {
             name,
-            avatar,
+            avatar: uploaded?.avatar || avatar,
             activeDays
           }
         });
@@ -1292,8 +1298,10 @@ const App = () => {
         }
         setShowModal(null);
         await reloadAfterServerMutation();
+        return true;
       } catch (e) {
         showMutationError(e, 'Nie udało się dodać dziecka');
+        return false;
       }
     });
   };
@@ -1362,12 +1370,18 @@ const App = () => {
       }
     });
   };
-  const updateChild = (childId, updates) => {
+  const updateChild = (childId, updates, imageBlob = null) => {
     return runServerMutation(async () => {
       try {
+        const uploaded = imageBlob && await apiRequest('/api/avatars', {
+          method: 'POST',
+          rawBody: imageBlob,
+          headers: { 'Content-Type': imageBlob.type },
+          timeoutMs: 30000,
+        });
         const response = await apiRequest(`/api/children/${encodeURIComponent(childId)}`, {
           method: 'PUT',
-          body: updates
+          body: { ...updates, avatar: uploaded?.avatar || updates.avatar }
         });
         if (response?.child?.id && response.child.accessCode) {
           setChildAccessCodes(prev => ({
@@ -1376,8 +1390,10 @@ const App = () => {
           }));
         }
         await reloadAfterServerMutation();
+        return true;
       } catch (e) {
         showMutationError(e, 'Nie udało się zaktualizować dziecka');
+        return false;
       }
     });
   };

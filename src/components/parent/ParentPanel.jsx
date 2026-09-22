@@ -175,9 +175,8 @@ const ParentPanel = ({
     }), editingChild && React.createElement(EditChildModal, {
       child: editingChild,
       siblings: children,
-      onSave: updates => {
-        updateChild(editingChild.id, updates);
-        setEditingChild(null);
+      onSave: async (updates, imageBlob) => {
+        if (await updateChild(editingChild.id, updates, imageBlob)) setEditingChild(null);
       },
       onClose: () => setEditingChild(null)
     }), showModal === 'addTask' && React.createElement(AddTaskModal, {

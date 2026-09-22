@@ -12,6 +12,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { z } = require('zod');
+const sharp = require('sharp');
 const { Prisma, PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
@@ -249,6 +250,7 @@ app.use(
 );
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
+app.use('/api/avatars', express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '8mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 const unsafeApiMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -746,12 +748,21 @@ const resetPasswordSchema = z.object({
 
 const childSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  avatar: z.string().trim().min(1).max(16),
+  avatar: z.string().trim().min(1).max(40),
   activeDays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
   accessCode: z.string().regex(/^\d{4}$/).optional(),
 });
 
 const updateChildSchema = childSchema.partial();
+const uploadedAvatarIdPattern = /^u_[0-9a-f]{24}$/;
+const isAvatarAvailableToFamily = async (tx, familyId, avatar) => {
+  if (!uploadedAvatarIdPattern.test(avatar)) return true;
+  const asset = await tx.avatarAsset.findFirst({
+    where: { id: avatar, familyId },
+    select: { id: true },
+  });
+  return Boolean(asset);
+};
 const pointLedgerQuerySchema = z.object({
   childId: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -948,7 +959,7 @@ const getIdempotencyOperationCode = (req) => `${req.method}:${req.path}`;
 const getRequestHash = (req) =>
   crypto
     .createHash('sha256')
-    .update(JSON.stringify(req.body || {}))
+    .update(Buffer.isBuffer(req.body) ? req.body : JSON.stringify(req.body || {}))
     .digest('hex');
 
 const isAtomicallyIdempotentFamilyMutation = (req) => {
@@ -3842,6 +3853,57 @@ app.get('/api/point-ledger', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/avatars', authMiddleware, requireParent, async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: 'Wybierz obrazek JPG, PNG lub WebP.' });
+    return;
+  }
+  let bytes;
+  try {
+    bytes = await sharp(req.body, { limitInputPixels: 25_000_000 })
+      .rotate()
+      .resize(512, 512, { fit: 'cover', position: 'centre' })
+      .webp({ quality: 84, effort: 4 })
+      .toBuffer();
+  } catch {
+    res.status(400).json({ error: 'Nie udało się odczytać obrazka. Wybierz inny plik.' });
+    return;
+  }
+  try {
+    const id = `u_${crypto.randomBytes(12).toString('hex')}`;
+    await prisma.avatarAsset.create({
+      data: { id, familyId: req.auth.user.familyId, contentType: 'image/webp', bytes },
+    });
+    res.status(201).json({ avatar: id });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json({ error: 'Nie udało się zapisać avatara.' });
+  }
+});
+
+app.get('/api/avatars/:id', authMiddleware, async (req, res) => {
+  const id = String(req.params.id || '');
+  if (!uploadedAvatarIdPattern.test(id)) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    const asset = await prisma.avatarAsset.findFirst({
+      where: { id, familyId: req.auth.user.familyId },
+      select: { bytes: true, contentType: true },
+    });
+    if (!asset) {
+      res.status(404).end();
+      return;
+    }
+    res.set('Cache-Control', 'private, no-store');
+    res.type(asset.contentType).send(Buffer.from(asset.bytes));
+  } catch (error) {
+    console.error('Avatar read error:', error);
+    res.status(500).end();
+  }
+});
+
 app.get('/api/children', authMiddleware, async (req, res) => {
   try {
     const includeArchived = String(req.query.includeArchived || '') === 'true';
@@ -3881,6 +3943,9 @@ app.post('/api/children', authMiddleware, requireParent, async (req, res) => {
       const activeDays = normalizeActiveDays(parsed.data.activeDays);
       if (activeDays.length === 0) {
         return { status: 400, body: { error: 'Dziecko musi mieć co najmniej 1 dzień aktywny' } };
+      }
+      if (!(await isAvatarAvailableToFamily(tx, req.auth.user.familyId, parsed.data.avatar))) {
+        return { status: 400, body: { error: 'Wybrany avatar nie jest dostępny.' } };
       }
       const accessCode = await pickGloballyUniqueChildAccessCode(
         { preferredCode: parsed.data.accessCode || null },
@@ -3948,7 +4013,12 @@ app.put('/api/children/:id', authMiddleware, requireParent, async (req, res) => 
       const next = { ...current };
       let oneTimeAccessCode = null;
       if (typeof parsed.data.name === 'string') next.name = parsed.data.name.trim();
-      if (typeof parsed.data.avatar === 'string') next.avatar = parsed.data.avatar.trim();
+      if (typeof parsed.data.avatar === 'string') {
+        if (!(await isAvatarAvailableToFamily(tx, req.auth.user.familyId, parsed.data.avatar))) {
+          return { status: 400, body: { error: 'Wybrany avatar nie jest dostępny.' } };
+        }
+        next.avatar = parsed.data.avatar.trim();
+      }
       if (Array.isArray(parsed.data.activeDays)) {
         const normalized = normalizeActiveDays(parsed.data.activeDays);
         if (normalized.length === 0) {

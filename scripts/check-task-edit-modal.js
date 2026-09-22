@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('playwright');
+const sharp = require('sharp');
 
 const rootDir = path.join(__dirname, '..', 'dist');
 let staticServer = null;
@@ -205,6 +206,24 @@ const runUiCheck = async () => {
   assert.strictEqual(updatePayload.points, 7);
   assert.strictEqual(updatePayload.description, 'Nowy opis zadania');
   assert.deepStrictEqual(updatePayload.daysOfWeek, [1, 2, 3, 4, 5, 6, 7]);
+
+  await page.locator('.parent-view .tabs .tab').nth(1).click();
+  await page.getByRole('button', { name: /Edytuj/ }).first().click();
+  await page.getByRole('heading', { name: 'Edytuj profil dziecka' }).waitFor();
+  const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#ff6655' } }).png().toBuffer();
+  await page.getByLabel('Wybierz obrazek avatara').setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: image });
+  await page.getByAltText('Podgląd nowego avatara').waitFor();
+  await page.getByRole('button', { name: 'Usuń wybrany obrazek' }).click();
+  await page.evaluate((base64) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], 'wklejony.png', { type: 'image/png' }));
+    document.querySelector('.avatar-paste-area').dispatchEvent(
+      new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }),
+    );
+  }, image.toString('base64'));
+  await page.getByAltText('Podgląd nowego avatara').waitFor();
+  await page.getByRole('button', { name: 'Anuluj' }).click();
 
   await page.screenshot({ path: 'tmp/task-edit-modal-check.png', fullPage: true });
   for (const [index, name] of [[1, 'children'], [3, 'rewards'], [4, 'stats'], [5, 'settings']]) {

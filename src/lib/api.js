@@ -32,6 +32,7 @@ export const isRequestAbortError = (error) => Boolean(error?.isAborted);
 export const apiRequest = async (path, options = {}) => {
   const {
     body,
+    rawBody,
     headers: optionHeaders,
     signal: externalSignal,
     timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -85,7 +86,7 @@ export const apiRequest = async (path, options = {}) => {
       headers,
       credentials: 'include',
       signal: controller.signal,
-      body: body !== undefined ? JSON.stringify(body) : undefined
+      body: rawBody !== undefined ? rawBody : body !== undefined ? JSON.stringify(body) : undefined
     });
   } catch (e) {
     const outcomeUnknown = isMutation && !path.startsWith('/api/auth/') && (

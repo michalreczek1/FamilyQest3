@@ -1,4 +1,7 @@
 import React from 'react';
+import { buildApiUrl } from '../../lib/api.js';
+
+const UPLOADED_AVATAR_PATTERN = /^u_[0-9a-f]{24}$/;
 
 const IMAGE_AVATARS = {
   'jozek': { src: '/avatars/jozek.png', label: 'Józek' },
@@ -10,10 +13,14 @@ const IMAGE_AVATARS = {
   'girl-puffs': { src: '/avatars/girl-puffs.png', label: 'Dziewczynka w koralowej bluzie' },
 };
 
-export const avatarLabel = (value) => IMAGE_AVATARS[value]?.label || value || 'Avatar';
+export const avatarLabel = (value) => UPLOADED_AVATAR_PATTERN.test(value || '')
+  ? 'Własny avatar'
+  : IMAGE_AVATARS[value]?.label || value || 'Avatar';
 
 const ChildAvatar = ({ value, size = '1em', className = '' }) => {
-  const image = IMAGE_AVATARS[value];
+  const image = UPLOADED_AVATAR_PATTERN.test(value || '')
+    ? { src: buildApiUrl(`/api/avatars/${value}`), label: 'Własny avatar' }
+    : IMAGE_AVATARS[value];
   if (!image) return React.createElement('span', { className, 'aria-label': avatarLabel(value), role: 'img' }, value || '👤');
   return React.createElement('img', {
     src: image.src,

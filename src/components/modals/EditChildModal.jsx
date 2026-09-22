@@ -1,4 +1,5 @@
 import ChildAvatar from '../common/ChildAvatar.jsx';
+import AvatarImageInput from '../common/AvatarImageInput.jsx';
 import React, { useState } from 'react';
 import { CHILD_AVATARS, DAY_NAMES } from '../../constants.js';
 import { isValidChildAccessCode } from '../../lib/tasks.js';
@@ -12,6 +13,8 @@ const EditChildModal = ({
   const [name, setName] = useState(child?.name || '');
   const [avatar, setAvatar] = useState(child?.avatar || CHILD_AVATARS[0]);
   const [customAvatar, setCustomAvatar] = useState('');
+  const [imageBlob, setImageBlob] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [activeDays, setActiveDays] = useState(Array.isArray(child?.activeDays) ? child.activeDays : [1, 2, 3, 4, 5]);
   const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
@@ -22,7 +25,7 @@ const EditChildModal = ({
       setActiveDays([...activeDays, day].sort((a, b) => a - b));
     }
   };
-  const handleSubmit = e => {
+  const handleSubmit = async e => {
     e.preventDefault();
     setError('');
     const normalizedName = name.trim();
@@ -52,7 +55,14 @@ const EditChildModal = ({
     if (normalizedCode) {
       payload.accessCode = normalizedCode;
     }
-    onSave(payload);
+    setSaving(true);
+    try {
+      await onSave(payload, imageBlob);
+    } catch (submitError) {
+      setError(submitError.message || 'Nie udało się zapisać profilu.');
+    } finally {
+      setSaving(false);
+    }
   };
   return React.createElement(ModalOverlay, {
     className: "modal"
@@ -97,6 +107,7 @@ const EditChildModal = ({
     onClick: () => {
       setAvatar(av);
       setCustomAvatar('');
+      setImageBlob(null);
     },
     style: {
       fontSize: '2rem',
@@ -116,15 +127,19 @@ const EditChildModal = ({
     type: "text",
     className: "input",
     value: customAvatar,
-    onChange: e => setCustomAvatar(e.target.value),
+    onChange: e => { setCustomAvatar(e.target.value); setImageBlob(null); },
     placeholder: "np. \uD83E\uDD16"
+  }), React.createElement("label", { className: "avatar-upload-label" }, "Lub wgraj albo wklej obrazek"), React.createElement(AvatarImageInput, {
+    imageBlob,
+    onChange: blob => { setImageBlob(blob); if (blob) setCustomAvatar(''); },
+    onError: setError
   }), React.createElement("div", {
     style: {
       fontSize: '0.9rem',
       opacity: 0.85,
       marginBottom: '1rem'
     }
-  }, "Wybrany avatar: ", React.createElement("strong", null, React.createElement(ChildAvatar, { value: customAvatar.trim() || avatar, size: "2.5rem" }))), React.createElement("label", {
+  }, "Wybrany avatar: ", React.createElement("strong", null, imageBlob ? "Nowy obrazek" : React.createElement(ChildAvatar, { value: customAvatar.trim() || avatar, size: "2.5rem" }))), React.createElement("label", {
     style: {
       display: 'block',
       marginBottom: '0.5rem',
@@ -183,10 +198,11 @@ const EditChildModal = ({
   }, "Anuluj"), React.createElement("button", {
     type: "submit",
     className: "btn btn-primary",
+    disabled: saving,
     style: {
       flex: 1
     }
-  }, "Zapisz zmiany")))));
+  }, saving ? "Zapisywanie..." : "Zapisz zmiany")))));
 };
 
 export default EditChildModal;

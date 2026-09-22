@@ -41,7 +41,7 @@ const ChildSelectionView = ({
   }, React.createElement("button", {
     className: "btn btn-danger",
     onClick: onLogout
-  }, "Wyloguj"), React.createElement("h1", null, "Wybierz profil"), React.createElement("div", {
+  }, "Wyloguj"), React.createElement("div", {
     className: "parent-entry-actions"
   }, React.createElement("button", {
     className: "btn btn-secondary",
@@ -68,7 +68,7 @@ const ChildSelectionView = ({
     savePointAdjustment: savePointAdjustment,
     claimReward: claimReward,
     mainScreen: true
-  }), children.length === 0 ? React.createElement("div", {
+  }), React.createElement("h1", { className: "selection-title" }, "Wybierz profil"), children.length === 0 ? React.createElement("div", {
     className: "empty-state"
   }, React.createElement("div", {
     style: {

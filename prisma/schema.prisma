@@ -18,6 +18,7 @@ model Family {
   users                  User[]
   state                  FamilyState?
   childAccessCredentials ChildAccessCredential[]
+  avatarAssets             AvatarAsset[]
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
 }
@@ -47,6 +48,17 @@ model FamilyState {
   version   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AvatarAsset {
+  id          String   @id
+  familyId    String
+  family      Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  contentType String
+  bytes       Bytes
+  createdAt   DateTime @default(now())
+
+  @@index([familyId])
 }
 
 model ChildAccessCredential {
