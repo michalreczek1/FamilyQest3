@@ -39,6 +39,7 @@ const startStaticServer = () =>
         res.writeHead(200, {
           'Content-Type': contentTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
           'Cache-Control': 'no-store',
+          'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
         });
         res.end(content);
       });
