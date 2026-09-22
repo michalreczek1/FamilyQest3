@@ -1365,3 +1365,7 @@ button.hero-metric:hover {
     padding-right: 0.85rem;
   }
 }
+
+.reward-queue { margin-bottom: 1rem; }
+.reward-queue h3, .reward-catalog h3 { margin: 0 0 0.75rem; }
+.reward-catalog { margin-top: 1.5rem; }

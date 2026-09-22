@@ -65,6 +65,7 @@ const ChildView = ({
     const [pointHistoryLoading, setPointHistoryLoading] = useState(false);
     const [pointHistoryError, setPointHistoryError] = useState('');
     const childRewardUnlocks = rewardUnlocks.filter(unlock => unlock.childId === selectedChild.id && !unlock.revokedAt);
+    const childPendingRewards = childRewardUnlocks.filter(unlock => !unlock.claimedAt);
     const childEarnedRewards = childRewardUnlocks.map(unlock => ({
       unlock,
       reward: rewards.find(reward => reward.id === unlock.rewardId)
@@ -167,9 +168,9 @@ const ChildView = ({
       className: "hero-metric-icon"
     }, "\uD83C\uDF81"), React.createElement("div", null, React.createElement("div", {
       className: "hero-metric-value"
-    }, childEarnedRewards.length), React.createElement("div", {
+    }, childPendingRewards.length), React.createElement("div", {
       className: "hero-metric-label"
-    }, "moje nagrody"))), React.createElement("div", {
+    }, "do odebrania"))), React.createElement("div", {
       className: "hero-metric streak"
     }, React.createElement("div", {
       className: "hero-metric-icon"
@@ -378,14 +379,14 @@ const ChildView = ({
       style: {
         marginBottom: '0.75rem'
       }
-    }, "Zdobyte nagrody"), childEarnedRewards.length === 0 ? React.createElement("div", {
+    }, "Do odebrania"), childPendingRewards.length === 0 ? React.createElement("div", {
       className: "empty-state"
-    }, "Nie masz jeszcze zdobytych nagr\xF3d.") : React.createElement("div", {
+    }, "Nie masz nagród do odebrania.") : React.createElement("div", {
       style: {
         display: 'grid',
         gap: '0.75rem'
       }
-    }, childEarnedRewards.map(({
+    }, childEarnedRewards.filter(({ unlock }) => !unlock.claimedAt).map(({
       unlock,
       reward
     }) => React.createElement("div", {
@@ -422,7 +423,7 @@ const ChildView = ({
       }
     }, "Zdobyta: ", unlock.unlockedAt?.slice(0, 10) || 'dzisiaj')), React.createElement("div", {
       className: unlock.claimedAt ? "badge badge-min" : "badge badge-pending"
-    }, unlock.claimedAt ? "Odebrana" : "Do odebrania")))), React.createElement("button", {
+    }, "Do odebrania")))), React.createElement("h3", { style: { margin: "1.25rem 0 0.75rem" } }, "Historia wydanych nagród"), childEarnedRewards.filter(({ unlock }) => unlock.claimedAt).length === 0 ? React.createElement("div", { className: "empty-state" }, "Nie wydano jeszcze żadnej nagrody.") : React.createElement("div", { style: { display: "grid", gap: "0.75rem" } }, childEarnedRewards.filter(({ unlock }) => unlock.claimedAt).map(({ unlock, reward }) => React.createElement("div", { key: unlock.id, className: "task-item" }, React.createElement("span", { style: { fontSize: "2rem" } }, "🏅"), React.createElement("div", { style: { flex: 1 } }, React.createElement("strong", null, reward.title), React.createElement("div", { style: { fontSize: "0.82rem", opacity: 0.72 } }, "Wydano: ", unlock.claimedAt.slice(0, 10))), React.createElement("span", { className: "badge badge-min" }, "Odebrana")))), React.createElement("button", {
       className: "btn btn-primary",
       onClick: () => setShowChildRewards(false),
       style: {

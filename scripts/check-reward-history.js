@@ -253,6 +253,8 @@ const runUiCheck = async () => {
   await page.getByText('3 wpisów').waitFor({ state: 'visible', timeout: 10000 });
   await page.getByText('Kino rodzinne').first().waitFor({ state: 'visible', timeout: 10000 });
 
+  assert.strictEqual(await page.getByRole('button', { name: 'Wydaj nagrodę' }).count(), 2, 'each pending reward should have an issue action');
+  assert.strictEqual(await page.locator('.reward-queue').filter({ has: page.getByRole('heading', { name: /Wydane/ }) }).getByRole('button', { name: 'Wydaj nagrodę' }).count(), 0, 'issued section should have no issue action');
   const historyItems = await page.locator('.reward-history-item').count();
   assert.strictEqual(historyItems, 3, 'reward history should render all entries');
   assert((await page.getByText('Przywrócona').count()) >= 1, 'restored status should be visible');
