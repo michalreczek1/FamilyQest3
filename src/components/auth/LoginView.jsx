@@ -76,7 +76,7 @@ const LoginView = ({
     setSubmitting(false);
   };
   return React.createElement("div", {
-    className: "app-container"
+    className: "app-container login-view light-app-view"
   }, React.createElement("div", {
     className: "glass-card",
     style: {

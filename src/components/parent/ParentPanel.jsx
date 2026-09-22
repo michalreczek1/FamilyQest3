@@ -113,7 +113,7 @@ const ParentPanel = ({
     const parentTaskDateValue = parentTaskDate || today;
     const parentTaskChildren = activeChildren.filter(child => parentTaskChildId === 'ALL' || child.id === parentTaskChildId);
     return React.createElement(React.Fragment, null, React.createElement("div", {
-      className: "app-container"
+      className: "app-container parent-view light-app-view"
     }, React.createElement("div", {
       className: "top-status"
     }, React.createElement("button", {

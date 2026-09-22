@@ -82,7 +82,9 @@ const createState = () => ({
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webp': 'image/webp',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -223,6 +225,17 @@ const installApiMocks = async (page, state, bulkRequests) => {
     await page.getByPlaceholder('6-cyfrowy PIN').fill('123456');
     await page.getByRole('button', { name: 'Wejdź' }).click();
     await page.getByText('Zadania do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
+    await page.screenshot({ path: path.join(outDir, 'parent-theme.png'), fullPage: true });
+    const colors = await page.evaluate(() => ({
+      panel: getComputedStyle(document.querySelector('.parent-view')).color,
+      back: getComputedStyle(document.querySelector('.parent-view .top-status .btn-secondary')).color,
+      tab: getComputedStyle(document.querySelector('.parent-view .tab:not(.active)')).color,
+    }));
+    assert.deepStrictEqual(colors, {
+      panel: 'rgb(34, 51, 79)',
+      back: 'rgb(34, 51, 79)',
+      tab: 'rgb(50, 73, 99)',
+    }, 'parent panel controls should use readable dark text');
     await page.getByRole('button', { name: '❌ Odrzuć wg filtra (2)' }).click();
     await page.getByText('Brak zadań do zatwierdzenia').waitFor({ state: 'visible', timeout: 10000 });
     assert.strictEqual(await page.getByRole('button', { name: '❌ Odrzuć wg filtra (2)' }).count(), 0);

@@ -51,15 +51,15 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #0EA5E9, #14B8A6);
+  background: linear-gradient(135deg, #0369A1, #0F766E);
   color: white;
   box-shadow: 0 4px 15px rgba(20, 184, 166, 0.4);
 }
 
 .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(20, 184, 166, 0.55); }
 
-.btn-success { background: linear-gradient(135deg, #12B76A, #34D399); color: white; }
-.btn-danger { background: linear-gradient(135deg, #F97066, #FDA4A0); color: white; }
+.btn-success { background: linear-gradient(135deg, #087F4C, #0F766E); color: white; }
+.btn-danger { background: linear-gradient(135deg, #C7463C, #B42318); color: white; }
 .btn-secondary { background: rgba(255, 255, 255, 0.2); color: white; border: 2px solid rgba(255, 255, 255, 0.3); }
 .btn-ghost { background: rgba(255, 255, 255, 0.08); color: white; border: 1px solid rgba(255, 255, 255, 0.25); }
 
@@ -175,8 +175,8 @@ body {
 }
 
 .badge-min { background: #7C3AED; color: white; }
-.badge-plus { background: #F97316; color: white; }
-.badge-weekly { background: #3B82F6; color: white; }
+.badge-plus { background: #C2410C; color: white; }
+.badge-weekly { background: #1D4ED8; color: white; }
 .badge-points { background: #FEC84B; color: #0F172A; }
 .badge-pending { background: rgba(254, 200, 75, 0.2); color: #FEC84B; border: 1px solid #FEC84B; }
 
@@ -328,15 +328,30 @@ button.hero-metric:hover {
 }
 
 .modal-content {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(52, 82, 92, 0.24);
+  color: #22334f;
   border-radius: 1.5rem;
   padding: 2rem;
   max-width: 600px;
   width: 100%;
   max-height: calc(100dvh - 2rem);
   overflow-y: auto;
+}
+
+.modal-content .input,
+.modal-content .textarea {
+  background: #fff;
+  border-color: rgba(52, 82, 92, 0.28);
+  color: #22334f;
+}
+.modal-content .input::placeholder { color: #64748b; }
+.modal-content .btn-secondary,
+.modal-content .btn-ghost {
+  background: rgba(240, 248, 250, 0.9);
+  border-color: rgba(52, 82, 92, 0.25);
+  color: #22334f;
 }
 
 .parent-pin-modal {
@@ -501,6 +516,62 @@ button.hero-metric:hover {
 .selection-view .input::placeholder { color: #61758a; }
 .selection-view .voice-mic-button { background: #6740bb; }
 .selection-view .voice-command-feedback { color: #845306; }
+
+.light-app-view { color: #22334f; }
+.light-app-view .glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 30px rgba(40, 73, 67, 0.15);
+}
+.light-app-view > .glass-card { background: rgba(255, 255, 255, 0.68); }
+.light-app-view .task-item,
+.light-app-view .history-day,
+.light-app-view .point-history-entry,
+.light-app-view .reward-history-item,
+.light-app-view .reward-history-status {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(52, 82, 92, 0.2);
+}
+.light-app-view .voice-command-card,
+.light-app-view .modal-content {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(52, 82, 92, 0.2);
+}
+.light-app-view .tab {
+  background: rgba(255, 255, 255, 0.68);
+  color: #324963;
+  border: 1px solid rgba(52, 82, 92, 0.14);
+}
+.light-app-view .tab.active {
+  background: #fff;
+  color: #22334f;
+  border-color: #477b9a;
+  box-shadow: inset 0 0 0 1px #477b9a;
+}
+.light-app-view .tab:hover { background: rgba(255, 255, 255, 0.92); }
+.light-app-view .btn-secondary,
+.light-app-view .btn-ghost {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(52, 82, 92, 0.25);
+  color: #22334f;
+}
+.light-app-view .input,
+.light-app-view .textarea {
+  background: rgba(255, 255, 255, 0.84);
+  border-color: rgba(52, 82, 92, 0.28);
+  color: #22334f;
+}
+.light-app-view .input::placeholder { color: #64748b; }
+.light-app-view .network-badge {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(52, 82, 92, 0.2);
+  color: #22334f;
+}
+.light-app-view .network-badge.syncing,
+.light-app-view .voice-command-feedback { color: #845306; }
+.light-app-view .voice-mic-button { background: #6740bb; }
+.light-app-view .badge-pending { color: #805400; }
+.light-app-view .reward-overlay { color: #fff; }
 
 .child-admin-actions {
   display: grid;

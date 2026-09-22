@@ -165,7 +165,7 @@ const EditChildModal = ({
         cursor: 'pointer',
         fontSize: '0.85rem',
         fontWeight: 600,
-        color: 'white'
+        color: '#22334f'
       }
     }, day);
   })), React.createElement("div", {

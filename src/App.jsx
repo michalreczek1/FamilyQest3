@@ -1586,7 +1586,7 @@ const App = () => {
   };
   if (loading) {
     return React.createElement("div", {
-      className: "app-container"
+      className: "app-container light-app-view"
     }, React.createElement("div", {
       className: "glass-card loading"
     }, "\uD83C\uDFC6 \u0141adowanie FamilyQuest..."));

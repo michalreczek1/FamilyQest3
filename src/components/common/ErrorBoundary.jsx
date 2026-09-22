@@ -30,7 +30,7 @@ class ErrorBoundary extends React.Component {
     }
 
     return React.createElement("div", {
-      className: "app-container"
+      className: "app-container light-app-view"
     }, React.createElement("div", {
       className: "glass-card error-boundary-card"
     }, React.createElement("h1", null, this.props.title || "Panel wymaga odświeżenia"), React.createElement("p", null, this.props.message || "Wystąpił błąd widoku. Dane są bezpieczne, spróbuj odświeżyć panel."), React.createElement("div", {

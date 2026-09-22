@@ -113,8 +113,8 @@ const EditTaskModal = ({
     className: `badge badge-${t.toLowerCase()}`,
     style: {
       padding: '1rem 0.55rem',
-      opacity: tier === t ? 1 : 0.55,
-      border: tier === t ? '2px solid white' : '2px solid transparent',
+      border: '2px solid transparent',
+      boxShadow: tier === t ? '0 0 0 3px #22334f' : 'none',
       cursor: 'pointer',
       whiteSpace: 'normal',
       lineHeight: 1.15
@@ -161,7 +161,7 @@ const EditTaskModal = ({
         cursor: 'pointer',
         fontSize: '0.85rem',
         fontWeight: 600,
-        color: 'white'
+        color: '#22334f'
       }
     }, day);
   })), React.createElement("label", {

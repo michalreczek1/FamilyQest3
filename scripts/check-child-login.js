@@ -175,10 +175,13 @@ const startStaticServer = () =>
 
   try {
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    assert.strictEqual(await page.locator('.login-view').evaluate((node) => getComputedStyle(node).color), 'rgb(34, 51, 79)', 'login text should contrast with the garden background');
+    await page.screenshot({ path: path.join(outDir, 'login-theme.png') });
     await page.getByRole('button', { name: 'Dziecko' }).click();
     await page.getByPlaceholder('Kod dziecka (4 cyfry)').fill(child.accessCode);
     await page.getByRole('button', { name: 'Zaloguj dziecko' }).click();
     await page.getByRole('heading', { name: child.name }).waitFor({ timeout: 10000 });
+    assert.strictEqual(await page.locator('.child-view').evaluate((node) => getComputedStyle(node).color), 'rgb(34, 51, 79)', 'child profile text should contrast with the garden background');
     const profileAvatar = page.locator('.child-hero-avatar img');
     await profileAvatar.waitFor();
     assert((await profileAvatar.getAttribute('src')).endsWith('/avatars/boy-teal.png'), 'selected image avatar should appear on the child profile');

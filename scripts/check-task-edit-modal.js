@@ -185,6 +185,7 @@ const runUiCheck = async () => {
 
   const dialog = page.getByRole('dialog', { name: 'Edytuj zadanie' });
   await dialog.waitFor({ state: 'visible', timeout: 10000 });
+  await page.screenshot({ path: 'tmp/task-edit-dialog-theme.png' });
   await dialog.locator('input[type="text"]').fill('Nowa nazwa');
   await dialog.getByRole('button', { name: /Bonus/ }).click();
   await dialog.locator('input[type="number"]').fill('7');
@@ -206,6 +207,10 @@ const runUiCheck = async () => {
   assert.deepStrictEqual(updatePayload.daysOfWeek, [1, 2, 3, 4, 5, 6, 7]);
 
   await page.screenshot({ path: 'tmp/task-edit-modal-check.png', fullPage: true });
+  for (const [index, name] of [[1, 'children'], [3, 'rewards'], [4, 'stats'], [5, 'settings']]) {
+    await page.locator('.parent-view .tabs .tab').nth(index).click();
+    await page.screenshot({ path: `tmp/parent-theme-${name}.png` });
+  }
   await browser.close();
 };
 

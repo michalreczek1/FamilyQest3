@@ -124,7 +124,7 @@ const ChildView = ({
       });
     }
     return React.createElement(React.Fragment, null, React.createElement("div", {
-      className: "app-container"
+      className: "app-container child-view light-app-view"
     }, React.createElement("div", {
       className: "top-status"
     }, user?.role !== 'CHILD' ? React.createElement("button", {

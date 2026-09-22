@@ -100,7 +100,7 @@ const AddTaskModal = ({
         cursor: 'pointer',
         fontSize: '0.85rem',
         fontWeight: 600,
-        color: 'white'
+        color: '#22334f'
       }
     }, day);
   })), React.createElement("label", {
@@ -126,8 +126,8 @@ const AddTaskModal = ({
     className: `badge badge-${t.toLowerCase()}`,
     style: {
       padding: '1rem',
-      opacity: tier === t ? 1 : 0.5,
-      border: tier === t ? '2px solid white' : '2px solid transparent',
+      border: '2px solid transparent',
+      boxShadow: tier === t ? '0 0 0 3px #22334f' : 'none',
       cursor: 'pointer'
     }
   }, t === 'MIN' ? '📋 MINIMUM' : t === 'PLUS' ? '⭐ BONUS' : '📅 TYGODNIOWE'))), React.createElement("label", {
