@@ -76,6 +76,10 @@ const run = async () => {
     );
     assert.strictEqual(result.adjustmentType, "BONUS", spoken);
     assert.strictEqual(result.points, 2, spoken);
+    const rewardResult = parse(`${spoken} wydano nagrodę`);
+    assert.strictEqual(rewardResult.type, "ISSUE_REWARDS", spoken);
+    assert.strictEqual(rewardResult.child?.name, expected, spoken);
+    assert.strictEqual(rewardResult.count, 1, spoken);
   }
 
   const penalty = parse("dwa punkty kary dla Juska za niegrzeczne sniadanie");
@@ -111,6 +115,25 @@ const run = async () => {
   const dateName = parse("dodaj dwa punkty Filipowi za pomoc 12 maja");
   assert.strictEqual(dateName.child?.name, "Filip");
   assert.strictEqual(dateName.date, "2026-05-12");
+
+  for (const [transcript, childName] of [
+    ["zatwierdź wszystkie zadania Franka", "Franek"],
+    ["zatwierdź wszystkie zadania Filipa", "Filip"],
+  ]) {
+    const result = parse(transcript);
+    assert.strictEqual(result.type, "APPROVE_PENDING", transcript);
+    assert.strictEqual(result.child?.name, childName, transcript);
+  }
+  for (const [transcript, childName, count] of [
+    ["Ignacemu wydano dwie nagrody", "Ignacy", 2],
+    ["Ignacemu wydano nagrodę", "Ignacy", 1],
+    ["Frankowi wydano nagrodę", "Franek", 1],
+  ]) {
+    const result = parse(transcript);
+    assert.strictEqual(result.type, "ISSUE_REWARDS", transcript);
+    assert.strictEqual(result.child?.name, childName, transcript);
+    assert.strictEqual(result.count, count, transcript);
+  }
 
   console.log(
     `Parent voice parser OK: ${names.length} children, inflections, phonetic Józek variants, bonus, penalty and safe manual selection`,

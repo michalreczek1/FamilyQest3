@@ -18,12 +18,15 @@ const ChildSelectionView = ({
   tasks,
   completions,
   extraTasks,
+  rewards,
+  rewardUnlocks,
   approveAllPending,
   rejectAllPending,
   approveExtraTask,
   rejectExtraTask,
   completeTaskAsParent,
   savePointAdjustment,
+  claimReward,
   onLogout
 }) => {
   const [voiceCommandsOpen, setVoiceCommandsOpen] = useState(false);
@@ -53,6 +56,8 @@ const ChildSelectionView = ({
     tasks: tasks,
     completions: completions,
     extraTasks: extraTasks,
+    rewards: rewards,
+    rewardUnlocks: rewardUnlocks,
     getDateString: getDateString,
     approveAllPending: approveAllPending,
     rejectAllPending: rejectAllPending,
@@ -60,6 +65,7 @@ const ChildSelectionView = ({
     rejectExtraTask: rejectExtraTask,
     completeTaskAsParent: completeTaskAsParent,
     savePointAdjustment: savePointAdjustment,
+    claimReward: claimReward,
     mainScreen: true
   }), children.length === 0 ? React.createElement("div", {
     className: "empty-state"

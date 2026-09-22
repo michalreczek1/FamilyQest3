@@ -137,13 +137,16 @@ const ParentPanel = ({
       tasks: tasks,
       completions: completions,
       extraTasks: extraTasks,
+      rewards: rewards,
+      rewardUnlocks: rewardUnlocks,
       getDateString: getDateString,
       approveAllPending: approveAllPending,
       rejectAllPending: rejectAllPending,
       approveExtraTask: approveExtraTask,
       rejectExtraTask: rejectExtraTask,
       completeTaskAsParent: completeTaskAsParent,
-      savePointAdjustment: savePointAdjustment
+      savePointAdjustment: savePointAdjustment,
+      claimReward: claimReward
     }), React.createElement("div", {
       className: "tabs"
     }, React.createElement("button", {

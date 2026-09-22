@@ -6,8 +6,9 @@ import ModalOverlay from '../common/ModalOverlay.jsx';
 const SpeechRecognitionCtor = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
 const formatDate = (date) => date ? new Date(`${date}T12:00:00`).toLocaleDateString('pl-PL') : 'wszystkie daty';
+const rewardNoun = (count) => count === 1 ? 'nagrodę' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'nagrody' : 'nagród';
 
-const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateString, approveAllPending, rejectAllPending, approveExtraTask, rejectExtraTask, completeTaskAsParent, savePointAdjustment, mainScreen = false }) => {
+const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, rewards, rewardUnlocks, getDateString, approveAllPending, rejectAllPending, approveExtraTask, rejectExtraTask, completeTaskAsParent, savePointAdjustment, claimReward, mainScreen = false }) => {
   const recognitionRef = useRef(null);
   const [transcript, setTranscript] = useState('');
   const [listening, setListening] = useState(false);
@@ -32,6 +33,18 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     }
     setChildSelectionNeeded(false);
     setManualChildId('');
+    if (parsed.type === 'ISSUE_REWARDS') {
+      const pending = rewardUnlocks.filter((unlock) => unlock.childId === parsed.child.id && !unlock.claimedAt && !unlock.revokedAt && rewards.some((reward) => reward.id === unlock.rewardId))
+        .sort((a, b) => Date.parse(a.unlockedAt || 0) - Date.parse(b.unlockedAt || 0));
+      if (pending.length < parsed.count) {
+        setPlan(null);
+        setFeedback(`Dla ${parsed.child.name} dostępnych nagród: ${pending.length}. Polecenie wymaga ${parsed.count}.`);
+        return;
+      }
+      setPlan({ ...parsed, unlocks: pending.slice(0, parsed.count) });
+      setFeedback('');
+      return;
+    }
     if (parsed.type === 'APPROVE_PENDING' || parsed.type === 'REJECT_PENDING') {
       const pending = completions.filter((completion) =>
         completion.childId === parsed.child.id &&
@@ -94,6 +107,8 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
     let finalTranscript = '';
+    let latestTranscript = '';
+    let recognitionFailed = false;
     recognition.onstart = () => {
       setListening(true);
       setFeedback('Słucham polecenia…');
@@ -105,15 +120,17 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
         if (event.results[index].isFinal) finalTranscript = `${finalTranscript} ${next}`.trim();
         else interimTranscript = `${interimTranscript} ${next}`.trim();
       }
-      setTranscript((finalTranscript || interimTranscript).trim());
+      latestTranscript = (finalTranscript || interimTranscript).trim();
+      setTranscript(latestTranscript);
     };
     recognition.onerror = (event) => {
+      recognitionFailed = true;
       setFeedback(event?.error === 'not-allowed' ? 'Brak zgody na mikrofon.' : 'Nie udało się rozpoznać głosu. Spróbuj ponownie lub wpisz polecenie.');
     };
     recognition.onend = () => {
       recognitionRef.current = null;
       setListening(false);
-      if (finalTranscript) prepare(finalTranscript, null);
+      if (!recognitionFailed && (finalTranscript || latestTranscript)) prepare(finalTranscript || latestTranscript, null);
     };
     try {
       recognition.start();
@@ -128,7 +145,13 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     if (!plan) return;
     setExecuting(true);
     try {
-      if (plan.type === 'APPROVE_PENDING') {
+      if (plan.type === 'ISSUE_REWARDS') {
+        for (const unlock of plan.unlocks) {
+          const result = await claimReward(unlock.id);
+          if (result?.success !== true) throw new Error('Nie udało się wydać wszystkich nagród. Sprawdź listę wydanych przed ponowieniem polecenia.');
+        }
+        setFeedback(`Wydano ${plan.unlocks.length} ${rewardNoun(plan.unlocks.length)} dla ${plan.child.name}.`);
+      } else if (plan.type === 'APPROVE_PENDING') {
         const result = await approveAllPending(plan.completions);
         if (result?.success !== true) throw new Error('Nie udało się zatwierdzić zadań. Sprawdź komunikat aplikacji i spróbuj ponownie.');
         const approvedCount = Number(result.approvedCount);
@@ -175,7 +198,9 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
     }
   };
 
-  const planText = plan?.type === 'APPROVE_PENDING'
+  const planText = plan?.type === 'ISSUE_REWARDS'
+    ? `Wydać ${plan.unlocks.length} ${rewardNoun(plan.unlocks.length)} dla ${plan.child.name}: ${plan.unlocks.map((unlock) => rewards.find((reward) => reward.id === unlock.rewardId)?.title).join(', ')}?`
+    : plan?.type === 'APPROVE_PENDING'
     ? `Zatwierdzić ${plan.completions.length} zadań dla ${plan.child.name}${plan.date ? ` z ${formatDate(plan.date)}` : ''}?`
     : plan?.type === 'REJECT_PENDING'
       ? `Odrzucić ${plan.completions.length} zadań dla ${plan.child.name}?`
@@ -207,7 +232,7 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
         React.createElement('input', {
           className: 'input',
           value: transcript,
-          onChange: (event) => { setTranscript(event.target.value); setChildSelectionNeeded(false); setManualChildId(''); },
+          onChange: (event) => { setTranscript(event.target.value); setPlan(null); setChildSelectionNeeded(false); setManualChildId(''); },
           placeholder: 'Np. dodaj dwa punkty Filipowi za zmywarkę dzisiaj',
           'aria-label': 'Polecenie dla rodzica',
         }),
@@ -219,7 +244,7 @@ const ParentVoiceCommand = ({ children, tasks, completions, extraTasks, getDateS
           children.filter((child) => !child.archived).map((child) => React.createElement('option', { key: child.id, value: child.id }, child.name)),
         ),
       ),
-      React.createElement('div', { className: 'voice-command-examples' }, 'Przykłady: „Dodaj dwa punkty Filipowi za pomoc”, „Dwa punkty kary dla Józka za hałas”. Obsługiwane są też zatwierdzanie, odrzucanie i zaliczanie zadań. Jeśli imię nie jest pewne, wybierz dziecko z listy.'),
+      React.createElement('div', { className: 'voice-command-examples' }, 'Przykłady: „Zatwierdź wszystkie zadania Franka”, „Ignacemu wydano dwie nagrody”, „Dodaj dwa punkty Filipowi za pomoc”. Jeśli imię nie jest pewne, wybierz dziecko z listy.'),
       feedback && React.createElement('div', { className: 'voice-command-feedback', role: 'status' }, feedback),
     ),
     plan && React.createElement(ModalOverlay, {

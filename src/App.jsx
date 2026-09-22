@@ -621,8 +621,10 @@ const App = () => {
         method: 'POST',
       });
       await applyServerStatePatchOrReload(result);
+      return { success: true };
     } catch (error) {
       showMutationError(error, 'Nie udało się oznaczyć nagrody jako wydanej');
+      return { success: false };
     }
   }), [applyServerStatePatchOrReload, runServerMutation, showMutationError]);
   const evaluateDay = (childId, date) => {
@@ -1607,12 +1609,15 @@ const App = () => {
       tasks: tasks,
       completions: completions,
       extraTasks: extraTasks,
+      rewards: rewards,
+      rewardUnlocks: rewardUnlocks,
       approveAllPending: approveAllPending,
       rejectAllPending: rejectAllPending,
       approveExtraTask: approveExtraTask,
       rejectExtraTask: rejectExtraTask,
       completeTaskAsParent: completeTaskAsParent,
       savePointAdjustment: savePointAdjustment,
+      claimReward: claimReward,
       onLogout: handleLogout
     }), parentPinGateOpen && React.createElement(ParentPinGate, {
       hasPinCode: Boolean(user?.hasPinCode),

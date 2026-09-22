@@ -77,6 +77,15 @@ const getPoints = (normalized) => {
   return null;
 };
 
+const rewardCount = (normalized) => {
+  const tokens = normalized.split(' ');
+  const index = tokens.findIndex((token) => /^nagrod/.test(token));
+  if (index < 1) return 1;
+  const previous = tokens[index - 1];
+  if (/^\d+$/.test(previous)) return Number(previous);
+  return NUMBER_WORDS[previous] ?? 1;
+};
+
 const adjustmentNote = ({ transcript, child, date, today, type }) => {
   const names = String(child.name || '').split(/\s+/).filter(Boolean).map(nameForms);
   const words = String(transcript || '').trim().split(/\s+/).filter(Boolean);
@@ -112,6 +121,11 @@ export const parseParentVoiceCommand = ({ transcript, children = [], today = toD
   const isPenalty = /\b(odejmij|odejm|zabierz|potrac|ukaraj|ukarz|kara|kary|karne|minus)\b/.test(normalized) && /\bpunkt/.test(normalized);
   const isBonus = /\b(dodaj|przyznaj|daj|premia|premie|bonus)\b/.test(normalized) && /\bpunkt/.test(normalized);
   const text = String(transcript || '').trim();
+  if (/\b(wydano|wydaj|wydac|wydalem|wydalam|przekazano|przekaz)\b/.test(normalized) && /\bnagrod/.test(normalized)) {
+    const count = rewardCount(normalized);
+    if (!Number.isInteger(count) || count < 1 || count > 20) return { error: 'Podaj liczbę nagród od 1 do 20.' };
+    return { type: 'ISSUE_REWARDS', child, count, transcript: text };
+  }
   if (isBonus || isPenalty) {
     if (!Number.isInteger(points) || points < 1 || points > 1000) return { error: 'Podaj liczbę punktów od 1 do 1000.' };
     const adjustmentType = isPenalty ? 'PENALTY' : 'BONUS';
@@ -125,5 +139,5 @@ export const parseParentVoiceCommand = ({ transcript, children = [], today = toD
     return { type: extra ? (reject ? 'REJECT_EXTRA_TASKS' : 'APPROVE_EXTRA_TASKS') : (reject ? 'REJECT_PENDING' : 'APPROVE_PENDING'), child, points: extra && approve ? points : null, date: explicit ? date : null, transcript: text };
   }
   if (/\b(zalicz|oznacz|wykonaj)\b/.test(normalized)) return { type: 'COMPLETE_TASK', child, date, taskQuery: taskQuery(normalized, child), transcript: text };
-  return { error: 'Obsługuję premie i kary punktowe, zatwierdzanie lub odrzucanie zadań, zadania dodatkowe oraz zaliczanie zadania.' };
+  return { error: 'Obsługuję premie i kary punktowe, zatwierdzanie lub odrzucanie zadań, zaliczanie zadań oraz wydawanie nagród.' };
 };
