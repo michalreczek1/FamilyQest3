@@ -75,15 +75,19 @@ const LoginView = ({
     }
     setSubmitting(false);
   };
-  return React.createElement("div", {
+  return React.createElement("main", {
     className: "app-container login-view light-app-view"
-  }, React.createElement("div", {
-    className: "glass-card",
-    style: {
-      maxWidth: '560px',
-      margin: '5rem auto'
-    }
-  }, React.createElement("div", {
+  }, React.createElement("div", { className: "landing-layout" }, React.createElement("section", {
+    className: "landing-intro",
+    'aria-labelledby': 'landing-title'
+  }, React.createElement("p", { className: "landing-eyebrow" }, "RODZINNE ZADANIA, WIĘCEJ RADOŚCI"),
+  React.createElement("h1", { id: "landing-title" }, "Codzienne obowiązki zamieńcie w rodzinną przygodę."),
+  React.createElement("p", { className: "landing-lead" }, "FamilyQuest pomaga rodzicom organizować zadania domowe, a dzieciom śledzić postępy, zdobywać punkty i odkrywać nagrody."),
+  React.createElement("div", { className: "landing-highlights" },
+    React.createElement("span", null, "✓ Zadania dla dzieci"),
+    React.createElement("span", null, "✓ Punkty i nagrody"),
+    React.createElement("span", null, "✓ Wspólne cele"))),
+  React.createElement("section", { className: "glass-card landing-auth", 'aria-label': 'Logowanie i rejestracja' }, React.createElement("div", {
     style: {
       textAlign: 'center',
       marginBottom: '1.2rem'
@@ -167,7 +171,17 @@ const LoginView = ({
       width: '100%'
     },
     disabled: submitting
-  }, submitting ? 'Przetwarzanie...' : getSubmitLabel()))));
+  }, submitting ? 'Przetwarzanie...' : getSubmitLabel())))),
+  React.createElement("section", { className: "landing-details", 'aria-labelledby': 'how-title' },
+    React.createElement("div", { className: "landing-section-heading" },
+      React.createElement("p", { className: "landing-eyebrow" }, "JAK TO DZIAŁA"),
+      React.createElement("h2", { id: "how-title" }, "Prosty plan na każdy dzień"),
+      React.createElement("p", null, "Rodzic ustala zasady, a cała rodzina widzi postępy w jednym miejscu.")),
+    React.createElement("div", { className: "landing-steps" },
+      React.createElement("article", null, React.createElement("span", { className: "landing-step-number" }, "01"), React.createElement("h3", null, "Dodaj zadania"), React.createElement("p", null, "Ustal obowiązki dopasowane do dzieci i rodzinnego rytmu.")),
+      React.createElement("article", null, React.createElement("span", { className: "landing-step-number" }, "02"), React.createElement("h3", null, "Śledź postępy"), React.createElement("p", null, "Dzieci oznaczają wykonane zadania, a rodzic je zatwierdza.")),
+      React.createElement("article", null, React.createElement("span", { className: "landing-step-number" }, "03"), React.createElement("h3", null, "Świętuj osiągnięcia"), React.createElement("p", null, "Punkty, serie dni i nagrody pomagają utrzymać motywację."))),
+    React.createElement("p", { className: "landing-footer" }, "FamilyQuest · Miejsce na rodzinne zadania, cele i małe sukcesy.")));
 };
 
 export default LoginView;

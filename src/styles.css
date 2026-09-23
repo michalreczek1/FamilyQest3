@@ -20,6 +20,27 @@ body {
 
 .app-container { max-width: 1400px; margin: 0 auto; padding: 1rem; }
 
+.login-view { max-width: 1180px; padding: 3rem 1.5rem 2rem; }
+.landing-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr); align-items: center; gap: clamp(2rem, 5vw, 5rem); min-height: min(700px, 85vh); }
+.landing-intro { background: rgba(255, 255, 255, 0.86); border-radius: 2rem; padding: clamp(2rem, 4vw, 4rem); box-shadow: 0 16px 48px rgba(20, 55, 73, 0.16); }
+.landing-eyebrow { color: #0f766e; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.13em; }
+.landing-intro h1 { color: #12364b; font-size: clamp(2.3rem, 4vw, 4.4rem); line-height: 1.1; margin: 1rem 0 1.4rem; }
+.landing-lead { color: #365669; font-size: 1.2rem; line-height: 1.55; }
+.landing-highlights { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 2rem; }
+.landing-highlights span { background: #e2f5ee; color: #175d55; border-radius: 999px; padding: 0.55rem 0.8rem; font-weight: 600; }
+.landing-auth { width: 100%; max-width: 520px; margin: 0 auto; }
+.landing-details { background: rgba(255, 255, 255, 0.92); border-radius: 2rem; padding: clamp(1.5rem, 4vw, 3rem); margin-top: 2rem; box-shadow: 0 12px 40px rgba(20, 55, 73, 0.12); }
+.landing-section-heading { text-align: center; margin-bottom: 2rem; }
+.landing-section-heading h2 { color: #12364b; font-size: clamp(1.7rem, 3vw, 2.6rem); margin: 0.5rem 0; }
+.landing-section-heading > p:last-child, .landing-steps p { color: #4a6574; line-height: 1.5; }
+.landing-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+.landing-steps article { background: #f2faf8; border: 1px solid #d9ede8; border-radius: 1.25rem; padding: 1.5rem; }
+.landing-step-number { color: #0f766e; font-size: 1.7rem; font-weight: 700; }
+.landing-steps h3 { color: #173e50; margin: 0.7rem 0; }
+.landing-footer { text-align: center; color: #667e89; margin-top: 2rem; }
+@media (max-width: 850px) { .landing-layout { grid-template-columns: 1fr; min-height: 0; } .landing-intro { padding: 2rem; } .landing-auth { max-width: 600px; } }
+@media (max-width: 600px) { .login-view { padding: 1rem; } .landing-layout { gap: 1rem; } .landing-steps { grid-template-columns: 1fr; } .landing-intro { padding: 1.5rem; } .landing-lead { font-size: 1rem; } }
+
 .glass-card {
   background: rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(20px);
