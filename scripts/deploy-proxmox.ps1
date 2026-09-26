@@ -153,6 +153,9 @@ npx prisma migrate deploy
 node scripts/bootstrap-child-access-credentials.js
 node scripts/reconcile-reward-unlocks.js --apply
 npm run frontend:build
+install -m 0644 scripts/familyquest-backup-retention.service scripts/familyquest-backup-retention.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now familyquest-backup-retention.timer
 systemctl restart familyquest
 sleep 3
 
@@ -251,6 +254,14 @@ New-ProxmoxSnapshot
 Invoke-RemoteDeploy
 Test-PublicHealthAndCsp
 Invoke-ProductionPlaywrightTests
+
+# Prune rollback copies only after all production checks succeeded.
+if (-not $SkipTests) {
+  Invoke-SshChecked -Label "Keeping three deployment backups and expiring repair backups" -Arguments @("pct exec $ContainerId -- python3 '$AppDir/scripts/backup-retention.py' --deploy-success --apply")
+  Invoke-SshChecked -Label "Keeping two FamilyQuest deployment snapshots" -Arguments @("pct exec $ContainerId -- cat '$AppDir/scripts/backup-retention.py' | python3 - --snapshots $ContainerId --deploy-success --apply")
+} else {
+  Write-Step "Retention skipped because production tests were skipped"
+}
 
 Write-Step "Deploy complete"
 Write-Host "FamilyQuest is deployed from $Branch at $(Invoke-GitText @("rev-parse", "--short", "HEAD"))"

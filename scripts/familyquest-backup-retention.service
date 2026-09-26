@@ -1,0 +1,14 @@
+[Unit]
+Description=Expire FamilyQuest repair backups older than 14 days
+ConditionPathIsDirectory=/opt/familyquest/.deploy-backups
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/familyquest/scripts/backup-retention.py --apply
+User=root
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/familyquest/.deploy-backups
+ProtectHome=true
+PrivateTmp=true
